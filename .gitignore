@@ -7,3 +7,6 @@ dist/
 *.log
 .DS_Store
 coverage/
+
+# Third-party (xAI) screenshots: local reference only, not redistributed
+docs/research/grok-screens/

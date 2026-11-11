@@ -1,46 +1,28 @@
-# BotDesk — Product Vision
+# BotDesk — Vision
 
-> Status: draft, 2026-11-11. Architecture is under discussion.
-
-## What BotDesk is
+## What
 
 BotDesk is an open-source (MIT) version of **Grok Bot**
-([xAI/SpaceXSI launch, 2026-08-11](https://x.ai/news/introducing-grok-bot)): **a team of always-on AI agents
-that work like colleagues.**
+([xAI launch, 2026-08-11](https://x.ai/news/introducing-grok-bot)): **a team of always-on AI bots that work like colleagues.**
 
-You message a bot the way you'd message a teammate and hand it work. Nobody has to build workflows first.
-Each bot has its **own cloud computer**, signs into the tools you already use, works through multi-step jobs
-while you're away, and only comes back when it needs your **approval**.
+You message a bot like a teammate and hand it work, with no workflows to build first. Each bot has its own
+computer, signs into your tools, works through multi-step jobs while you're away, talks with you and other
+bots in threads, and comes back when it needs your approval. Terms: [GLOSSARY.md](../../GLOSSARY.md).
+Scope and screens: [spec.md](spec.md).
 
-## Core concepts (from Grok Bot)
+## Why open source wins
 
-| Concept | What it means |
-|---|---|
-| **Bot** | An AI teammate with a role, instructions, model, tools, memory and its own computer |
-| **Cloud computer** | A persistent sandbox (browser + desktop) per bot, so it can use websites and apps that have no API |
-| **Jobs** | Multi-step work the bot runs in the background, which survives the user closing the app |
-| **Approvals** | The bot pauses and asks a human for judgment calls (send this email? pay this invoice?) |
-| **Threads and group chats** | Humans and bots in one conversation. Bots pass work, assign ownership, and @mention each other |
-| **Chief of staff** | One orchestrator bot that delegates to specialist bots (inbox, expenses, recruiting, bug fixing, ops) |
-| **Memory** | Bots remember conversations and how you like things done |
-| **Routines ("follow along")** | The bot watches you do a job, saves the steps, takes corrections, then runs it alone |
-| **Proactive** | Bots follow up on dropped threads and nudge stalled handoffs |
-| **Marketplace** | Ready-made bot templates |
-| **Usage** | Bots meter their own usage, separately |
+Grok Bot, OpenAI dots and Meta Muse are closed, cloud-only and tied to one model vendor
+([competitors](../research/competitors.md)). BotDesk's edge:
 
-Grok Bot ships as macOS and iOS apps with the same thread on every device. BotDesk starts with the web.
+1. **Own it.** MIT, self-hostable, or use the hosted SaaS. Multi-tenant teams from day one.
+2. **Any model.** Every major provider or a custom endpoint; member keys and org keys.
+3. **Safe by design.** One computer per bot, risk-classed tools, security levels, and an approvals inbox.
+4. **Transparent.** Memory you can see and edit; cost per bot and per run; budgets that pause a bot.
+5. **Extensible.** Integrations are plugins with a manifest, so adding the 100th is as easy as the first.
 
-## Decisions so far
+## Principles
 
-| Area | Decision |
-|---|---|
-| Name | BotDesk |
-| License | MIT |
-| Inspiration | Grok Bot: its concepts and mood. Original branding, no Grok/xAI trademarks or assets. |
-| Build order | **1. Web (Next.js)** → 2. Desktop (Electron) → 3. Mobile (Expo) |
-| Deployment | Self-hosted **and** hosted SaaS, multi-tenant from day one ([ADR 0001](../adr/0001-product-scope-and-deployment.md)) |
-| Teams | Orgs, members, roles, bots in a team, @mentions of people and bots |
-| Backend | Node.js + PostgreSQL + Drizzle migrations, one API for all clients |
-| Models | All major providers + custom OpenAI-compatible ones. Users bring their own keys and orgs can set keys too |
-| Memory | mem0 open-source SDK on pgvector |
-| UI | Prebuilt wherever possible: shadcn/ui, assistant-ui |
+- Match Grok Bot's flows; keep BotDesk's own identity (no Grok/xAI assets).
+- Prebuilt libraries for everything that isn't the core experience.
+- Web first; desktop and mobile reuse the same API.

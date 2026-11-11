@@ -1,7 +1,7 @@
 # BotDesk — High-Level Architecture (proposal)
 
 > Status: **proposal for discussion**, 2026-11-11. Nothing is built yet. Library versions and licenses were checked on npm/GitHub on 2026-11-11.
-> Product: an open-source (MIT) **Grok Bot**, a team of always-on AI agents ("bots") with their own cloud computers, approvals, group chats, routines and memory. See [vision](../product/vision.md) and [ADR 0001](../decisions/0001-product-scope-and-deployment.md).
+> Product: an open-source (MIT) **Grok Bot**, a team of always-on AI agents ("bots") with their own cloud computers, approvals, group chats, routines and memory. See [vision](../product/vision.md) and [ADR 0001](../adr/0001-product-scope-and-deployment.md).
 
 ## 0. Decided (owner, ADR 0001) — not up for debate here
 

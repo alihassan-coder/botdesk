@@ -38,7 +38,7 @@ Grok Bot ships as macOS and iOS apps with the same thread on every device. BotDe
 | License | MIT |
 | Inspiration | Grok Bot: its concepts and mood. Original branding, no Grok/xAI trademarks or assets. |
 | Build order | **1. Web (Next.js)** → 2. Desktop (Electron) → 3. Mobile (Expo) |
-| Deployment | Self-hosted **and** hosted SaaS, multi-tenant from day one ([ADR 0001](../decisions/0001-product-scope-and-deployment.md)) |
+| Deployment | Self-hosted **and** hosted SaaS, multi-tenant from day one ([ADR 0001](../adr/0001-product-scope-and-deployment.md)) |
 | Teams | Orgs, members, roles, bots in a team, @mentions of people and bots |
 | Backend | Node.js + PostgreSQL + Drizzle migrations, one API for all clients |
 | Models | All major providers + custom OpenAI-compatible ones. Users bring their own keys and orgs can set keys too |

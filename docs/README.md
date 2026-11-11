@@ -8,12 +8,12 @@ Planning docs for BotDesk, an open-source (MIT) version of [Grok Bot](https://x.
 | [architecture/high-level.md](architecture/high-level.md) | High-level architecture proposal, cool feature ideas, owner questions |
 | [research/grok-bot-teardown.md](research/grok-bot-teardown.md) | How Grok Bot looks and works, screen by screen, mapped to prebuilt components |
 | [brand/brand-guide.md](brand/brand-guide.md) | Logo concepts, colours, typography, voice ([preview](brand/preview.html)) |
-| [decisions/](decisions/) | Architecture decision records (ADRs), added as we agree on things |
+| [adr/](adr/) | Architecture decision records (ADRs), added as we agree on things |
 
 ## Open questions
 
-Answered questions move into an ADR in [decisions/](decisions/).
+Answered questions move into an ADR in [adr/](adr/).
 
-Answered so far (see [ADR 0001](decisions/0001-product-scope-and-deployment.md)): self-host + SaaS, teams + bots + @mentions, user and org model keys, our own look.
+Answered so far (see [ADR 0001](adr/0001-product-scope-and-deployment.md)): self-host + SaaS, teams + bots + @mentions, user and org model keys, our own look.
 
 Still open: version 1 scope, how bot computers are hosted, which integrations come first. Full list in [architecture/high-level.md](architecture/high-level.md).

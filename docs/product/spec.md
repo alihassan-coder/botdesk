@@ -62,4 +62,6 @@ Layout: bot sidebar (left) · thread (centre) · bot details pane (right, collap
 - Done: docs (this spec, vision, ADRs 0001–0002, architecture, research); monorepo root; `apps/web` (Next.js 16, React 19, Tailwind 4); mock data layer in `apps/web/src/data/`.
 - In progress: shadcn/ui (Radix, Nova preset, all components) install in `apps/web`.
 - Next: build the screens above on mock data.
-- Open: logo and brand (paused; owner will send a reference), owner questions in [architecture §16](../architecture/high-level.md).
+- Done: logo (v7, the always-on bd) with all files in [docs/design/logo](../design/logo/README.md).
+- Next in design: brand tokens (colour, type, radius, motion), then the bot avatar system.
+- Open: owner questions in [architecture §16](../architecture/high-level.md).

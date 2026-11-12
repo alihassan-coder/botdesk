@@ -2,7 +2,7 @@
 
 Everything about how BotDesk works inside, in the order that makes it easiest to understand.
 
-**Built today:** the web app (on mock data, partly wired to the API) and the API's sign-in, organizations, bots and chats. Bots reply: a message starts a run inside the API process ([ADR 0007](../adr/0007-runs-in-the-api-process-for-now.md)), the reply streams over SSE from `run_events`, and mem0 memory can be switched on. The queue, the worker, tools, plugins and approvals below are the decided plan; [agents-and-plugins.md §14](agents-and-plugins.md#14-build-order-each-step-small-tested-and-usable) gives the build order. Terms are defined in [GLOSSARY.md](../../GLOSSARY.md).
+**Built today:** the web app (wired to the API, demo data in guest mode) and the API's sign-in, organizations, bots and chats. Bots reply: a message starts a run inside the API process ([ADR 0007](../adr/0007-runs-in-the-api-process-for-now.md)), the reply streams over SSE from `run_events`, and mem0 memory can be switched on. Tools, the risk policy and approvals (interrupt and resume) work with a built-in demo plugin. The queue, the worker, the plugin SDK and real integrations below are the decided plan; [agents-and-plugins.md §14](agents-and-plugins.md#14-build-order-each-step-small-tested-and-usable) gives the build order. Terms are defined in [GLOSSARY.md](../../GLOSSARY.md).
 
 ## The idea in one minute
 

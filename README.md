@@ -62,12 +62,13 @@ BotDesk is in **early development**. Here's what works today:
 | Area | State |
 |---|---|
 | Web app (every screen, desktop and phone) | ✅ Built. Runs on demo data, or on the real API for the parts below |
-| Accounts: sign up, sign in, sign out, profile, password | ✅ API done |
-| Organizations, members, roles, invites | ✅ API done, web connected |
+| Accounts: sign up, sign in, sign out, profile, password, reset by email | ✅ API done, web connected |
+| Organizations, members, roles, invites (sent by email) | ✅ API done, web connected |
 | Bots (create, edit, remove) | ✅ API done, web connected |
-| Chats and messages (stored) | ✅ API done |
-| Bots that think and reply | 🚧 Next |
-| Approvals, plugins (Gmail first), memory, routines | 📋 Planned |
+| Chats: direct and group, history, sending | ✅ API done, web connected |
+| Bots that reply, streamed live, with optional memory (mem0) | ✅ API done, web connected |
+| Tools and approvals (risky actions wait for Approve / Edit / Deny) | ✅ API done · 🚧 web next |
+| Plugin SDK, Gmail, routines, MCP | 📋 Planned |
 
 The full history is in [docs/PROGRESS.md](docs/PROGRESS.md), and the plan is in [docs/product/spec.md](docs/product/spec.md).
 

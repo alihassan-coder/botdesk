@@ -6,7 +6,7 @@ Open-source (MIT) Grok Bot: a team of always-on AI bots that work in your apps, 
 
 - **Product scope, screens, build order, current status** → [docs/product/spec.md](docs/product/spec.md)
 - **Domain terms** (Bot, Run, Approval, Routine, Plugin, Security level…) → [GLOSSARY.md](GLOSSARY.md). Use these words exactly in code and UI.
-- **Architecture** (API, agent runtime, computers, plugins, data model, security) → [docs/architecture/high-level.md](docs/architecture/high-level.md)
+- **Architecture** (API, agent runtime, tools and approvals, plugins, scaling) → [docs/architecture/README.md](docs/architecture/README.md) (reading guide); what the API does today → [docs/backend/README.md](docs/backend/README.md)
 - **Decisions already made** → [docs/adr/](docs/adr/). Treat accepted ADRs as fixed; propose changes as a new ADR.
 - **UI reference** (Grok Bot layout and components) → [docs/research/grok-bot-teardown.md](docs/research/grok-bot-teardown.md)
 - **Brand and visual design** (logo, tokens, avatars; approved before building) → [docs/design/](docs/design/README.md)
@@ -26,7 +26,7 @@ Open-source (MIT) Grok Bot: a team of always-on AI bots that work in your apps, 
 Load the matching skill before starting the task:
 
 - **Screens and components:** `frontend-design`, then `modern-web-guidance` for HTML/CSS/browser APIs, `vercel-react-best-practices` for React code; `emil-design-eng` for motion and polish. Check the result in a real browser with the Playwright tools (screenshot, then critique), and review with `web-design-guidelines`.
-- **Library APIs** (Next 16, Tailwind 4, shadcn, Better Auth, Drizzle, DBOS): look them up with Context7 before writing code; training data is older than these versions.
+- **Library APIs** (Next 16, Tailwind 4, shadcn, FastAPI, SQLAlchemy, LangGraph, LangChain, mem0): look them up with Context7 before writing code; training data is older than these versions.
 - **New feature end to end:** `/feature-dev`; for design exploration, `playground`.
 - **System design:** `mattpocock-skills:to-spec`, then `to-tickets`; architecture health with `mattpocock-skills:improve-codebase-architecture`. Record decisions as ADRs in `docs/adr/`.
 - **GLOSSARY.md, ADRs, naming:** `mattpocock-skills:domain-modeling`.

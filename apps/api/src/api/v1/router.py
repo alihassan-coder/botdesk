@@ -2,10 +2,11 @@
 
 from fastapi import APIRouter
 
-from src.api.v1.routes import auth, health, invitations, organizations
+from src.api.v1.routes import auth, bots, health, invitations, organizations
 
 api_router = APIRouter(prefix="/api/v1")
 api_router.include_router(health.router)
 api_router.include_router(auth.router)
 api_router.include_router(organizations.router)
 api_router.include_router(invitations.router)
+api_router.include_router(bots.router)

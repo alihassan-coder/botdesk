@@ -49,4 +49,5 @@ async def test_seed_creates_the_demo_team_once() -> None:
     await engine.dispose()
     assert "user ali@acme.dev" in first
     assert "sara@acme.dev as admin" in first
+    assert "bot Chief" in first
     assert again == []

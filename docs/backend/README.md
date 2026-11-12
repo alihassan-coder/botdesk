@@ -22,7 +22,7 @@ Open **http://localhost:8000/api/docs** to see and try every route.
 | `pnpm start:api` | Migrate, then run without reload (production style) |
 | `pnpm test:api` | pytest: unit and HTTP tests on in-memory SQLite (~5 s, no network) |
 | `pnpm db:migrate` | Apply migrations to `DATABASE_URL` |
-| `pnpm db:seed` | Add the demo team (ali@acme.dev / botdesk123, Sara, Omar in Acme Labs). Not in production |
+| `pnpm db:seed` | Add the demo team (ali@acme.dev / botdesk123, Sara, Omar in Acme Labs) and three bots. Not in production |
 | `pnpm check` | typecheck (mypy) + lint (ruff) + tests, for web and API together |
 
 Inside `apps/api`: `pnpm db:revision "add bots"` writes a new migration from model changes; `pnpm format` formats and fixes lint.
@@ -89,6 +89,11 @@ A service raises `NotFound("…")`, `Conflict("…")` and so on. `main.py` turns
 | `GET /api/v1/orgs/{id}/invitations` | Pending invites (owners and admins) |
 | `DELETE /api/v1/orgs/{id}/invitations/{invId}` | Revoke an invite |
 | `POST /api/v1/invitations/accept` | Join from an invite link (signed in with the invited email) |
+| `GET /api/v1/orgs/{id}/bots` | The organization's bots |
+| `POST /api/v1/orgs/{id}/bots` | Hire a bot (any member); @handle comes from the name |
+| `GET /api/v1/orgs/{id}/bots/{botId}` | One bot |
+| `PATCH /api/v1/orgs/{id}/bots/{botId}` | Edit a bot (only the fields you send) |
+| `DELETE /api/v1/orgs/{id}/bots/{botId}` | Remove a bot (owners and admins) |
 
 Error messages match the web app's wording, e.g. `401 "That email and password don't match."`.
 
@@ -104,7 +109,7 @@ Error messages match the web app's wording, e.g. `401 "That email and password d
 
 1. Wire the web app's sign-in to this API (replace the mock in `apps/web/src/data/store.ts`).
 2. Invite emails (the link is copied by hand until an email provider is added).
-3. Bots, then threads and messages with streamed replies (SSE).
+3. Threads and messages, then bot replies streamed over SSE (bots exist, but don't talk yet).
 4. Agent runtime: LangGraph + LangChain models, Postgres checkpointer, approvals via `interrupt()`.
 5. Memory with mem0 (pgvector).
 6. Password reset emails, email verification, rate limiting on sign-in.

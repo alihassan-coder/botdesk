@@ -9,7 +9,7 @@ The collapsed sidebar was also fixed: every icon now sits on one centre line.
 
 ## 2026-11-12
 
-**Architecture review.** A critical review of the bots-and-plugins design ([architecture/review-2026-11-12.md](architecture/review-2026-11-12.md)): 16 ranked findings and 13 decisions for the owner. The design doc gained a Scaling section (job queue, event bus, connection pools, tenancy, observability) and safer run, approval and plugin rules; a new [repo-structure.md](architecture/repo-structure.md) lays out the monorepo for open source. Docs only, no code changed.
+**Architecture review.** A critical review of the bots-and-plugins design ([architecture/review-2026-11-12.md](architecture/review-2026-11-12.md)): 16 ranked findings and 13 decisions for the owner, all accepted the same day as ADRs 0004–0006, with a [reading guide](architecture/README.md). The design doc gained a Scaling section (job queue, event bus, connection pools, tenancy, observability) and safer run, approval and plugin rules; a new [repo-structure.md](architecture/repo-structure.md) lays out the monorepo for open source. Docs only, no code changed.
 
 **Backend moves to Python.** The owner changed the backend plan from Node (Hono, Drizzle, Better Auth) to Python:
 

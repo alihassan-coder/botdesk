@@ -4,8 +4,8 @@ flowchart TD
   C --> D["Connect an app<br/>e.g. Gmail (OAuth, once)"]
   D --> E["Chat: @Inbox reply to Vicky,<br/>say we can not do Q3"]
   E --> F{"Is the action risky?"}
-  F -- "read or internal" --> G["Bot just does it<br/>and shows a work log"]
-  F -- "send · spend · delete · login" --> H["Approval card in chat<br/>(also in the Approvals inbox)"]
+  F -- "read, or notes inside BotDesk" --> G["Bot just does it<br/>and shows a work log"]
+  F -- "changes in your apps · send<br/>spend · delete · login" --> H["Approval card in chat<br/>(also in the Approvals inbox)"]
   H --> I{"You decide"}
   I -- "Approve" --> J["Action runs, Done card"]
   I -- "Edit, then approve" --> J

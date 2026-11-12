@@ -7,7 +7,7 @@ sequenceDiagram
   Ali->>CH: "Chief, the login page is down. Fix it."
   CH->>CH: decides who should do it
   CH->>DB: handoff card + task (owner = Bug Fixer)
-  CH->>BF: start run B (parent = A, hop = 1)
+  CH->>BF: queue run B (parent = A, hop = 1, taint carries over)
   Note over CH,BF: A hop limit stops bots<br/>passing work back and forth forever
   BF->>BF: investigate, open a pull request (ask → approval)
   BF-->>CH: result: PR #42 opened

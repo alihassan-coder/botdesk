@@ -1,5 +1,5 @@
 flowchart LR
-  MSG["New message"] --> RECALL["recall: search mem0<br/>scope = organization + bot<br/>top 5 relevant"]
+  MSG["New message"] --> RECALL["recall: search mem0<br/>scope = organization + bot<br/>(+ member in a DM)<br/>top 5 relevant"]
   RECALL --> PROMPT["Added to the prompt:<br/>Things you remember about this team"]
   PROMPT --> REPLY["Bot replies"]
   REPLY --> REM["remember, in the background:<br/>mem0 pulls out facts<br/>e.g. Acme bills on the 1st"]

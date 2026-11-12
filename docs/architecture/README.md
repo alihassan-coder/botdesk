@@ -2,6 +2,8 @@
 
 Everything about how BotDesk works inside, in the order that makes it easiest to understand.
 
+**Built today:** the web app (on mock data, partly wired to the API) and the API's sign-in, organizations, bots and chats. Bots don't reply yet. Runs, the queue, the worker, plugins and approvals below are the decided plan; [agents-and-plugins.md §14](agents-and-plugins.md#14-build-order-each-step-small-tested-and-usable) gives the build order. Terms are defined in [GLOSSARY.md](../../GLOSSARY.md).
+
 ## The idea in one minute
 
 ![System overview](diagrams/png/01-system-overview.png)
@@ -25,7 +27,7 @@ Everything about how BotDesk works inside, in the order that makes it easiest to
 | 3 | [ADR 0005](../adr/0005-job-queue-and-scaling.md) | 5 min | The job queue, the worker, live updates, and the three scaling stages |
 | 4 | [repo-structure.md](repo-structure.md) + [ADR 0006](../adr/0006-repo-structure-plugins-and-project.md) | 15 min | Where code goes as the project grows, the plugin SDK, and how contributions and releases work |
 | 5 | [review-2026-11-12.md](review-2026-11-12.md) | 20 min | *Why* the design looks like this: what the review found, with sources |
-| 6 | [high-level.md](high-level.md) | optional | The first proposal (TypeScript era). Still useful for the DeepSeek Harness study (§5.1), the Gmail plugin (§8.7) and the data model (§11). Its backend stack was replaced by ADR 0003 |
+| 6 | [high-level.md](high-level.md) | optional | The first proposal (TypeScript era), kept as history. Its stack was replaced by ADR 0003 and its runtime, security and plugin sections by ADRs 0004–0006. Still useful for the DeepSeek Harness study (§5.1), bot computers (§6) and the Gmail tool list (§8.7) |
 
 ## Diagrams
 

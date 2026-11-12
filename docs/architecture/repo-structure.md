@@ -1,6 +1,6 @@
 # Repo structure for an open-source BotDesk
 
-**Status:** proposal (2026-11-12), part of the [architecture review](review-2026-11-12.md). Nothing here is built yet; this is the map to build towards, one folder at a time. When you agree it becomes ADR 0006.
+**Status:** decided in [ADR 0006](../adr/0006-repo-structure-plugins-and-project.md) (2026-11-12). Most folders below don't exist yet; this is the map to build towards, one folder at a time. The tree marks what exists today.
 **Reading time:** about 15 minutes.
 
 > **The short version:** keep what we have. Add **one** Python package (`packages/plugin-sdk`), a **`plugins/`** folder, a **`deploy/`** folder and a **`.github/`** folder. The worker is **not** a new app: it is a second way to start `apps/api`. Don't create a folder until something real goes in it.
@@ -65,13 +65,14 @@ botdesk/
 │     ├─ api.Dockerfile          one image for api, worker and migrate (different command)
 │     └─ web.Dockerfile
 │
-├─ .github/                      (soon) see §6
+├─ .github/                      (exists) CI, issue and PR templates; the rest of §6 soon
 ├─ docs/                         (exists) product, architecture, adr, backend, frontend, design, research
 │  ├─ self-hosting/              (step 4) install, upgrade, back up, settings
 │  └─ plugins/                   (step 3) how to write a plugin; the manifest reference
 │
 ├─ README.md  LICENSE  AGENTS.md  GLOSSARY.md      (exist)
-├─ CONTRIBUTING.md  SECURITY.md  CODE_OF_CONDUCT.md  CHANGELOG.md   (soon) see §6
+├─ CONTRIBUTING.md  SECURITY.md  CODE_OF_CONDUCT.md (exist)
+├─ CHANGELOG.md                                    (first release) see §6
 ├─ package.json  pnpm-workspace.yaml  turbo.json   (exist) JS workspace + task runner for everything
 └─ pyproject.toml  uv.lock                         (step 3) Python workspace root, see §4
 ```
@@ -100,7 +101,7 @@ botdesk/
 
 Three kinds of Python project will live here: the app (`apps/api`, not a package), the SDK, and plugins. They need to import each other in development without publishing anything.
 
-**Recommended: a uv workspace at the repo root** (added at step 3, when the second Python project appears). Langflow and Onyx both keep a root `pyproject.toml` + `uv.lock` next to their root `package.json`, so it sits happily beside pnpm.
+**Decided: a uv workspace at the repo root** (added at step 3, when the second Python project appears). Langflow and Onyx both keep a root `pyproject.toml` + `uv.lock` next to their root `package.json`, so it sits happily beside pnpm.
 
 ```toml
 # /pyproject.toml  (proposed; not a package itself)
@@ -195,9 +196,9 @@ GitHub looks for these by name. Locations are the ones GitHub recognises.
 |---|---|---|---|
 | `LICENSE` | root | MIT | exists |
 | `README.md` | root | What it is, a screenshot, "run it in 5 minutes", links | exists; add the 5-minute path at step 4 |
-| `CONTRIBUTING.md` | root | Set-up, `pnpm check`, commit style, "one small step per pull request", how to add a plugin, the DCO line | soon |
-| `SECURITY.md` | root | How to report a hole **privately** (GitHub's "Report a vulnerability"), what counts, how fast we answer. This product holds people's mail tokens, so this file matters more than usual. | soon |
-| `CODE_OF_CONDUCT.md` | root | Contributor Covenant | soon |
+| `CONTRIBUTING.md` | root | Set-up, `pnpm check`, commit style, "one small step per pull request", how to add a plugin, the DCO line | exists (plugin guide at step 3) |
+| `SECURITY.md` | root | How to report a hole **privately** (GitHub's "Report a vulnerability"), what counts, how fast we answer. This product holds people's mail tokens, so this file matters more than usual. | exists |
+| `CODE_OF_CONDUCT.md` | root | Contributor Covenant | exists |
 | `CHANGELOG.md` | root | Written by the release tool | with the first release |
 | `SUPPORT.md` | `.github/` | Where to ask questions (Discussions), so issues stay for bugs | soon |
 | `CODEOWNERS` | `.github/` | Who must review what. Start with one line (`* @owner`), and add `plugins/gmail/ @…` as maintainers join. Extra-careful paths: `apps/api/src/agents/policy.py`, `core/security.py`, `.github/workflows/`. | soon |
@@ -213,7 +214,7 @@ GitHub looks for these by name. Locations are the ones GitHub recognises.
 
 ### CI (GitHub Actions)
 
-Proposed workflows in `.github/workflows/`:
+Workflows in `.github/workflows/`. Today only a simple `ci.yml` exists (it runs `pnpm check`); the rest is the plan:
 
 | Workflow | Runs on | Does |
 |---|---|---|
@@ -233,7 +234,7 @@ Two things get version numbers, on different clocks:
 | **BotDesk the app** (web + api + built-in plugins together) | one number, `v0.3.0` | Docker images on GitHub Container Registry, a GitHub Release with notes |
 | **The plugin SDK** | its own number, `sdk-v0.2.0`, strict semantic versioning | PyPI |
 
-Recommended tool: **release-please** in "manifest" mode (Apache-2.0). It reads commit messages (the repo already writes `feat(web): …`, `docs: …`), keeps a release pull request up to date with the changelog, and tags when you merge it. It understands both `package.json` and `pyproject.toml` in one config, which changesets (JavaScript-only at heart) does not. Publishing the SDK is then a short job: `uv build --package botdesk-plugin-sdk` and `uv publish`, signed in to PyPI by **Trusted Publishing** (no stored password).
+Decided tool: **release-please** in "manifest" mode (Apache-2.0). It reads commit messages (the repo already writes `feat(web): …`, `docs: …`), keeps a release pull request up to date with the changelog, and tags when you merge it. It understands both `package.json` and `pyproject.toml` in one config, which changesets (JavaScript-only at heart) does not. Publishing the SDK is then a short job: `uv build --package botdesk-plugin-sdk` and `uv publish`, signed in to PyPI by **Trusted Publishing** (no stored password).
 
 Two promises that make upgrades safe for self-hosters:
 
@@ -279,8 +280,8 @@ Nothing here needs a big-bang change. Fold it into the build order:
 
 | When | Do |
 |---|---|
-| Now (docs only) | Agree this layout; write ADR 0006. Fix the root README's `packages/*` row. |
-| Step 0 | `deploy/docker/docker-compose.dev.yml` (Postgres + pgvector). `.github/workflows/ci.yml` with the web and api jobs. `CONTRIBUTING.md`, `SECURITY.md`, `CODE_OF_CONDUCT.md`, issue and PR templates, `CODEOWNERS`, `dependabot.yml`. |
+| Done | ADR 0006; the root README's `packages/*` row; CI (`pnpm check`), CONTRIBUTING, SECURITY, CODE_OF_CONDUCT, issue and PR templates. |
+| Step 0 | `deploy/docker/docker-compose.dev.yml` (Postgres + pgvector). Postgres in CI. `CODEOWNERS`, `dependabot.yml`. |
 | Step 1 | `src/jobs/`, `src/agents/`, `src/events/`, `src/worker.py`. |
 | Step 3 | Root uv workspace. `packages/plugin-sdk`, `plugins/_template`, `plugins/demo-echo`. Import rules in CI. `docs/plugins/`. |
 | Step 4 | `deploy/docker/docker-compose.yml`, the two Dockerfiles, `.env.example`, `docs/self-hosting/`, the compose smoke test, `release.yml` and the first tagged release. |

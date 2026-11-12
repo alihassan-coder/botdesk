@@ -19,7 +19,7 @@ Open **http://localhost:8000/api/docs** to see and try every route.
 | Command (repo root) | What it does |
 |---|---|
 | `pnpm dev:api` | Migrate, then run the API with auto-reload on :8000 |
-| `pnpm start:api` | Migrate, then run without reload (production style) |
+| `pnpm start:api` | Migrate, then run without reload. In production, migrations will move to their own `migrate` step ([ADR 0005](../adr/0005-job-queue-and-scaling.md)) |
 | `pnpm test:api` | pytest: unit and HTTP tests on in-memory SQLite (~5 s, no network) |
 | `pnpm db:migrate` | Apply migrations to `DATABASE_URL` |
 | `pnpm db:seed` | Add the demo team (ali@acme.dev / botdesk123, Sara, Omar in Acme Labs) and three bots. Not in production |
@@ -117,7 +117,7 @@ Error messages match the web app's wording, e.g. `401 "That email and password d
 
 1. Wire the web app's sign-in to this API (replace the mock in `apps/web/src/data/store.ts`).
 2. Invite emails (the link is copied by hand until an email provider is added).
-3. Bot replies, streamed over SSE (threads and messages are stored; bots don't answer yet).
-4. Agent runtime: LangGraph + LangChain models, Postgres checkpointer, approvals via `interrupt()`.
+3. Bot replies: the procrastinate job queue with the worker embedded in the API, the run graph, streaming over SSE ([ADR 0005](../adr/0005-job-queue-and-scaling.md)). Threads and messages are stored; bots don't answer yet.
+4. Tool pipeline, policy and approvals via `interrupt()` ([ADR 0004](../adr/0004-agent-runtime-and-safety.md)). Full order: [agents-and-plugins.md §14](../architecture/agents-and-plugins.md#14-build-order-each-step-small-tested-and-usable).
 5. Memory with mem0 (pgvector).
 6. Password reset emails, email verification, rate limiting on sign-in.

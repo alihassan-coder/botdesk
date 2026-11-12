@@ -1,6 +1,6 @@
 # BotDesk v1 — What we're building
 
-> The product definition. Terms are defined in [GLOSSARY.md](../../GLOSSARY.md); the why is in [vision.md](vision.md); the how is in [architecture/high-level.md](../architecture/high-level.md).
+> The product definition. Terms are defined in [GLOSSARY.md](../../GLOSSARY.md); the why is in [vision.md](vision.md); the how is in [architecture/](../architecture/README.md) (start with the reading guide).
 
 ## One line
 
@@ -53,7 +53,7 @@ Layout: bot sidebar (left) · thread (centre) · bot details pane (right, collap
 ## Build order
 
 1. **UI first, on mock data** (current phase). Every screen clickable against `apps/web/src/data/mock/`.
-2. **API** (`apps/api` + `apps/worker`): auth, orgs, bots, threads, runs, approvals; swap the mock source for the SDK.
+2. **API** (`apps/api`, with the worker inside it, [ADR 0005](../adr/0005-job-queue-and-scaling.md)): auth, orgs, bots, threads, runs, approvals; swap the mock source for the API.
 3. **Gmail plugin**, memory, computers, routines.
 4. Desktop, then mobile.
 
@@ -63,7 +63,8 @@ History: [PROGRESS.md](../PROGRESS.md).
 
 **Done**
 
-- Docs: this spec, vision, ADRs 0001–0002, architecture, research, glossary.
+- Docs: this spec, vision, ADRs 0001–0006, architecture, research, glossary.
+- API (`apps/api`): sign-in, organizations, invitations, bots, threads and messages. Bots don't reply yet.
 - Logo: the botdesk wordmark with an online light on the o, with all files in [docs/design/logo](../design/logo/README.md).
 - Web frontend on mock data (`apps/web`, Next.js 16, React 19, Tailwind 4, shadcn/ui). Plan and rules: [docs/frontend](../frontend/README.md).
   - App shell: sidebar that collapses to an icon rail, workspace header with org switcher, light/dark, phone/tablet/desktop layouts.
@@ -76,11 +77,12 @@ History: [PROGRESS.md](../PROGRESS.md).
 **In progress**
 
 - Backend changes to Python (ADR 0003, `docs/adr/0003-python-backend.md`): FastAPI, SQLAlchemy + Alembic, LangGraph for durable runs and approvals, mem0 for memory, own email/password auth, Neon Postgres for dev.
-- First backend slice: auth, orgs, bots, threads and messages, and streaming bot replies. Then the web app swaps its mock for the API in `store.ts`.
+- Wiring the web app to the API in `store.ts` (bots are done).
+- Next backend step: bots reply (job queue, worker, streaming). Build order: [agents-and-plugins.md §14](../architecture/agents-and-plugins.md#14-build-order-each-step-small-tested-and-usable).
 
 **Next**
 
 - Web: group chats with an @mention picker, the computer view (live screen, take over) and routine recording.
 - Design: brand tokens (colour, type, radius, motion), then the bot avatar system.
 
-**Open:** owner questions in [architecture §16](../architecture/high-level.md).
+**Open:** the remaining owner questions in [high-level.md §16](../architecture/high-level.md#16-questions-for-the-owner) (computers, approvers, pricing, retention, marketplace).

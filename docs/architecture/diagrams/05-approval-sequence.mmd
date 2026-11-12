@@ -11,8 +11,8 @@ sequenceDiagram
   API->>DB: save message + run + job (one transaction)
   Q->>RUN: job "advance run" (lock: this chat)
   RUN->>LLM: instructions + history + tools
-  LLM-->>RUN: tool call gmail_send_email(...)
-  RUN->>RUN: policy: Ask before acting × send = ASK
+  LLM-->>RUN: tool call gmail__send_email(...)
+  RUN->>RUN: policy: Ask before acting × external-send = ASK
   RUN->>DB: save approval request + checkpoint
   RUN-->>Q: job done (run is waiting_approval)
   DB-->>Ali: event, live update: approval card

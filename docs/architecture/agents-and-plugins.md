@@ -2,7 +2,8 @@
 
 **Status:** decided (2026-11-12). See §15 and ADRs [0004](../adr/0004-agent-runtime-and-safety.md), [0005](../adr/0005-job-queue-and-scaling.md), [0006](../adr/0006-repo-structure-plugins-and-project.md).
 **Reading time:** about 30 minutes. Every picture has a "how to read it" note.
-**Builds on:** [high-level.md](high-level.md) (§5 runtime, §8 plugins, §9 security, §10 approvals), rewritten for the Python stack in [ADR 0003](../adr/0003-python-backend.md).
+**Replaces:** [high-level.md](high-level.md) §5 (runtime), §7 (streaming), §8 (plugins), §9 (security) and §10 (approvals), which were written for the old TypeScript stack ([ADR 0003](../adr/0003-python-backend.md)).
+**Built today vs planned:** the API has sign-in, organizations, bots and chats. Everything else here (runs, the queue, the worker, plugins, approvals, memory) is the plan; §14 gives the order.
 **See also:** [repo-structure.md](repo-structure.md) for where each piece of this lives in the repo.
 
 > **Reading order if you're short on time:** 1 → 2 → 4 → 5 → 6 → 10 → 12. That covers the whole idea: a bot *run* is a loop, every action goes through one *pipeline*, risky actions *pause for you*, integrations are *plugins* the core never has to know about, and the same code *grows* from a laptop to many servers.
@@ -18,7 +19,7 @@ The diagrams are in [diagrams/](diagrams/): `.mmd` source (Mermaid, which GitHub
 **How to read it:** start at the top right and follow the arrows round.
 
 - **People** use the web app (desktop and mobile later). The browser sends a cookie; apps send the same session token as `Bearer`.
-- **The API process** (`apps/api`, FastAPI) is what we've built so far: sign-in, organizations, bots, chats. When you send a message it saves the message, a **run** and a **job** in one database transaction. It does not run the bot itself.
+- **The API process** (`apps/api`, FastAPI) is what we've built so far: sign-in, organizations, bots, chats. Today sending a message only saves it; bots don't reply yet. Once runs exist (build step 1), the API will save the message, a **run** and a **job** in one database transaction, and never run the bot itself.
 - **Postgres** is the only service BotDesk needs. It holds app data, the **job queue**, run **checkpoints** (paused runs live here), **events** for live updates and memories (pgvector).
 - **The worker process** takes jobs from the queue. Its **run engine** runs one LangGraph graph per run. Every tool call goes through the **tool pipeline**, which uses the **plugin registry** to reach Gmail or MCP servers.
 - **Live updates** flow back the other way: the worker writes events, the API streams them to your browser.
@@ -32,8 +33,8 @@ The worker is the **same code** as the API with a second way to start it. On a l
 
 **How to read it:** this is the product promise in one path. The important fork is **"Is the action risky?"**:
 
-- **Safe things** (reading, drafting, labelling) just happen, and you see them in a work log.
-- **Risky things** (sending, spending, deleting, logging in) become an **approval card** that you approve, edit or deny.
+- **Safe things** (reading, notes inside BotDesk) just happen, and you see them in a work log.
+- **Everything else** (drafts and labels in your apps, sending, spending, deleting, logging in) becomes an **approval card** that you approve, edit or deny, unless the bot's security level or a saved rule allows it (§5).
 - Anything that worked once can become a **routine** that runs on a schedule and still asks before risky steps.
 
 ## 3. Words used below
@@ -51,10 +52,10 @@ These are the same terms as in [GLOSSARY.md](../../GLOSSARY.md); code and UI use
 | **Approval** | A paused tool call waiting for a person. |
 | **Plugin** | A package that adds tools, triggers and sign-in for one app (Gmail, Slack…). |
 | **Trigger** | Something outside that starts a run (a new email, a webhook). |
-| **Routine** | A saved run on a schedule ("every Friday at 5 PM"). |
-| **Taint** | A mark on text that came from outside (email bodies, web pages). It's never trusted as instructions. |
+| **Routine** | A saved task a bot repeats on a schedule or trigger ("every Friday at 5 PM"). |
+| **Taint** | A mark on a **run** once it has read outside text (an email, a web page, an MCP result). After that, every action above `write-internal` asks (§5). |
 | **Checkpoint** | A saved snapshot of a run, so it can stop and resume later, even after a restart. |
-| **Event** | One thing that happened in a run that people should see live (a reply, an approval card, a step). |
+| **Run event** | One thing that happened in a run that people should see live (a reply, an approval card, a step). Saved in `run_events`. |
 
 ## 4. A run, step by step
 
@@ -85,7 +86,7 @@ LangGraph has one behaviour that surprises everyone: **when a paused run resumes
 2. **Every node is safe to run twice.** Database writes use "insert, or do nothing if it's already there", keyed by `run_id` + the model's `tool_call_id`.
 3. **A tool call runs at most once, and we can prove it.** Before calling the plugin, `execute_tool` writes a `tool_executions` row with status `started` (unique per `run_id` + `tool_call_id`). After the plugin returns it writes `succeeded` and the result.
    - On a retry, `succeeded` → reuse the saved result, don't call again.
-   - On a retry, still `started` → we **don't know** whether the email went out. For `read` tools we simply run again. For anything risky the run goes to **needs_attention** and a person chooses *retry* or *skip*. Gmail has no "send once" key, so being honest here is the only safe choice.
+   - On a retry, still `started` → we **don't know** whether the email went out. If the tool is declared `idempotent` (most `read` tools are) we simply run again. Otherwise the run goes to **needs_attention** and a person chooses *retry* or *skip*. Gmail has no "send once" key, so being honest here is the only safe choice.
 
 ### 4.2 Limits on every run
 
@@ -126,7 +127,7 @@ A run stops with a clear message when it reaches any of these. All are settings 
    The result is a **decision trace**, e.g. `bot=Ask before acting · risk=external-send · taint=yes → ask`. It's stored, so you can always see *why*. The policy is a **pure function** (inputs in, decision out, no database), so it can be tested with a big table of cases.
 3. **approval:** a chain of **answerers**, tried in order: saved rules ("always allow labelling") → an optional auto-review model → a person. **If nobody answers, the answer is no.** Two limits on the chain:
    - The **auto-review model can only say "no" or "ask a person"** when the run is tainted. It reads the same outside text the bot read, so it can be fooled the same way. It is a filter, not a guard.
-   - **Saved rules never apply to `credential` or `destructive`**, and a rule matches exact tools and argument patterns, not "everything from this bot".
+   - **Saved rules never allow `credential`, `destructive` or a tainted `external-send`**, and a rule matches exact tools and argument patterns ("always allow labelling from this bot"), not "everything from this bot".
 4. **execute:** the plugin's code, with a timeout, through the "started / succeeded" record of §4.1, so a retry never silently sends an email twice.
 5. **post_execute:** check the output schema, mark outside text as **tainted**, write the audit log and usage, and show a card in chat.
 
@@ -142,6 +143,7 @@ A run stops with a clear message when it reaches any of these. All are settings 
 
 - **Fixed rules:** `credential` (logins, keys, sharing) is never automatic, and in v1 neither is `destructive`.
 - **Effective level** = the strictest of: organization ceiling, bot level, routine level.
+- **Not in the code yet:** the web app's `POLICY` table (`apps/web/src/features/bots/security-levels.ts`) still has six classes; adding `write-external` is a to-do from ADR 0004.
 
 > **Taint still applies:** after a run reads outside text, everything above *write-internal* asks, even for *Autonomous* bots (see below).
 
@@ -197,7 +199,7 @@ await graph.ainvoke(
     Command(resume={"approved": True, "args": edited_args, "by": "Ali"}),
     config={
         "configurable": {"thread_id": run_id},   # same id = same paused run
-        "recursion_limit": 60,                   # our own cap, see §4.2
+        "recursion_limit": 60,                   # graph steps; the 25 model steps of §4.2 are checked in call_model
     },
     durability="sync",                           # save each step before the next starts
 )
@@ -311,7 +313,7 @@ The registry reads that group at startup with `importlib.metadata.entry_points(g
   "permissions": { "egress": ["gmail.googleapis.com", "oauth2.googleapis.com"] },
   "tools": [
     { "name": "search", "risk": "read", "egress": "fixed" },
-    { "name": "draft_reply", "risk": "write-internal", "egress": "fixed" },
+    { "name": "draft_reply", "risk": "write-external", "egress": "fixed" },
     { "name": "send_email", "risk": "external-send", "egress": "fixed", "approval": "always" }
   ],
   "triggers": [{ "name": "new_email", "delivery": ["poll", "push"] }]
@@ -328,7 +330,7 @@ The policy engine reads `risk` straight from the manifest, so **adding integrati
 
 ![Plugin tiers](diagrams/png/09-plugin-tiers.png)
 
-**How to read it:** the further down, the less we trust the code, so the more it's isolated. Every tier uses the same manifest, risk classes and approvals.
+**How to read it:** the further down, the less we trust the code, so the more it's isolated. Every tier uses the same manifest, risk classes and approvals. **v1 has only T0 and T3.** The list below is in build order, not tier order.
 
 - **T0 builtin:** ours, reviewed like core code (Gmail first). **v1.**
 - **T3 mcp-remote:** any MCP server. This is the way for **anyone else** to add an integration in v1: they run a server, we never run their code. **v1, right after Gmail.** Details in §10.5.
@@ -404,7 +406,7 @@ Why a queue from day one, even on a laptop: the API saves your message, the run 
 
 ### 12.2 The three stages
 
-| | Stage 0 · Laptop | Stage 1 · Small server | Stage 2 · Growing |
+| | Stage 1 · Laptop | Stage 2 · Server | Stage 3 · Many |
 |---|---|---|---|
 | **Who it's for** | You, developing | A self-hosted team; the first hosted users | Many organizations |
 | **Processes** | 1: the API starts a worker inside itself | 2 + Postgres: `api`, `worker` (plus a one-shot `migrate`) in docker compose | `api` × N behind a load balancer, `worker` × M |
@@ -436,7 +438,7 @@ Three different kinds of connection, and they must not be mixed up:
 |---|---|---|
 | App queries (SQLAlchemy) | ordinary transactions | `DATABASE_URL`: may be a **pooled** address. Behind a pooler, turn off psycopg's prepared statements (`prepare_threshold=None`). |
 | LangGraph checkpointer | its own small psycopg pool with `autocommit=True` and `row_factory=dict_row`; same prepared-statement rule | same address, separate pool |
-| `LISTEN` (event bus, queue wake-ups) and **migrations** | a real session: pooled addresses in transaction mode **drop `LISTEN` and `SET`** | `DATABASE_URL_DIRECT`: always a **direct** address |
+| The **job queue**, `LISTEN` (event bus, queue wake-ups) and **migrations** | a real session: pooled addresses in transaction mode **drop `LISTEN` and `SET`** | `DATABASE_URL_DIRECT`: always a **direct** address |
 
 Also:
 
@@ -451,7 +453,7 @@ Also:
 - **`org_id` is on every new table** (`runs`, `run_steps`, `approval_requests`, `tool_executions`, `run_events`, `connections`…) and every query filters by it. LangGraph's checkpoint tables have no `org_id`; they are only ever reached through a `runs` row that was already checked.
 - **A test tries to cross the wall.** For every route and every job: create two organizations, and check that one can never read or change the other's rows.
 - **Row-level security later, as a second wall.** Before the hosted service takes strangers, add Postgres RLS: the app connects as a role that doesn't own the tables, tables use `FORCE ROW LEVEL SECURITY`, and each transaction sets the organization with `set_config('app.current_org', …, true)` (transaction-scoped, so it is safe behind a pooler). It's cheap insurance against one forgotten `WHERE`.
-- **Fair sharing.** Per-organization caps on running jobs, per-organization model keys, and backing off politely when a model provider says "slow down", so one busy organization can't starve the rest. Sign-in and API rate limits are counted in Postgres (or Valkey at stage 2), not in process memory, or they stop working the day there are two API copies.
+- **Fair sharing.** Per-organization caps on running jobs, per-organization model keys, and backing off politely when a model provider says "slow down", so one busy organization can't starve the rest. Sign-in and API rate limits are counted in Postgres (or Valkey at stage 3), not in process memory, or they stop working the day there are two API copies.
 
 ### 12.6 Seeing what is going on
 
@@ -470,7 +472,7 @@ Every table has `org_id`.
 |---|---|
 | `runs` | id (= LangGraph thread id for its checkpoints), bot, thread, trigger, parent run, hop, effective level, tainted, status, cost, `graph_version`, stop requested |
 | `run_steps` | each model call and tool call: kind, tool, risk, decision trace, summary, tokens, cost, input/output refs |
-| `tool_executions` | one row per tool call: `run_id` + `tool_call_id` (unique), status `started` / `succeeded` / `failed` / `unknown`, args hash, result ref. The "run at most once" record (§4.1) |
+| `tool_executions` | one row per tool call: `run_id` + `tool_call_id` (unique), status `started` / `succeeded` / `failed`, args hash, result ref. The "run at most once" record (§4.1) |
 | `approval_requests` / `approval_decisions` | what's waiting, preview, expiry, status; who decided, when, final-args hash |
 | `run_events` | durable live-update events: growing id, thread, kind, payload. Trimmed after a few days (§12.3) |
 | `plugin_installations` | organization, plugin id, pinned version, settings, consented scopes, pinned tool hashes (MCP) |
@@ -485,10 +487,10 @@ Plus the tables that procrastinate and LangGraph create for themselves (created 
 
 ## 14. Build order (each step small, tested and usable)
 
-0. **Foundations (short).** A local Postgres in docker compose for development, and the API tests able to run on Postgres as well as SQLite (the queue, checkpoints, locks and pgvector don't exist in SQLite). CI that runs the checks on every push.
+0. **Foundations (short).** A local Postgres in docker compose for development, and the API tests able to run on Postgres as well as SQLite (the queue, checkpoints, locks and pgvector don't exist in SQLite). CI that runs the checks on every push (done: `.github/workflows/ci.yml` runs `pnpm check`, on SQLite for now).
 1. **Bots reply.** The job queue with the worker **embedded** in the API. The run graph without tools: load_context → call_model → save. Events and SSE with the in-memory bus, including `Last-Event-ID` replay. Uses a stand-in model when there's no API key. Run limits (§4.2).
 2. **Pipeline + policy + approvals.** One fake built-in plugin (`demo-echo` with read / external-send tools) to prove auto, ask (interrupt/resume), deny, expiry, double-click, and "worker killed mid-tool" end to end. Tests include the injection file.
-3. **Plugin SDK + registry.** `packages/plugin-sdk`, entry points + allowlist, manifest generated from code and validated.
+3. **Plugin SDK + registry.** The root uv workspace, `packages/plugin-sdk`, entry points + allowlist, manifest generated from code and validated.
 4. **Run it as two processes.** `WORKER_MODE=separate`, the Postgres event bus, the docker compose file. (Small, because of the rule in §12.)
 5. **Gmail plugin** (T0) with encrypted OAuth connections and the `new_email` trigger (polling first).
 6. **Memory** with mem0.

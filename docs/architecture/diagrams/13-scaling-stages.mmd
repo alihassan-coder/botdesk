@@ -1,14 +1,14 @@
 flowchart TB
-  subgraph S0["Stage 0 · Laptop: one process"]
+  subgraph S0["Stage 1 · Laptop"]
     direction LR
-    A0["API + worker in one process<br/>(pnpm dev:api)<br/>events: in memory"] --> P0[("Postgres<br/>data · queue · checkpoints")]
+    A0["API + worker in one process<br/>(WORKER_MODE=embedded)<br/>events: in memory"] --> P0[("Postgres<br/>data · queue · checkpoints")]
   end
-  subgraph S1["Stage 1 · Small server: API + worker (docker compose)"]
+  subgraph S1["Stage 2 · Server"]
     direction LR
-    A1["API<br/>(1 process)"] --> P1[("Postgres<br/>events: LISTEN/NOTIFY<br/>+ run_events table")]
+    A1["API<br/>(docker compose,<br/>WORKER_MODE=separate)"] --> P1[("Postgres<br/>events: LISTEN/NOTIFY<br/>+ run_events table")]
     W1["Worker<br/>(1 process, about 20 runs at once)"] --> P1
   end
-  subgraph S2["Stage 2 · Growing: many of each"]
+  subgraph S2["Stage 3 · Many"]
     direction LR
     LB["Load balancer"] --> A2["API × N<br/>(stateless)"]
     A2 --> PB["Connection pooler<br/>(PgBouncer or Neon pooled)"] --> P2[("Postgres<br/>read replica later")]

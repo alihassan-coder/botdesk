@@ -1,8 +1,14 @@
-# BotDesk — High-Level Architecture (proposal)
+# BotDesk — High-Level Architecture (first proposal, partly historical)
 
-> **Backend stack changed (2026-11-12):** the API is Python (FastAPI, SQLAlchemy, Alembic, LangGraph, mem0), not Node/Hono/Drizzle/Better Auth/DBOS. See [ADR 0003](../adr/0003-python-backend.md). Plugins, security levels, approvals and the data model below still apply.
+> **Partly historical. Read [the reading guide](README.md) and [agents-and-plugins.md](agents-and-plugins.md) first.** This is the first proposal, from the TypeScript era. Since then:
+> - [ADR 0003](../adr/0003-python-backend.md) replaced the stack: Python (FastAPI, SQLAlchemy, Alembic, LangGraph, mem0), not Node/Hono/oRPC/Drizzle/Better Auth/DBOS/AI SDK.
+> - [ADR 0004](../adr/0004-agent-runtime-and-safety.md) replaced the runtime, security levels (3, not L1–L4), risk classes and approval flow (§5, §9, §10).
+> - [ADR 0005](../adr/0005-job-queue-and-scaling.md) replaced queues, streaming and deploy (§5.2, §7, §13): procrastinate on Postgres, the worker inside `apps/api`, `LISTEN/NOTIFY` + `run_events`.
+> - [ADR 0006](../adr/0006-repo-structure-plugins-and-project.md) replaced the repo layout and plugin tiers (§3, §8): Python plugin SDK, allowlisted entry points, MCP-only third-party plugins in v1.
+>
+> Still current: the product decisions (§0, except the stack in D2 and D7), Grok Bot in one table (§1), bot computers (§6), the DeepSeek Harness study (§5.1, though its verdict now applies to LangGraph, not DBOS + AI SDK), and the ideas in §15. A short "Superseded" note marks each replaced section.
 
-> Status: **proposal for discussion**, 2026-11-11 (second pass). Nothing is built yet. Library versions and licenses were checked on npm/GitHub on 2026-11-11.
+> Status: **first proposal**, 2026-11-11 (second pass), not updated since; see the note above. Library versions and licenses were checked on npm/GitHub on 2026-11-11.
 > Product: an open-source (MIT) **Grok Bot**, a team of always-on AI agents ("bots") with their own cloud computers, approvals, group chats, routines and memory. See [vision](../product/vision.md), [ADR 0001](../adr/0001-product-scope-and-deployment.md) and [ADR 0002](../adr/0002-grok-bot-parity-and-plugin-platform.md).
 
 ## Contents
@@ -126,6 +132,8 @@ flowchart LR
 
 ## 3. Repo layout
 
+> **Superseded:** [ADR 0006](../adr/0006-repo-structure-plugins-and-project.md) and [repo-structure.md](repo-structure.md). No `apps/worker`, `apps/plugin-runner` or TypeScript packages for the backend.
+
 **Recommendation: pnpm + Turborepo monorepo** (matches the scaffold already created). *Why:* lightest setup that gives cached builds and shared TS packages across web/desktop/mobile. *Alternative:* Nx (stronger generators/graph, heavier, more opinionated).
 
 | Path | What | Notes |
@@ -153,6 +161,8 @@ flowchart LR
 | `infra/compose` | docker-compose for self-host | |
 
 ## 4. Backend shape & client API
+
+> **Superseded:** [ADR 0003](../adr/0003-python-backend.md): FastAPI, our own auth, OpenAPI client. The worker lives inside `apps/api` ([ADR 0005](../adr/0005-job-queue-and-scaling.md)).
 
 | Question | Recommendation | Why (1 line) | Alternative |
 |---|---|---|---|
@@ -200,6 +210,8 @@ flowchart LR
 
 ### 5.2 Durable workflows
 
+> **Superseded:** no DBOS. Runs are LangGraph graphs with a Postgres checkpointer, moved forward by procrastinate jobs; concurrency is one run per **chat**, 2 per bot ([ADR 0004](../adr/0004-agent-runtime-and-safety.md), [ADR 0005](../adr/0005-job-queue-and-scaling.md)). An idempotency key does not stop a double send; see the `tool_executions` record in [agents-and-plugins.md §4.1](agents-and-plugins.md#41-three-rules-that-keep-a-run-safe-to-resume).
+
 | Option | License | Infra needed | Verdict |
 |---|---|---|---|
 | **DBOS Transact (TS)** | MIT | **Only Postgres** (library, no extra server) | **Recommended.** Durable steps, `send`/`recv` (approvals, bot-to-bot wake-ups), durable sleep, cron, queues with per-partition concurrency, rate limits, dedup, priority |
@@ -226,6 +238,8 @@ flowchart LR
 
 ### 5.4 Proactive scheduler & triggers
 
+> **Superseded:** scheduled jobs come from procrastinate, not DBOS ([agents-and-plugins.md §7](agents-and-plugins.md#7-triggers-and-routines-bots-that-start-on-their-own)).
+
 - Trigger sources: **plugin triggers** (§8: webhook, push, poll), `cron`, `inbound_email`, `follow_up` (bot-created timer), `thread_stall`.
 - DBOS scheduled workflows run cron and plugin polling; follow-ups = durable sleep; a **stall detector** (hourly) finds open `tasks` / unanswered threads and wakes the owning bot with a "nudge" prompt.
 
@@ -249,6 +263,8 @@ flowchart LR
 
 ## 7. Streaming & realtime
 
+> **Superseded:** [ADR 0005](../adr/0005-job-queue-and-scaling.md): SSE from the API, events saved in `run_events` and announced with Postgres `LISTEN/NOTIFY`; Valkey only as an optional profile ([agents-and-plugins.md §12.3](agents-and-plugins.md#123-live-updates-that-survive-more-than-one-server)).
+
 | Concern | Recommendation | Alternative |
 |---|---|---|
 | Transport | **WebSocket** gateway in `apps/api` for multi-user threads (messages, typing, presence, approvals, bot status) + **SSE** for single-response streams and resume | Centrifugo (Apache-2.0); Postgres LISTEN/NOTIFY for tiny self-hosts |
@@ -259,6 +275,8 @@ flowchart LR
 | Presence/typing | Ephemeral, Valkey only | — |
 
 ## 8. Integration plugin platform
+
+> **Superseded:** [ADR 0006](../adr/0006-repo-structure-plugins-and-project.md) and [agents-and-plugins.md §10](agents-and-plugins.md#10-plugins). Plugins are Python packages found through allowlisted entry points; v1 has only built-in (T0) and remote MCP (T3) plugins; T2 is a separate sandbox only if needed, not V8 isolates; no `definePlugin()`; registrations are not undone on uninstall. MCP tools all start as `external-send`; their hints are ignored (§8.6 below is wrong on this).
 
 Goal (D10): Gmail first, then #2…#200 **without touching the core**. The core only knows the plugin interface; risk levels come from manifests, so policy needs no per-integration code.
 
@@ -367,6 +385,8 @@ definePlugin({
 
 ### 8.7 Worked example: Gmail plugin (`plugins/gmail`, T0)
 
+> **Superseded:** the level columns use the old L2/L3 names, `send` is now `external-send`, and polling is the default everywhere (push later). The tool list and scopes are still a good starting point.
+
 **Auth:** OAuth2 (Google), owner = user or bot-dedicated mailbox; incremental scopes; `byoClient` so self-hosters use their own Google Cloud OAuth client.
 
 | Tool | Gmail API | Scope (minimum) | Risk | Untrusted output | Preview | Default at L2 "Ask before acting" | Default at L3 "Trusted" |
@@ -388,6 +408,8 @@ definePlugin({
 **Caveat (SaaS):** `gmail.readonly`/`gmail.modify`/`gmail.compose` are Google **restricted scopes** → a published SaaS app needs Google OAuth verification plus a yearly third-party security assessment (CASA). Self-hosters with their own OAuth client in testing/internal mode avoid this. Plan the time and cost before SaaS launch.
 
 ## 9. Security levels
+
+> **Superseded:** [ADR 0004](../adr/0004-agent-runtime-and-safety.md) has the decided table: **three** levels (Read only, Ask before acting, Autonomous within limits; no L1–L4, no "Trusted") and seven risk classes named `read`, `write-internal`, `write-external`, `external-send`, `spend`, `destructive`, `credential`. Taint is strict: no org may relax it. Details in [agents-and-plugins.md §5](agents-and-plugins.md#5-the-tool-pipeline-one-door-for-every-action).
 
 ### 9.1 Risk taxonomy (per tool action, declared in the manifest)
 
@@ -442,6 +464,8 @@ Order of severity (for `max()`): read < write-internal < write-external < send <
 Envelope encryption: AES-256-GCM per-org **DEK**, wrapped by a **KEK** from `BOTDESK_MASTER_KEY` (self-host) or KMS (SaaS). Model keys, OAuth tokens, API keys and plugin secrets are all `connections`/`provider_credentials` rows with ciphertext only. Decrypt only in the worker at call time; refresh tokens rotated by the host; never returned to clients (last 4 only); every decrypt is audited. Key rotation re-wraps DEKs without re-encrypting data.
 
 ## 10. Approval system v1 (basic, extensible)
+
+> **Superseded:** the flow below uses DBOS `send`/`recv`. The decided flow pauses with LangGraph `interrupt()` and resumes through a queued job after an atomic `UPDATE … WHERE status = 'pending'` ([ADR 0004](../adr/0004-agent-runtime-and-safety.md), [agents-and-plugins.md §6](agents-and-plugins.md#6-approvals-in-time-order)). The tables and rules (expiry, edit, fail closed) mostly still apply.
 
 ### 10.1 Data model
 
@@ -503,6 +527,8 @@ sequenceDiagram
 
 ## 11. Data model sketch
 
+> **Superseded:** auth tables are our own, not Better Auth ([ADR 0003](../adr/0003-python-backend.md)); `runs.id` is the LangGraph thread id, not a DBOS workflow id; new tables are listed in [agents-and-plugins.md §13](agents-and-plugins.md#13-new-tables-this-needs).
+
 All tenant tables carry `org_id` (indexed, first column of composite indexes). `*` = Better Auth-managed.
 
 | Table | Key columns |
@@ -544,6 +570,8 @@ All tenant tables carry `org_id` (indexed, first column of composite indexes). `
 
 ## 12. Tools, memory, files
 
+> **Superseded:** the TypeScript libraries here (AI SDK, `@ai-sdk/mcp`, `arctic`, the mem0 Node package) are replaced by their Python counterparts: LangChain, `langchain[mcp]`, mem0 for Python ([ADR 0003](../adr/0003-python-backend.md)).
+
 | Area | Recommendation | Why | Alternative |
 |---|---|---|---|
 | Providers | AI SDK 7 provider packages + `@ai-sdk/openai-compatible` for custom endpoints | One interface, streaming, tools, reasoning parts | LiteLLM proxy (Python) |
@@ -558,6 +586,8 @@ All tenant tables carry `org_id` (indexed, first column of composite indexes). `
 **mem0 caveats (verified):** v3 OSS **removed graph memory** (graph is Platform-only); extraction is **ADD-only** (no UPDATE/DELETE events → we build dedupe/edit UI); `search` uses `topK` + `filters`; v3 scores shifted; pgvector TS config supports `connectionString`, `hnsw`, `diskann`. mem0 does **not** enforce tenancy → wrap every call with org-scoped `filters`. Memory written from untrusted content is tagged with its source (an injected email must not become a permanent "preference" silently).
 
 ## 13. Self-hosting & deploy
+
+> **Superseded:** [ADR 0005](../adr/0005-job-queue-and-scaling.md): Postgres is the only required service (no Valkey by default), migrations are Alembic in a one-shot `migrate` step, and the worker is the API image started a second way.
 
 | Path | Components |
 |---|---|
@@ -597,6 +627,8 @@ All tenant tables carry `org_id` (indexed, first column of composite indexes). `
 | 12 | **Approve from anywhere** | Approve/deny/edit from push, email, or Slack with signed one-tap links | Bots don't stall while you're away | M | Small — `approval_decisions.via` |
 
 ## 16. Questions for the owner
+
+> **Superseded:** questions 1, 4, 5, 6 and 7 are answered by ADRs 0004–0006 (copy dsh's ideas on LangGraph; own Google client first; three levels; MCP-only third-party plugins; strict taint with no relaxing). The rest are still open.
 
 Answered and removed since the first pass: v1 scope (= full Grok Bot parity), first integration (= Gmail), approval defaults (= security levels, §9.2).
 

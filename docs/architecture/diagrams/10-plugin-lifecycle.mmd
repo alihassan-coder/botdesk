@@ -6,6 +6,6 @@ stateDiagram-v2
   Enabled --> Enabled: the bot uses tools (through the pipeline)
   Enabled --> Connected: tools turned off
   Connected --> Installed: disconnect (token revoked)
-  Installed --> Available: uninstall (every registration undone)
+  Installed --> Available: uninstall (installation row removed)
   Enabled --> Paused: token expired or version withdrawn
   Paused --> Enabled: reconnect or upgrade

@@ -1,17 +1,16 @@
 sequenceDiagram
   autonumber
   participant G as Gmail
-  participant API as API (poll every 60 s, or push)
-  participant SCH as Scheduler and triggers
-  participant RUN as Run engine
+  participant SCH as Worker: trigger job
   participant DB as Postgres
+  participant RUN as Worker: run engine
   actor Ali as Ali
-  G->>API: a new email arrived
-  API->>SCH: trigger new_email for bots that subscribed
-  SCH->>DB: skip duplicates (message id), save the cursor
-  SCH->>RUN: queue a run (bot = Inbox, input = the email, marked untrusted)
-  RUN->>RUN: read and label (auto), draft a reply (auto)
-  RUN->>RUN: send the reply: policy says ASK (untrusted input keeps it ask)
+  SCH->>G: any new email? (every 60 s, Gmail push later)
+  G-->>SCH: yes, one new email
+  SCH->>DB: skip duplicates (message id), save the cursor,<br/>queue a run for each bot that subscribed
+  DB->>RUN: job "start run" (bot = Inbox, input = the email)
+  Note right of RUN: reads the email (auto).<br/>The run is now tainted.
+  Note right of RUN: label, draft, send a reply:<br/>policy says ASK (tainted run),<br/>unless a saved rule allows it
   RUN->>DB: approval request + checkpoint
   RUN-->>Ali: notification + approval card
-  Note over SCH: Routines work the same way,<br/>started by the clock instead of an email
+  Note over SCH,RUN: Routines work the same way,<br/>started by the clock instead of an email

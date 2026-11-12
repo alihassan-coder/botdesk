@@ -205,6 +205,25 @@ test("the sidebar collapses to an icon rail and stays that way", async ({ page }
   await expect(sidebar).toHaveAttribute("data-state", "expanded");
 });
 
+test("starting a group chat from the New menu; the bot you @mention replies", async ({ page }) => {
+  await page.goto("/chat/t_chief");
+  await page.getByRole("button", { name: "New", exact: true }).click();
+  await page.getByRole("menuitem", { name: "New group" }).click();
+
+  const dialog = page.getByRole("dialog", { name: "New group" });
+  await dialog.getByLabel("Name").fill("Hiring");
+  await dialog.getByRole("checkbox", { name: /Talent Scout/ }).click();
+  await dialog.getByRole("checkbox", { name: /Sara Khan/ }).click();
+  await dialog.getByRole("button", { name: "Create" }).click();
+
+  await expect(page).not.toHaveURL(/t_chief/);
+  await expect(page.getByRole("heading", { name: "Hiring", level: 1 })).toBeVisible();
+  const box = page.getByRole("textbox", { name: "Message Hiring" });
+  await box.fill("@talent find two designers");
+  await box.press("Enter");
+  await expect(page.getByText(/report back here/)).toBeVisible({ timeout: 10_000 });
+});
+
 test("creating a routine; its bot confirms in chat", async ({ page }) => {
   await page.goto("/routines");
   await page.getByRole("link", { name: "New routine" }).click();

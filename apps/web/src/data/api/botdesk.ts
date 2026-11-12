@@ -73,6 +73,9 @@ export const threadApi = {
   list: (orgId: string) => apiFetch<ApiThread[]>(`/api/v1/orgs/${orgId}/threads`),
   /** Your chat with a bot: the existing one, or a new one. */
   openDm: (orgId: string, botId: string) => apiFetch<ApiThread>(`/api/v1/orgs/${orgId}/threads/dm`, { method: "POST", body: { botId } }),
+  /** A group with you plus the bots and people you pick; they must all be in the org. */
+  createGroup: (orgId: string, group: { title: string; botIds: string[]; userIds: string[] }) =>
+    apiFetch<ApiThread>(`/api/v1/orgs/${orgId}/threads/groups`, { method: "POST", body: group }),
   /** Oldest first. For older ones, pass the first message's createdAt as `before`. */
   messages: (orgId: string, threadId: string, { limit, before }: { limit: number; before?: string }) => {
     const query = new URLSearchParams({ limit: String(limit), ...(before ? { before } : {}) });

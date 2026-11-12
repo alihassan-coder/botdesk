@@ -90,6 +90,45 @@ describe("editAndApprove", () => {
   });
 });
 
+describe("createGroup", () => {
+  it("starts a group with you, the people and the bots you picked, at the top of your chats", async () => {
+    const result = await actions.createGroup({ title: "  Hiring  ", botIds: ["b_talent", "b_chief"], userIds: ["u_sara"] });
+    expect(result).toEqual({ ok: true, threadId: expect.any(String) });
+
+    const { threadId } = result as { threadId: string };
+    expect(state().threads[0]).toMatchObject({
+      id: threadId, kind: "group", title: "Hiring", unread: 0,
+      participants: [
+        { type: "user", id: "u_me" },
+        { type: "user", id: "u_sara" },
+        { type: "bot", id: "b_talent" },
+        { type: "bot", id: "b_chief" },
+      ],
+    });
+  });
+
+  it("adds you once, even if you're picked too", async () => {
+    const { threadId } = (await actions.createGroup({ title: "Solo", botIds: ["b_chief"], userIds: ["u_me"] })) as { threadId: string };
+    const people = state().threads.find((t) => t.id === threadId)!.participants.filter((p) => p.type === "user");
+    expect(people).toEqual([{ type: "user", id: "u_me" }]);
+  });
+
+  it("needs a name and at least one bot", async () => {
+    const before = state().threads.length;
+    await expect(actions.createGroup({ title: " ", botIds: ["b_chief"], userIds: [] })).resolves.toEqual({ ok: false, error: "Give the group a name." });
+    await expect(actions.createGroup({ title: "No bots", botIds: [], userIds: ["u_sara"] })).resolves.toEqual({ ok: false, error: "Pick at least one bot." });
+    expect(state().threads).toHaveLength(before);
+  });
+
+  it("in the new group, the bot you @mention replies", async () => {
+    vi.useFakeTimers();
+    const { threadId } = (await actions.createGroup({ title: "Ops", botIds: ["b_chief", "b_bugs"], userIds: [] })) as { threadId: string };
+    actions.sendMessage(threadId, "@bugs is staging up?");
+    finishBotReply();
+    expect(lastMessageIn(threadId).author).toEqual({ type: "bot", id: "b_bugs" });
+  });
+});
+
 describe("smaller actions", () => {
   it("answerQuestion stores the chosen option", () => {
     actions.answerQuestion("m13", "No");

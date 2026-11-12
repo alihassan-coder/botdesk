@@ -387,6 +387,29 @@ describe("chats on the API", () => {
     expect(state().threads.map((t) => [t.id, t.title])).toEqual([["t1", "Scout"], ["g1", "Launch"], ["t2", "Writer"]]);
   });
 
+  it("createGroup starts the group on the API and puts it first in your chats", async () => {
+    routes["POST /api/v1/orgs/o1/threads/groups"] = {
+      status: 201,
+      body: { ...thread("g2", null, "group"), title: "Research", participants: [{ type: "user", id: "u1" }, { type: "user", id: "u2" }, { type: "bot", id: "b1" }] },
+    };
+    const result = await actions.createGroup({ title: "Research", botIds: ["b1"], userIds: ["u2", "u1"] });
+
+    expect(result).toEqual({ ok: true, threadId: "g2" });
+    const request = vi.mocked(fetch).mock.calls.find(([url]) => String(url).endsWith("/threads/groups"))!;
+    // You're added by the API as the creator, so you aren't sent.
+    expect(JSON.parse(String(request[1]?.body))).toEqual({ title: "Research", botIds: ["b1"], userIds: ["u2"] });
+    expect(state().threads[0]).toMatchObject({ id: "g2", kind: "group", title: "Research" });
+  });
+
+  it("createGroup passes on the API's refusal and adds nothing", async () => {
+    routes["POST /api/v1/orgs/o1/threads/groups"] = { status: 404, body: { detail: "Some of those people or bots aren't in this organization." } };
+    const before = state().threads.length;
+    await expect(actions.createGroup({ title: "Research", botIds: ["b9"], userIds: [] })).resolves.toEqual({
+      ok: false, error: "Some of those people or bots aren't in this organization.",
+    });
+    expect(state().threads).toHaveLength(before);
+  });
+
   it("opening a chat loads its messages and follows its live updates; closing stops following", async () => {
     const close = actions.openThread("t1");
     expect(state().threadLoads.t1?.status).toBe("loading");

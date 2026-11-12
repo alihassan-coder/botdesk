@@ -1,5 +1,5 @@
+import { useState } from "react";
 import Link from "next/link";
-import { toast } from "sonner";
 import { PanelLeft, Plus, Search, SquarePen, Store, Users } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
@@ -14,6 +14,7 @@ import { SidebarInput, SidebarTrigger, useSidebar } from "@/components/ui/sideba
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { useShortcut } from "@/hooks/use-shortcut";
 import { openCommandPalette } from "@/features/command-palette/command-palette";
+import { NewGroupDialog } from "@/features/threads/new-group-dialog";
 import { BotdeskLockup, BotdeskMark } from "./logo";
 import { OrgSwitcher } from "./org-switcher";
 
@@ -92,30 +93,34 @@ function ExpandButton({ shortcut }: { shortcut: string }) {
 
 /** New: create a bot, hire one from the marketplace, or start a group chat. */
 function NewMenu({ onNavigate }: { onNavigate?: () => void }) {
+  const [groupOpen, setGroupOpen] = useState(false);
   return (
-    <DropdownMenu>
-      <Tooltip>
-        <TooltipTrigger asChild>
-          <DropdownMenuTrigger asChild>
-            <Button variant="outline" size="icon-sm" className="size-9 rounded-[10px] group-data-[collapsible=icon]:size-8 group-data-[collapsible=icon]:border-transparent group-data-[collapsible=icon]:bg-transparent group-data-[collapsible=icon]:shadow-none dark:group-data-[collapsible=icon]:border-transparent dark:group-data-[collapsible=icon]:bg-transparent" aria-label="New">
-              <SquarePen />
-            </Button>
-          </DropdownMenuTrigger>
-        </TooltipTrigger>
-        <TooltipContent side="right">New bot or group</TooltipContent>
-      </Tooltip>
-      <DropdownMenuContent align="end" className="w-56">
-        <DropdownMenuItem asChild>
-          <Link href="/bots/new" onClick={onNavigate}><Plus /> New bot</Link>
-        </DropdownMenuItem>
-        <DropdownMenuItem asChild>
-          <Link href="/marketplace" onClick={onNavigate}><Store /> Hire from marketplace</Link>
-        </DropdownMenuItem>
-        <DropdownMenuSeparator />
-        <DropdownMenuItem onSelect={() => toast("Group chats with an @mention picker arrive next.")}>
-          <Users /> New group
-        </DropdownMenuItem>
-      </DropdownMenuContent>
-    </DropdownMenu>
+    <>
+      <DropdownMenu>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <DropdownMenuTrigger asChild>
+              <Button variant="outline" size="icon-sm" className="size-9 rounded-[10px] group-data-[collapsible=icon]:size-8 group-data-[collapsible=icon]:border-transparent group-data-[collapsible=icon]:bg-transparent group-data-[collapsible=icon]:shadow-none dark:group-data-[collapsible=icon]:border-transparent dark:group-data-[collapsible=icon]:bg-transparent" aria-label="New">
+                <SquarePen />
+              </Button>
+            </DropdownMenuTrigger>
+          </TooltipTrigger>
+          <TooltipContent side="right">New bot or group</TooltipContent>
+        </Tooltip>
+        <DropdownMenuContent align="end" className="w-56">
+          <DropdownMenuItem asChild>
+            <Link href="/bots/new" onClick={onNavigate}><Plus /> New bot</Link>
+          </DropdownMenuItem>
+          <DropdownMenuItem asChild>
+            <Link href="/marketplace" onClick={onNavigate}><Store /> Hire from marketplace</Link>
+          </DropdownMenuItem>
+          <DropdownMenuSeparator />
+          <DropdownMenuItem onSelect={() => setGroupOpen(true)}>
+            <Users /> New group
+          </DropdownMenuItem>
+        </DropdownMenuContent>
+      </DropdownMenu>
+      <NewGroupDialog open={groupOpen} onOpenChange={setGroupOpen} onCreated={onNavigate} />
+    </>
   );
 }

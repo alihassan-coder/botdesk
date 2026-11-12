@@ -31,6 +31,13 @@ export type NewBotInput = Pick<
   "name" | "role" | "description" | "avatarColor" | "modelId" | "securityLevel" | "computerMode" | "instructions" | "monthlyBudgetUsd"
 >;
 
+/** What you pick to start a group chat. You're in it anyway, so leave yourself out of `userIds`. */
+export interface NewGroupInput {
+  title: string;
+  botIds: string[];
+  userIds: string[];
+}
+
 /** What you fill in to create a routine. */
 export type NewRoutineInput = Pick<Routine, "botId" | "name" | "description" | "schedule" | "steps" | "enabled">;
 
@@ -645,6 +652,38 @@ const chatActions = {
     } catch (error) {
       return failure(error);
     }
+  },
+
+  /**
+   * Starts a group chat with you plus the bots and people you pick, and returns its id so
+   * the screen can open it. A group needs at least one bot: they're who does the work.
+   */
+  async createGroup(input: NewGroupInput): Promise<ActionResult & { threadId?: string }> {
+    const title = input.title.trim();
+    if (!title) return { ok: false, error: "Give the group a name." };
+    if (input.botIds.length === 0) return { ok: false, error: "Pick at least one bot." };
+    const userIds = input.userIds.filter((u) => u !== state.currentUserId);
+
+    let thread: Thread;
+    if (isDemoMode()) {
+      thread = {
+        id: `t_${id()}`, kind: "group", title,
+        participants: [
+          { type: "user", id: state.currentUserId },
+          ...userIds.map((u) => ({ type: "user" as const, id: u })),
+          ...input.botIds.map((b) => ({ type: "bot" as const, id: b })),
+        ],
+        lastMessageAt: now(), lastMessagePreview: "", unread: 0,
+      };
+    } else {
+      try {
+        thread = toThread(await threadApi.createGroup(state.org.id, { title, botIds: input.botIds, userIds }));
+      } catch (error) {
+        return failure(error);
+      }
+    }
+    set((st) => ({ ...st, threads: [thread, ...st.threads.filter((t) => t.id !== thread.id)] }));
+    return { ok: true, threadId: thread.id };
   },
 };
 

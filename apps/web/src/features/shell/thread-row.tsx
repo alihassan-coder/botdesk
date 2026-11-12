@@ -39,7 +39,8 @@ export function ThreadRow({ thread, onNavigate }: { thread: Thread; onNavigate?:
         </span>
         <span className="flex items-center gap-2">
           <span className={cn("truncate text-xs", previewIsStatus && bot?.status === "waiting-approval" ? "text-brand" : "text-muted-foreground")}>
-            {preview}
+            {/* A new chat has nothing to preview; keep the row two lines tall like the rest. */}
+            {preview || "No messages yet"}
           </span>
           {thread.unread > 0 && (
             <span className="ml-auto grid h-[18px] min-w-[18px] shrink-0 place-items-center rounded-full bg-brand px-1 text-[11px] font-semibold text-brand-foreground">

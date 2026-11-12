@@ -1,0 +1,131 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>BotDesk wordmarks, v11</title>
+<link href="https://fonts.googleapis.com/css2?family=Geist:wght@500;600;900&family=Outfit:wght@800&family=Manrope:wght@800&family=Bricolage+Grotesque:opsz,wght@96,800&family=Plus+Jakarta+Sans:wght@800&display=swap" rel="stylesheet">
+<style>
+  :root { --ink: #0E0E14; --ultra: #3B30FF; --light: #8F88FF; --night: #0B0B18; --muted: #6B6B7B; }
+  * { box-sizing: border-box; margin: 0; }
+  body { font-family: Geist, system-ui, sans-serif; background: #F3F2F8; color: var(--ink); width: 1600px; padding: 56px 64px 64px; }
+  h1 { font-size: 32px; font-weight: 600; letter-spacing: -0.025em; }
+  .sub { color: var(--muted); font-size: 16px; margin-top: 8px; max-width: 900px; line-height: 1.5; }
+  .row { display: grid; grid-template-columns: 1fr 470px; gap: 18px; margin-top: 30px; }
+  .panel { border-radius: 24px; display: flex; align-items: center; justify-content: center; position: relative; }
+  .light { background: #fff; height: 250px; border: 1px solid #E6E6EE; }
+  .side { display: grid; grid-template-rows: 1fr auto; gap: 14px; }
+  .dark { background: var(--night); height: 140px; }
+  .icons { display: flex; gap: 14px; align-items: center; }
+  .icon { flex: none; width: 96px; height: 96px; border-radius: 24px; display: grid; place-items: center; }
+  .cap { display: flex; flex-direction: column; justify-content: center; padding-left: 6px; }
+  .cap h2 { font-size: 18px; font-weight: 600; letter-spacing: -0.01em; }
+  .cap h2 span { color: var(--ultra); font-weight: 500; }
+  .cap p { color: var(--muted); font-size: 13.5px; line-height: 1.5; margin-top: 4px; }
+  .num { position: absolute; top: 16px; left: 20px; font-size: 13px; font-weight: 600; color: #A0A0B4; }
+  .dark .num { color: #4A4A66; }
+  .wm { display: inline-flex; align-items: baseline; line-height: 1; white-space: nowrap; }
+  .wm svg { display: inline-block; overflow: visible; }
+</style>
+</head>
+<body>
+<h1>BotDesk · the name is the logo</h1>
+<p class="sub">Six ways to play with the word itself. Each uses a different typeface, so you're also choosing the letters' character. The special letter becomes the app icon, so the whole brand comes from one idea.</p>
+<div id="rows"></div>
+
+<script>
+const ULTRA = "#3B30FF", LIGHT = "#8F88FF", INK = "#0E0E14", NIGHT = "#0B0B18";
+
+// Each special glyph is drawn in a 100×100 box and scaled to the font's x-height.
+const GLYPHS = {
+  eye: (dark) => `<circle cx="50" cy="50" r="37" fill="none" stroke="${dark ? LIGHT : ULTRA}" stroke-width="24"/>
+                  <circle cx="61" cy="40" r="13" fill="${dark ? "#fff" : INK}"/>`,
+  online: (dark) => `<circle cx="50" cy="50" r="37" fill="none" stroke="${dark ? "#fff" : INK}" stroke-width="25"/>
+                     <circle cx="76" cy="24" r="17" fill="${dark ? NIGHT : "#fff"}"/>
+                     <circle cx="76" cy="24" r="11" fill="${dark ? LIGHT : ULTRA}"/>`,
+  bubble: (dark) => `<circle cx="52" cy="48" r="44" fill="${dark ? LIGHT : ULTRA}"/><path d="M14 96 L18 62 L44 88 Z" fill="${dark ? LIGHT : ULTRA}" stroke="${dark ? LIGHT : ULTRA}" stroke-width="6" stroke-linejoin="round"/>
+                     ${[34, 52, 70].map((x) => `<circle cx="${x}" cy="48" r="7.5" fill="${dark ? NIGHT : "#fff"}"/>`).join("")}`,
+};
+
+function glyph(kind, dark, size, lift = 0) {
+  return `<svg width="${size}" height="${size}" viewBox="0 0 100 100" style="margin:0 ${size * 0.02}px;transform:translateY(${lift}px)">${GLYPHS[kind](dark)}</svg>`;
+}
+
+// t with an antenna: our own t, whose stem rises above the letters and ends in the light.
+function antennaT(dark, size) {
+  const c = dark ? "#fff" : INK, light = dark ? LIGHT : ULTRA;
+  const w = size * 0.42, h = size * 1.12;
+  return `<svg width="${w}" height="${h}" viewBox="0 0 42 112" style="margin:0 ${size * 0.01}px;transform:translateY(${size * 0.02}px)">
+    <path d="M17 26 V84 Q17 98 33 98 H37" fill="none" stroke="${c}" stroke-width="15" stroke-linecap="round" stroke-linejoin="round"/>
+    <path d="M4 46 H34" fill="none" stroke="${c}" stroke-width="13" stroke-linecap="round"/>
+    <circle cx="17" cy="10" r="9" fill="${light}"/>
+  </svg>`;
+}
+
+const ROWS = [
+  {
+    title: "Eye", tag: "the o is the bot, looking at you", font: "Geist", weight: 900, track: -0.07,
+    text: "Heavy, tight letters; the o is an ultramarine eye glancing up. Confident and a little cheeky.",
+    word: (dark, fs) => `b${glyph("eye", dark, fs * 0.6, fs * 0.005)}tdesk`, icon: "eye",
+  },
+  {
+    title: "Online", tag: "the o has an online light", font: "Outfit", weight: 800, track: -0.05,
+    text: "A rounder, friendlier face. The o carries the same online dot you see on a teammate's avatar.",
+    word: (dark, fs) => `b${glyph("online", dark, fs * 0.58, fs * 0.01)}tdesk`, icon: "online",
+  },
+  {
+    title: "Typing", tag: "the o is a chat bubble", font: "Manrope", weight: 800, track: -0.055,
+    text: "The o becomes a speech bubble with a bot typing inside. Says 'you talk to it' in the name itself.",
+    word: (dark, fs) => `b${glyph("bubble", dark, fs * 0.6, fs * 0.02)}tdesk`, icon: "bubble",
+  },
+  {
+    title: "Antenna", tag: "the t grows an antenna", font: "Bricolage Grotesque", weight: 800, track: -0.05,
+    text: "A characterful grotesque. The t's stem rises into an antenna with a light: the bot is on.",
+    word: (dark, fs) => `bo${antennaT(dark, fs)}desk`, icon: "antenna",
+  },
+  {
+    title: "Two-tone", tag: "bot in colour, desk in ink", font: "Plus Jakarta Sans", weight: 800, track: -0.05,
+    text: "No tricks: just the two halves of the name in two colours, with the eye o tying them together.",
+    word: (dark, fs) => `<span style="color:${dark ? LIGHT : ULTRA}">b${glyph("eye", dark, fs * 0.58, fs * 0.01).replace(/stroke="#3B30FF"|stroke="#8F88FF"/, `stroke="${dark ? LIGHT : ULTRA}"`)}t</span>desk`, icon: "eye",
+  },
+  {
+    title: "Stacked badge", tag: "bot over desk, in a tile", font: "Geist", weight: 900, track: -0.07, stacked: true,
+    text: "The name in two short lines inside a rounded tile. A complete badge, ready for app icons and stickers.",
+    word: null, icon: "badge",
+  },
+];
+
+function wordmark(row, dark, fs) {
+  const color = dark ? "#fff" : INK;
+  if (row.stacked) {
+    const bg = dark ? ULTRA : INK;
+    return `<div style="background:${bg};border-radius:${fs * 0.34}px;padding:${fs * 0.22}px ${fs * 0.3}px ${fs * 0.26}px;font-family:Geist;font-weight:900;font-size:${fs * 0.62}px;letter-spacing:-0.07em;line-height:.86;color:#fff">
+      <div class="wm">b${glyph("eye", true, fs * 0.62 * 0.6, fs * 0.004)}t</div><div>desk</div></div>`;
+  }
+  return `<div class="wm" style="font-family:'${row.font}';font-weight:${row.weight};font-size:${fs}px;letter-spacing:${row.track}em;color:${color}">${row.word(dark, fs)}</div>`;
+}
+
+function icon(row, bg, dark) {
+  if (row.icon === "antenna") {
+    return `<div class="icon" style="background:${bg}">${antennaT(true, 62).replace(new RegExp(LIGHT, "g"), dark ? LIGHT : "#fff")}</div>`;
+  }
+  if (row.icon === "badge") {
+    return `<div class="icon" style="background:${bg};font-family:Geist;font-weight:900;font-size:33px;letter-spacing:-0.07em;line-height:.86;color:#fff;align-content:center">
+      <div><div class="wm">b${glyph("eye", true, 20, 0)}t</div><div>desk</div></div></div>`;
+  }
+  return `<div class="icon" style="background:${bg}"><svg width="60" height="60" viewBox="0 0 100 100">${GLYPHS[row.icon](true).replace(/#8F88FF/g, dark ? LIGHT : "#fff").replace(/fill="#0B0B18"/g, `fill="${bg}"`)}</svg></div>`;
+}
+
+document.getElementById("rows").innerHTML = ROWS.map((r, i) => `
+  <div class="row">
+    <div class="panel light"><span class="num">${i + 1}</span>${wordmark(r, false, r.stacked ? 150 : 132)}</div>
+    <div class="side">
+      <div class="panel dark"><span class="num">${i + 1}</span>${wordmark(r, true, r.stacked ? 78 : 66)}</div>
+      <div class="icons">
+        ${icon(r, ULTRA, false)}${icon(r, NIGHT, true)}
+        <div class="cap"><h2>${i + 1} · ${r.title} <span>${r.tag}</span></h2><p>${r.font} · ${r.text}</p></div>
+      </div>
+    </div>
+  </div>`).join("");
+</script>
+</body>
+</html>

@@ -1,0 +1,148 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>BotDesk logo, v9 new directions</title>
+<link href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root { --ink: #0E0E14; --muted: #6B6B7B; --line: #E6E6EE; --ultra: #3B30FF; --paper: #FFFFFF; --soft: #F6F6FA; --night: #0B0B18; }
+  * { box-sizing: border-box; margin: 0; }
+  body { font-family: Geist, system-ui, sans-serif; color: var(--ink); background: var(--soft); width: 1600px; padding: 56px 64px 64px; }
+  header { margin-bottom: 34px; display: flex; justify-content: space-between; align-items: end; }
+  h1 { font-size: 30px; font-weight: 600; letter-spacing: -0.02em; }
+  header p { color: var(--muted); font-size: 15px; max-width: 720px; line-height: 1.5; margin-top: 8px; }
+  .legend { font-size: 13px; color: var(--muted); text-align: right; line-height: 1.6; }
+  .grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 22px; }
+  .card { background: var(--paper); border: 1px solid var(--line); border-radius: 20px; overflow: hidden; }
+  .hero { height: 330px; display: grid; place-items: center; border-bottom: 1px solid var(--line); position: relative; }
+  .tag { position: absolute; top: 16px; left: 18px; font-size: 13px; font-weight: 600; color: var(--muted); }
+  .tag b { color: var(--ultra); font-weight: 600; }
+  .uses { display: flex; align-items: center; gap: 14px; padding: 18px 20px; border-bottom: 1px solid var(--line); }
+  .chip { width: 64px; height: 64px; border-radius: 15px; display: grid; place-items: center; }
+  .chip.dark { background: var(--night); }
+  .chip.blue { background: var(--ultra); }
+  .tiny { display: flex; align-items: end; gap: 10px; margin-left: 6px; }
+  .lockup { display: flex; align-items: center; gap: 10px; margin-left: auto; font-weight: 600; font-size: 25px; letter-spacing: -0.045em; }
+  .text { padding: 18px 22px 22px; }
+  .text h2 { font-size: 19px; font-weight: 600; letter-spacing: -0.01em; }
+  .idea { font-size: 13px; color: var(--ultra); font-weight: 500; margin-top: 4px; }
+  .text p { font-size: 14px; color: var(--muted); line-height: 1.55; margin-top: 6px; }
+  .text .why { color: var(--ink); }
+  footer { margin-top: 26px; font-size: 13px; color: var(--muted); }
+</style>
+</head>
+<body>
+<header>
+  <div>
+    <h1>BotDesk logo · v9 new directions</h1>
+    <p>A fresh start, away from the bd loop. Each direction tells one true thing about BotDesk: bots that talk with you in threads, that are always on, that work as a team, that ask before acting. All flat and round, with nothing hidden.</p>
+  </div>
+  <div class="legend">Each card: the mark large · on night · as an app icon<br>at 32 px and 16 px · next to the name</div>
+</header>
+<div class="grid" id="grid"></div>
+<footer>Colours: ink #0E0E14 · night #0B0B18 · ultramarine #3B30FF · light ultramarine #8F88FF. Each mark is drawn on a 100-unit grid with one line weight.</footer>
+
+<script>
+const ULTRA = "#3B30FF", LIGHT = "#8F88FF", INK = "#0E0E14", NIGHT = "#0B0B18";
+
+// mode: "brand" (on white), "night" (on the dark chip), "white" (on the blue chip).
+const fg = (m) => (m === "brand" ? INK : "#fff");               // main shape colour
+const accent = (m) => (m === "brand" ? ULTRA : m === "night" ? LIGHT : "#fff");
+const bg = (m) => (m === "brand" ? "#fff" : m === "night" ? NIGHT : ULTRA);
+
+function svg(view, h, inner) {
+  const [x, y, w, hh] = view;
+  return `<svg width="${(h * w / hh).toFixed(1)}" height="${h}" viewBox="${x} ${y} ${w} ${hh}">${inner}</svg>`;
+}
+const stroke = (d, c, w, extra = "") => `<path d="${d}" fill="none" stroke="${c}" stroke-width="${w}" stroke-linecap="round" stroke-linejoin="round" ${extra}/>`;
+
+const DIRECTIONS = [
+  {
+    title: "1 · Thread", idea: "The b is a chat bubble",
+    text: "A lowercase b whose bowl is a speech bubble. The bubble's corner is where the stem meets the bowl. Three dots: a bot is typing.",
+    why: "Says 'talk to your bots in chat' instantly. Still a letter, so it pairs naturally with the name.",
+    draw(m, h) {
+      const small = h < 40;
+      const dots = small ? "" : [44, 54, 64].map((x) => `<circle cx="${x}" cy="58" r="3.6" fill="${accent(m)}"/>`).join("");
+      return svg([22, 6, 64, 84], h, stroke("M30 12 V82 H54 A24 24 0 1 0 30 58", fg(m), 11) + dots);
+    },
+  },
+  {
+    title: "2 · Status ring", idea: "Always on, like an online badge",
+    text: "A bold ring with a solid light on its edge: the same online dot you see on a teammate's avatar. Reads as the o in 'bot' too.",
+    why: "The simplest and most iconic. Works as a favicon, app icon and loading animation (the light can pulse).",
+    draw(m, h) {
+      const a = (-45 * Math.PI) / 180, cx = 50 + 30 * Math.cos(a), cy = 50 + 30 * Math.sin(a);
+      return svg([10, 6, 84, 84], h,
+        `<circle cx="50" cy="50" r="30" fill="none" stroke="${fg(m)}" stroke-width="13"/>` +
+        `<circle cx="${cx}" cy="${cy}" r="14" fill="${bg(m)}"/>` +
+        `<circle cx="${cx}" cy="${cy}" r="9.5" fill="${accent(m)}"/>`);
+    },
+  },
+  {
+    title: "3 · Team", idea: "Three bots, one is working",
+    text: "Three rounded bars stacked like a team roster, each with its own status light. The top one is active, the others wait.",
+    why: "Shows 'a team of bots' rather than one assistant, which is what sets BotDesk apart.",
+    draw(m, h) {
+      const bar = (y, active) => {
+        const fill = active ? accent(m) : fg(m);
+        const light = active ? bg(m) === ULTRA ? ULTRA : "#fff" : bg(m);
+        return `<rect x="16" y="${y}" width="68" height="18" rx="9" fill="${fill}" opacity="${active || m === "brand" ? 1 : 0.9}"/>` +
+               `<circle cx="74" cy="${y + 9}" r="4.2" fill="${light}"/>`;
+      };
+      return svg([12, 14, 76, 72], h, bar(18, true) + bar(41, false) + bar(64, false));
+    },
+  },
+  {
+    title: "4 · Friendly bot", idea: "A face you can trust",
+    text: "A soft screen with two round eyes and an antenna that ends in the always-on light. Round eyes, never narrowed.",
+    why: "The warmest option. Great for the app icon and the empty states; may read as more playful than premium.",
+    draw(m, h) {
+      return svg([12, 2, 76, 88], h,
+        `<rect x="19" y="28" width="62" height="54" rx="20" fill="none" stroke="${fg(m)}" stroke-width="10"/>` +
+        stroke("M41 49 V59 M59 49 V59", fg(m), 10) +
+        stroke("M50 28 V18", fg(m), 8) +
+        `<circle cx="50" cy="12" r="7" fill="${accent(m)}"/>`);
+    },
+  },
+  {
+    title: "5 · Approve", idea: "Bots ask, you approve",
+    text: "A speech bubble holding a check mark: the moment a bot asks before doing something risky, and you say yes.",
+    why: "Puts BotDesk's safety promise at the centre of the brand. The check is the accent colour.",
+    draw(m, h) {
+      const bubble = "M32 72 H66 A18 18 0 0 0 84 54 V34 A18 18 0 0 0 66 16 H34 A18 18 0 0 0 16 34 V86 Z";
+      return svg([8, 8, 84, 86], h, stroke(bubble, fg(m), 9) + stroke("M36 44 L46 54 L65 34", accent(m), 9));
+    },
+  },
+  {
+    title: "6 · Hub", idea: "You at the centre of your team",
+    text: "A bright centre (you) with three bots around it, each connected. Work flows out to the team and back to you.",
+    why: "The most 'platform' feeling. Strong at large sizes; the thin links get small at 16 px.",
+    draw(m, h) {
+      const c = [50, 52], R = 31;
+      const pts = [-90, 30, 150].map((d) => [c[0] + R * Math.cos((d * Math.PI) / 180), c[1] + R * Math.sin((d * Math.PI) / 180)]);
+      const links = pts.map(([x, y]) => stroke(`M${c[0]} ${c[1]} L${x} ${y}`, fg(m), h < 40 ? 7 : 5.5)).join("");
+      const sats = pts.map(([x, y]) => `<circle cx="${x}" cy="${y}" r="10" fill="${fg(m)}"/>`).join("");
+      return svg([12, 10, 76, 80], h, links + sats + `<circle cx="${c[0]}" cy="${c[1]}" r="14" fill="${accent(m)}" stroke="${bg(m)}" stroke-width="4"/>`);
+    },
+  },
+];
+
+const grid = document.getElementById("grid");
+for (const d of DIRECTIONS) {
+  const card = document.createElement("article");
+  card.className = "card";
+  card.innerHTML = `
+    <div class="hero"><span class="tag"><b>Direction</b> · ${d.idea}</span>${d.draw("brand", 190)}</div>
+    <div class="uses">
+      <div class="chip dark">${d.draw("night", 38)}</div>
+      <div class="chip blue">${d.draw("white", 38)}</div>
+      <div class="tiny">${d.draw("brand", 32)}${d.draw("brand", 16)}</div>
+      <div class="lockup">${d.draw("brand", 32)}<span>botdesk</span></div>
+    </div>
+    <div class="text"><h2>${d.title}</h2><div class="idea">${d.idea}</div><p>${d.text}</p><p class="why">${d.why}</p></div>`;
+  grid.appendChild(card);
+}
+</script>
+</body>
+</html>

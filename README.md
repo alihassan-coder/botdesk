@@ -17,6 +17,10 @@ Bots that work in your apps, talk with you in chat, and ask before doing anythin
 
 ---
 
+<p align="center">
+  <img src="docs/screenshots/chat.png" alt="A chat with Chief, the bot that coordinates the team: it hands work to other bots and reports back" width="900">
+</p>
+
 ## What is BotDesk?
 
 BotDesk gives your team a set of AI **bots**, each with a job: one manages your inbox, one fixes bugs, one coordinates the others. You talk to them in chat threads, the way you'd talk to a colleague. They can work while you're away, and whenever they want to do something risky, like sending an email, spending money or deleting something, they **stop and ask you first**. You approve, edit or say no.
@@ -25,6 +29,29 @@ BotDesk gives your team a set of AI **bots**, each with a job: one manages your 
 - **Built for teams.** Organizations, roles, invites, and shared bots.
 - **Safe by default.** Every bot has a security level, and risky actions wait for your approval.
 - **Open source and self-hostable.** MIT licensed. Run it on your own server with your own database.
+
+## Screenshots
+
+All screenshots are from the demo (**Explore the demo** on the sign-in page). Every name and number is sample data.
+
+| | |
+|---|---|
+| **Approvals.** Risky actions wait here until someone approves, edits or denies them. | **Marketplace.** Hire a ready-made bot with sensible defaults. |
+| ![Approvals](docs/screenshots/approvals.png) | ![Marketplace](docs/screenshots/marketplace.png) |
+| **Routines.** Bots repeat work on a schedule. | **New bot.** Give it a job, instructions, a model, a security level and a budget. |
+| ![Routines](docs/screenshots/routines.png) | ![New bot](docs/screenshots/new-bot.png) |
+| **Connect apps.** Integrations your bots can use, each action with a risk level. | **Usage and budgets.** What each bot spends; a bot pauses at its budget. |
+| ![Connect apps](docs/screenshots/apps.png) | ![Usage and budgets](docs/screenshots/usage.png) |
+| **Sign in.** Or explore the demo without an account. | **Dark mode.** Pick light, dark or system in settings. |
+| ![Sign in](docs/screenshots/sign-in.png) | ![Dark mode](docs/screenshots/chat-dark.png) |
+
+**On a phone:** the chat list, then a chat.
+
+<p>
+  <img src="docs/screenshots/phone-home.png" alt="Chat list on a phone" width="260">
+  &nbsp;
+  <img src="docs/screenshots/phone-chat.png" alt="A chat on a phone" width="260">
+</p>
 
 ## Status
 

@@ -11,6 +11,7 @@ from src.core.config import Settings
 from src.core.database import get_session
 from src.core.errors import Forbidden, NotFound, Unauthorized
 from src.models import Organization, User
+from src.runtime.runner import RunManager
 from src.services import auth_service, organization_service
 
 Db = Annotated[AsyncSession, Depends(get_session)]
@@ -22,6 +23,15 @@ def get_settings(request: Request) -> Settings:
 
 
 AppSettings = Annotated[Settings, Depends(get_settings)]
+
+
+def get_runs(request: Request) -> RunManager:
+    """Starts and stops bot runs, and wakes live streams (one per API process)."""
+    runs: RunManager = request.app.state.runs
+    return runs
+
+
+Runs = Annotated[RunManager, Depends(get_runs)]
 
 
 def session_token(request: Request) -> str | None:

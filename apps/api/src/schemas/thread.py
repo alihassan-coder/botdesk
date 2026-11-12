@@ -47,5 +47,11 @@ class MessageOut(ApiModel):
     created_at: datetime
 
 
+class SentMessageOut(MessageOut):
+    """The message you sent, plus the runs it started (one per bot that will reply)."""
+
+    run_ids: list[uuid.UUID]
+
+
 class MessageIn(ApiModel):
     text: str = Field(min_length=1, max_length=20_000)

@@ -9,8 +9,10 @@ from fastapi.responses import JSONResponse
 
 from src.api.v1.router import api_router
 from src.core.config import Settings, get_settings
-from src.core.database import create_engine, create_sessionmaker
+from src.core.database import Base, create_engine, create_sessionmaker, is_in_memory
 from src.core.errors import AppError
+from src.runtime.memory import build_memory
+from src.runtime.runner import run_manager
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:
@@ -19,9 +21,15 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         engine = create_engine(settings.sqlalchemy_url)
+        if is_in_memory(settings.sqlalchemy_url):
+            # A brand-new in-memory database (the tests' default) has no tables yet.
+            async with engine.begin() as connection:
+                await connection.run_sync(Base.metadata.create_all)
         app.state.engine = engine
         app.state.sessionmaker = create_sessionmaker(engine)
-        yield
+        async with run_manager(settings, app.state.sessionmaker, build_memory(settings)) as runs:
+            app.state.runs = runs
+            yield
         await engine.dispose()
 
     app = FastAPI(

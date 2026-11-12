@@ -6,6 +6,6 @@
     "dev": { "cache": false, "persistent": true },
     "lint": { "dependsOn": ["^lint"] },
     "typecheck": { "dependsOn": ["^typecheck"] },
-    "test": { "dependsOn": ["^build"] }
+    "test": { "dependsOn": ["^build"], "env": ["TEST_DATABASE_URL"] }
   }
 }

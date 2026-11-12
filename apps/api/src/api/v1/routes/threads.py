@@ -1,12 +1,14 @@
 import uuid
+from collections.abc import AsyncIterator
 from datetime import datetime
 from typing import Annotated
 
-from fastapi import APIRouter, Query, status
+from fastapi import APIRouter, Depends, Header, Query, status
+from fastapi.sse import EventSourceResponse, ServerSentEvent
 
-from src.api.deps import Db, OrgAccess
+from src.api.deps import Db, OrgAccess, Runs
 from src.controllers import thread_controller
-from src.schemas.thread import GroupIn, MessageIn, MessageOut, OpenDmIn, ThreadOut
+from src.schemas.thread import GroupIn, MessageIn, MessageOut, OpenDmIn, SentMessageOut, ThreadOut
 
 router = APIRouter(prefix="/orgs/{org_id}/threads", tags=["threads"])
 
@@ -47,6 +49,32 @@ async def list_messages(
 
 
 @router.post("/{thread_id}/messages", status_code=status.HTTP_201_CREATED)
-async def post_message(thread_id: uuid.UUID, body: MessageIn, access: OrgAccess, db: Db) -> MessageOut:
-    """Send a message. (Bots replying comes in the next slice.)"""
-    return await thread_controller.post_message(db, access, thread_id, body)
+async def post_message(thread_id: uuid.UUID, body: MessageIn, access: OrgAccess, db: Db, runs: Runs) -> SentMessageOut:
+    """Send a message. In a DM the bot replies; in a group, the bots you @mention do.
+    Returns at once with the ids of the runs it started; replies arrive on `/events`."""
+    return await thread_controller.post_message(db, access, runs, thread_id, body)
+
+
+async def _stream_start(
+    thread_id: uuid.UUID,
+    access: OrgAccess,
+    db: Db,
+    last_event_id: Annotated[str | None, Header()] = None,
+    after: int | None = None,
+) -> int:
+    """Runs before the stream opens, so a chat you're not in gets a normal 404."""
+    return await thread_controller.event_stream_start(db, access, thread_id, last_event_id=last_event_id, after=after)
+
+
+@router.get("/{thread_id}/events", response_class=EventSourceResponse)
+async def stream_events(
+    thread_id: uuid.UUID,
+    start: Annotated[int, Depends(_stream_start)],
+    runs: Runs,
+    follow: bool = True,
+) -> AsyncIterator[ServerSentEvent]:
+    """Live updates for this chat (Server-Sent Events): replies streaming in, messages saved,
+    runs starting and ending. A reconnect resumes after `Last-Event-ID`; `after` does the same
+    on a first connection. `follow=false` sends what's saved and closes."""
+    async for event in thread_controller.follow_events(runs, thread_id, after_id=start, follow=follow):
+        yield event

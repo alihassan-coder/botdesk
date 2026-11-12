@@ -15,12 +15,12 @@ The words BotDesk uses for its domain. Use these exact terms in code, UI copy, d
 | **Thread** | A conversation. `dm` = one member + one bot. `group` = several members and bots. |
 | **Mention** | `@handle` inside a message. Mentioning a bot starts a run for it; mentioning a member notifies them. |
 | **Handoff** | One bot passing a task to another bot, visible in the thread. |
-| **Run** | One piece of work by one bot, from a trigger to a final answer. It is a LangGraph graph, survives restarts and can pause for an approval. A worker moves it forward by taking **jobs** from the queue. |
+| **Run** | One piece of work by one bot, from a trigger to a final answer. It is a LangGraph graph and will be able to pause for an approval. For now the API process runs it ([ADR 0007](docs/adr/0007-runs-in-the-api-process-for-now.md)); later a worker moves it forward by taking **jobs** from the queue. |
 | **Approval** | A run paused on a risky action. A member sees the exact action and approves, denies, or edits it. |
 | **Risk class** | How dangerous a tool action is: `read`, `write-internal`, `write-external` (a reversible change in another app: draft, label, calendar hold), `external-send`, `spend`, `destructive`, `credential`. |
 | **Security level** | One of three: *Read only*, *Ask before acting* (default), *Autonomous within limits*. Maps each risk class to `auto` / `ask` / `deny` ([ADR 0004](docs/adr/0004-agent-runtime-and-safety.md)). The strictest of org, bot and routine wins. |
 | **Taint** | A mark on a run once it has read outside text (an email, a web page, an MCP result). After that, every action above `write-internal` asks for approval, even for Autonomous bots. |
-| **Job** | A unit of background work in the queue (procrastinate): run a bot, expire an approval, fire a routine. |
+| **Job** | A unit of background work in the queue (procrastinate, planned): run a bot, expire an approval, fire a routine. |
 | **Run event** | One step of a run's progress (a token, a tool call, an approval card), saved in `run_events` and streamed to the chat. |
 | **Routine** | A saved, repeatable task, either recorded by **follow along** (the bot watches a member do it) or created from chat, run on a schedule or trigger. |
 | **Trigger** | What starts a run without a message: schedule, new email, webhook, follow-up timer, stalled thread. |

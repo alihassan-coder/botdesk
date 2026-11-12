@@ -3,7 +3,7 @@
 **Status:** decided (2026-11-12). See §15 and ADRs [0004](../adr/0004-agent-runtime-and-safety.md), [0005](../adr/0005-job-queue-and-scaling.md), [0006](../adr/0006-repo-structure-plugins-and-project.md).
 **Reading time:** about 30 minutes. Every picture has a "how to read it" note.
 **Replaces:** [high-level.md](high-level.md) §5 (runtime), §7 (streaming), §8 (plugins), §9 (security) and §10 (approvals), which were written for the old TypeScript stack ([ADR 0003](../adr/0003-python-backend.md)).
-**Built today vs planned:** the API has sign-in, organizations, bots and chats. Everything else here (runs, the queue, the worker, plugins, approvals, memory) is the plan; §14 gives the order.
+**Built today vs planned:** the API has sign-in, organizations, bots and chats, and bots reply: runs (load_context → recall → call_model → save_reply → remember, no tools yet), run events streamed over SSE, run limits, and mem0 memory behind a setting. Runs start inside the API process for now; the job queue and worker are deferred by [ADR 0007](../adr/0007-runs-in-the-api-process-for-now.md). Tools, plugins and approvals are the plan; §14 gives the order.
 **See also:** [repo-structure.md](repo-structure.md) for where each piece of this lives in the repo.
 
 > **Reading order if you're short on time:** 1 → 2 → 4 → 5 → 6 → 10 → 12. That covers the whole idea: a bot *run* is a loop, every action goes through one *pipeline*, risky actions *pause for you*, integrations are *plugins* the core never has to know about, and the same code *grows* from a laptop to many servers.
@@ -19,7 +19,7 @@ The diagrams are in [diagrams/](diagrams/): `.mmd` source (Mermaid, which GitHub
 **How to read it:** start at the top right and follow the arrows round.
 
 - **People** use the web app (desktop and mobile later). The browser sends a cookie; apps send the same session token as `Bearer`.
-- **The API process** (`apps/api`, FastAPI) is what we've built so far: sign-in, organizations, bots, chats. Today sending a message only saves it; bots don't reply yet. Once runs exist (build step 1), the API will save the message, a **run** and a **job** in one database transaction, and never run the bot itself.
+- **The API process** (`apps/api`, FastAPI) is what we've built so far: sign-in, organizations, bots, chats. Today the API saves the message and a **run** in one transaction, then starts the run itself as a background task ([ADR 0007](../adr/0007-runs-in-the-api-process-for-now.md)). When the job queue arrives, it will save a **job** in that same transaction instead, and a worker will run the bot.
 - **Postgres** is the only service BotDesk needs. It holds app data, the **job queue**, run **checkpoints** (paused runs live here), **events** for live updates and memories (pgvector).
 - **The worker process** takes jobs from the queue. Its **run engine** runs one LangGraph graph per run. Every tool call goes through the **tool pipeline**, which uses the **plugin registry** to reach Gmail or MCP servers.
 - **Live updates** flow back the other way: the worker writes events, the API streams them to your browser.
@@ -250,7 +250,7 @@ RETURNING run_id;      -- no row back = somebody already decided → 409
 - **The loop:** recall before answering, remember after.
 - **Scope:** memories are scoped to **organization + bot** (`user_id = org:<id>`, `agent_id = <bot id>`), so Acme's facts never reach another organization. One small `MemoryService` is the only code that talks to mem0, and it always adds the scope itself. A model or a plugin can never choose the scope.
 - **Private chats stay private.** A memory learned in someone's DM also carries that member's id, and is only recalled in their chats, unless they share it.
-- **Saving them:** mem0 decides what's worth keeping. That costs at least one extra model call per save, so it runs as its **own background job** on a low-priority queue, with its own budget line. Replies aren't slowed down, and a mem0 failure never fails a run.
+- **Saving them:** mem0 decides what's worth keeping. That costs at least one extra model call per save, so it runs as its **own background job** on a low-priority queue, with its own budget line (today, without a queue: a background task in the API process, and tainted runs save nothing). Replies aren't slowed down, and a mem0 failure never fails a run.
 - **Taint:** a memory from a tainted run is stored as tainted (§5).
 - **Control and history:** you can see, edit and delete memories in Settings → Memory, and every change is in `memory_audit`.
 - **Privacy:** mem0's usage reporting is **on by default**. We set `MEM0_TELEMETRY=False` in the code and in the docker compose file.
@@ -488,12 +488,12 @@ Plus the tables that procrastinate and LangGraph create for themselves (created 
 ## 14. Build order (each step small, tested and usable)
 
 0. **Foundations (short).** A local Postgres in docker compose for development, and the API tests able to run on Postgres as well as SQLite (the queue, checkpoints, locks and pgvector don't exist in SQLite). CI that runs the checks on every push (done: `.github/workflows/ci.yml` runs `pnpm check`, on SQLite for now).
-1. **Bots reply.** The job queue with the worker **embedded** in the API. The run graph without tools: load_context → call_model → save. Events and SSE with the in-memory bus, including `Last-Event-ID` replay. Uses a stand-in model when there's no API key. Run limits (§4.2).
+1. **Bots reply.** (done) The run graph without tools: load_context → recall → call_model → save_reply → remember. Runs start inside the API process ([ADR 0007](../adr/0007-runs-in-the-api-process-for-now.md); the job queue comes later). Events and SSE with the in-memory bus, including `Last-Event-ID` replay. A stand-in model when there's no API key. Run limits (§4.2). mem0 memory behind `MEMORY_ENABLED` (moved up from step 6).
 2. **Pipeline + policy + approvals.** One fake built-in plugin (`demo-echo` with read / external-send tools) to prove auto, ask (interrupt/resume), deny, expiry, double-click, and "worker killed mid-tool" end to end. Tests include the injection file.
 3. **Plugin SDK + registry.** The root uv workspace, `packages/plugin-sdk`, entry points + allowlist, manifest generated from code and validated.
-4. **Run it as two processes.** `WORKER_MODE=separate`, the Postgres event bus, the docker compose file. (Small, because of the rule in §12.)
+4. **The job queue, and two processes.** procrastinate with the worker embedded, then `WORKER_MODE=separate`, the Postgres event bus, the docker compose file. (Small, because of the rule in §12.)
 5. **Gmail plugin** (T0) with encrypted OAuth connections and the `new_email` trigger (polling first).
-6. **Memory** with mem0.
+6. **Memory** with mem0: Settings → Memory, `memory_audit`, tainted memories. (Recall and save are in step 1.)
 7. **Routines** on a schedule; **handoffs** between bots.
 8. **MCP plugins** (T3), then **HTTP plugins** (T1), then the **marketplace index**.
 9. **Bot computers** (T4). **Sandboxed plugins** (T2) only if someone needs them.

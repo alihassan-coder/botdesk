@@ -20,12 +20,37 @@ Open **http://localhost:8000/api/docs** to see and try every route.
 |---|---|
 | `pnpm dev:api` | Migrate, then run the API with auto-reload on :8000 |
 | `pnpm start:api` | Migrate, then run without reload. In production, migrations will move to their own `migrate` step ([ADR 0005](../adr/0005-job-queue-and-scaling.md)) |
-| `pnpm test:api` | pytest: unit and HTTP tests on in-memory SQLite (~5 s, no network) |
+| `pnpm test:api` | pytest: unit and HTTP tests on in-memory SQLite (seconds, no network), plus the Postgres tests when `TEST_DATABASE_URL` is set |
 | `pnpm db:migrate` | Apply migrations to `DATABASE_URL` |
 | `pnpm db:seed` | Add the demo team (ali@acme.dev / botdesk123, Sara, Omar in Acme Labs) and three bots. Not in production |
 | `pnpm check` | typecheck (mypy) + lint (ruff) + tests, for web and API together |
 
 Inside `apps/api`: `pnpm db:revision "add bots"` writes a new migration from model changes; `pnpm format` formats and fixes lint.
+
+### Settings
+
+Every setting is in [`apps/api/.env.example`](../../apps/api/.env.example). The ones for bots:
+
+| Setting | Default | What it does |
+|---|---|---|
+| `DATABASE_URL` | local SQLite | The app database. On Neon the **pooled** address is fine |
+| `DATABASE_URL_DIRECT` | = `DATABASE_URL` | The **direct** address (Neon: no `-pooler` in the host). Run checkpoints and mem0 keep their own connections here |
+| `TEST_DATABASE_URL` | empty | A **separate** database for the Postgres tests. They wipe it. Empty = those tests are skipped |
+| `DEFAULT_MODEL_ID` | `anthropic:claude-sonnet-4-5` | The model for bots that don't name one (`provider:model`) |
+| `ANTHROPIC_API_KEY`, `OPENAI_API_KEY` | empty | Provider keys. A bot whose provider has no key answers with a **stand-in reply**, so everything works offline |
+| `RUN_MAX_STEPS`, `RUN_MAX_SECONDS` | 25, 900 | Limits on every run; a run that hits one fails with a clear message |
+| `BOT_MAX_RUNNING_RUNS` | 2 | Runs one bot may have going at once (across chats) |
+| `MEMORY_ENABLED` | false | mem0 memory on pgvector, in the same database. Also needs Postgres and `OPENAI_API_KEY` |
+
+### Tests on Postgres
+
+There's no Docker here, so the Postgres tests use a second database on the same Neon project:
+
+1. In the Neon SQL editor (or `psql`): `CREATE DATABASE botdesk_test;`
+2. In `apps/api/.env`: `TEST_DATABASE_URL=` the **direct** address with `/botdesk_test` as the database. Never your dev database: the tests refuse to run if it's the same as `DATABASE_URL`.
+3. `pnpm test:api`. The first test creates the tables; each test then empties them.
+
+Neon is far from a laptop, so these take a few minutes. CI runs them on a Postgres service in seconds.
 
 ### Neon
 
@@ -50,6 +75,16 @@ apps/api/
     schemas/                 Pydantic request/response shapes (JSON is camelCase)
     services/                business rules + database queries. No HTTP here.
     controllers/             one request at a time: call services, commit, set cookies
+    runtime/                 how a bot run happens (ADR 0007: inside the API process for now)
+      runner.py              RunManager: starts runs as tasks, one at a time per chat, Stop, restart recovery
+      graph.py               the LangGraph graph: load_context → recall → call_model → save_reply → remember
+      chat_model.py          a bot's model_id → a LangChain chat model, or the stand-in
+      prompt.py              instructions + memories + the chat → what the model sees
+      token_batcher.py       streamed tokens → a few database writes, not one per token
+      limits.py              steps and time per run
+      memory.py              MemoryService: NoMemory, or mem0 when switched on
+      event_bus.py           wakes a chat's live streams when new events are saved
+      reporter.py            saves a run's events
     api/
       deps.py                Db, CurrentUser, OrgAccess
       v1/router.py           mounts every route file under /api/v1
@@ -66,6 +101,21 @@ route (api/v1/routes/auth.py)      declares POST /api/v1/auth/sign-in
     → service (auth_service)       the rule: check password, create session
       → models (User, Session)     the tables
 ```
+
+### How a reply flows
+
+```
+POST /threads/{id}/messages       one transaction: the message, a queued run per bot that should reply,
+                                  and a message_saved event. Returns at once with the run ids.
+  → RunManager.start              an asyncio task per run
+    → waits for its turn          one run per chat: a lock in this process + a guarded UPDATE in Postgres
+    → graph                       load_context → recall → call_model (streams message_delta events)
+                                  → save_reply (the message + message_saved) → remember (in the background)
+    → run_finished / run_failed
+GET /threads/{id}/events          SSE: replays run_events after Last-Event-ID, then follows new ones
+```
+
+The web app reads one stream per open chat. Tokens arrive in batches (about every 50 ms) as `message_delta`; when the reply is saved, `message_saved` carries the whole message, which replaces the streamed text.
 
 A service raises `NotFound("…")`, `Conflict("…")` and so on. `main.py` turns those into `{"detail": "…"}` with the right status, so services never touch HTTP. Controllers own the transaction (`db.commit()`).
 
@@ -101,7 +151,22 @@ A service raises `NotFound("…")`, `Conflict("…")` and so on. `main.py` turns
 | `POST /api/v1/orgs/{id}/threads/groups` | Group chat with you plus the people and bots you pick |
 | `GET /api/v1/orgs/{id}/threads/{threadId}` | One chat (404 unless you're in it) |
 | `GET /api/v1/orgs/{id}/threads/{threadId}/messages` | Messages oldest first; `limit` (1–200) and `before` to page back |
-| `POST /api/v1/orgs/{id}/threads/{threadId}/messages` | Send a message (`{text}`) |
+| `POST /api/v1/orgs/{id}/threads/{threadId}/messages` | Send a message (`{text}`). In a DM the bot replies; in a group, the @mentioned bots in it do. Returns the message plus `runIds` |
+| `GET /api/v1/orgs/{id}/threads/{threadId}/events` | Live updates (SSE). Resumes after the `Last-Event-ID` header, or `?after=`; otherwise from now. `?follow=false` sends what's saved and closes |
+| `GET /api/v1/orgs/{id}/runs/{runId}` | One run: status, steps used, limits, error |
+| `POST /api/v1/orgs/{id}/runs/{runId}/cancel` | Stop a run (queued: at once; running: within moments) |
+
+#### Live events
+
+Each SSE message has `id:` (a growing number), `event:` (the kind) and `data:` JSON in one shape: `{id, kind, runId, threadId, createdAt, data}`. The kinds and their `data`:
+
+| Kind | `data` |
+|---|---|
+| `message_saved` | `{message}`: the full message, as in the messages list (yours, someone else's, or a bot's reply). `runId` is null for people's messages |
+| `run_started` | `{botId}` |
+| `message_delta` | `{messageId, botId, text}`: the next piece of a reply. `messageId` is the id the saved reply will have |
+| `run_finished` | `{status}`: `succeeded` or `cancelled` |
+| `run_failed` | `{status: "failed", error}`: `error` is ready to show |
 
 Error messages match the web app's wording, e.g. `401 "That email and password don't match."`.
 
@@ -117,7 +182,7 @@ Error messages match the web app's wording, e.g. `401 "That email and password d
 
 1. Wire the web app's sign-in to this API (replace the mock in `apps/web/src/data/store.ts`).
 2. Invite emails (the link is copied by hand until an email provider is added).
-3. Bot replies: the procrastinate job queue with the worker embedded in the API, the run graph, streaming over SSE ([ADR 0005](../adr/0005-job-queue-and-scaling.md)). Threads and messages are stored; bots don't answer yet.
-4. Tool pipeline, policy and approvals via `interrupt()` ([ADR 0004](../adr/0004-agent-runtime-and-safety.md)). Full order: [agents-and-plugins.md §14](../architecture/agents-and-plugins.md#14-build-order-each-step-small-tested-and-usable).
-5. Memory with mem0 (pgvector).
+3. Tool pipeline, policy and approvals via `interrupt()` ([ADR 0004](../adr/0004-agent-runtime-and-safety.md)). Full order: [agents-and-plugins.md §14](../architecture/agents-and-plugins.md#14-build-order-each-step-small-tested-and-usable).
+4. The job queue (procrastinate) and a separate worker, deferred by [ADR 0007](../adr/0007-runs-in-the-api-process-for-now.md); then the Postgres `LISTEN/NOTIFY` bus for several API copies.
+5. Memory screens (see, edit, delete) and `memory_audit`; trimming old `run_events` and checkpoints.
 6. Password reset emails, email verification, rate limiting on sign-in.

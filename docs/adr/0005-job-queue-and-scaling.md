@@ -1,5 +1,7 @@
 # 0005: Job queue, worker and how BotDesk scales
 
+> **Partly deferred by [ADR 0007](0007-runs-in-the-api-process-for-now.md):** no job queue or worker yet; runs start inside the API process.
+
 - Status: accepted
 - Date: 2026-11-12
 - Based on: [architecture review](../architecture/review-2026-11-12.md) (findings 2, 4, 5) and [agents-and-plugins.md §12 Scaling](../architecture/agents-and-plugins.md)

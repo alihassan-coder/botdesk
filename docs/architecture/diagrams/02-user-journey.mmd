@@ -1,0 +1,15 @@
+flowchart TD
+  A(["Sign up or sign in"]) --> B["Hire a bot<br/>from the Marketplace or New bot"]
+  B --> C["Pick its security level<br/>Read only · Ask before acting · Autonomous"]
+  C --> D["Connect an app<br/>e.g. Gmail (OAuth, once)"]
+  D --> E["Chat: @Inbox reply to Vicky,<br/>say we can not do Q3"]
+  E --> F{"Is the action risky?"}
+  F -- "read or internal" --> G["Bot just does it<br/>and shows a work log"]
+  F -- "send · spend · delete · login" --> H["Approval card in chat<br/>(also in the Approvals inbox)"]
+  H --> I{"You decide"}
+  I -- "Approve" --> J["Action runs, Done card"]
+  I -- "Edit, then approve" --> J
+  I -- "Deny" --> K["Bot is told no<br/>and suggests something else"]
+  G --> L["Make it a routine?<br/>Every Friday at 5 PM"]
+  J --> L
+  L --> M(["Runs on its own,<br/>asks you only when needed"])

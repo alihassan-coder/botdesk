@@ -1,0 +1,9 @@
+flowchart TB
+  T0["T0 · builtin<br/>Written by us: Gmail, Calendar, Slack<br/>Runs inside the worker"]
+  T1["T1 · http (declarative)<br/>Anyone, no code<br/>The manifest maps each tool to an HTTP request"]
+  T2["T2 · sandbox<br/>Third-party code<br/>Own process or container,<br/>no database or secrets, allowed hosts only"]
+  T3["T3 · mcp-remote<br/>Any MCP server over streamable HTTP<br/>Tool list snapshotted and reviewed"]
+  T4["T4 · computer (later)<br/>CLIs, local MCP, Claude Code or dsh<br/>inside the bot's own sandbox"]
+  T0 --> T1 --> T2 --> T3 --> T4
+  NOTE["Same manifest, same risk classes,<br/>same approvals for every tier"]
+  T4 -.- NOTE

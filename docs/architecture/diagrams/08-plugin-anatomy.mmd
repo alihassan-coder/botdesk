@@ -1,0 +1,15 @@
+flowchart LR
+  subgraph PKG["One plugin = one package"]
+    direction TB
+    MAN["manifest.json<br/>id · version · runtime<br/>auth · permissions · settings"]
+    TOOLS["tools<br/>input + output schema<br/>risk class · presenter"]
+    TRIG["triggers<br/>e.g. new_email"]
+    CODE["handlers<br/>Python, built-in tier only"]
+  end
+  REG["Registry<br/>finds plugins through<br/>entry points: botdesk.plugins<br/>every registration<br/>returns an undo"]
+  subgraph CORE["BotDesk core"]
+    direction TB
+    SEAMS["Capability seams<br/>(Python Protocols)<br/>ToolProvider · TriggerSource<br/>AuthProvider · ModelProvider<br/>MemoryStore · Computer · Approver"]
+    PIPE["Tool pipeline + policy engine<br/>risk comes from the manifest,<br/>so no code per plugin"]
+  end
+  PKG --> REG --> SEAMS --> PIPE

@@ -1,0 +1,11 @@
+stateDiagram-v2
+  [*] --> Available: listed in an index (Marketplace)
+  Available --> Installed: an admin installs it and agrees to its scopes
+  Installed --> Connected: someone connects an account (OAuth or API key)
+  Connected --> Enabled: tools turned on for a bot
+  Enabled --> Enabled: the bot uses tools (through the pipeline)
+  Enabled --> Connected: tools turned off
+  Connected --> Installed: disconnect (token revoked)
+  Installed --> Available: uninstall (every registration undone)
+  Enabled --> Paused: token expired or version withdrawn
+  Paused --> Enabled: reconnect or upgrade

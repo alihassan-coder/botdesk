@@ -1,0 +1,41 @@
+flowchart TB
+  subgraph People["People"]
+    U1["Web app<br/>(Next.js)"]
+    U2["Desktop and mobile<br/>(later)"]
+  end
+  subgraph API["apps/api: FastAPI, /api/v1"]
+    R["Routes → Controllers → Services"]
+    AUTH["Sign-in · Orgs · Roles"]
+    CHAT["Chats and messages<br/>+ live stream (SSE)"]
+    APR["Approvals API"]
+  end
+  subgraph WORKER["Bot worker (Python)"]
+    RUN["Run engine<br/>one LangGraph graph per run"]
+    PIPE["Tool pipeline<br/>policy → approval → execute → audit"]
+    SCHED["Scheduler<br/>routines and triggers"]
+    REG["Plugin registry"]
+  end
+  subgraph PLUG["Plugins"]
+    P0["Gmail (built-in)"]
+    P1["HTTP plugins<br/>(no code)"]
+    P3["Remote MCP servers"]
+  end
+  DB[("Postgres (Neon)<br/>app data · run checkpoints<br/>pgvector memories")]
+  LLM["Model providers<br/>Anthropic · OpenAI · any"]
+  PC["Bot computers<br/>(sandboxes, later)"]
+  U1 -- "HTTPS + cookie" --> R
+  U2 -- "Bearer token" --> R
+  R --- AUTH
+  R --- CHAT
+  R --- APR
+  CHAT -- "start run" --> RUN
+  APR -- "resume run" --> RUN
+  SCHED -- "start run" --> RUN
+  RUN --> PIPE --> REG
+  REG --> P0
+  REG --> P1
+  REG --> P3
+  RUN -- "LangChain" --> LLM
+  RUN <--> DB
+  R <--> DB
+  PIPE -.-> PC

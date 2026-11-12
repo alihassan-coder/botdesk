@@ -145,3 +145,48 @@ describe("members and invitations on the API", () => {
     expect(currentUser()?.role).toBe("member");
   });
 });
+
+describe("switching organizations on the API", () => {
+  const globex = { id: "o2", name: "Globex", slug: "globex", plan: "team", role: "member" };
+
+  beforeEach(() => {
+    routes["GET /api/v1/auth/me"] = { status: 200, body: { ...me, organizations: [org, globex] } };
+    routes["POST /api/v1/auth/sign-in"] = routes["GET /api/v1/auth/me"];
+    routes["GET /api/v1/orgs/o2/members"] = { status: 200, body: [{ ...me.user, role: "member" }] };
+  });
+
+  it("lists every organization you belong to, starting in the first one", async () => {
+    await actions.signIn("zara@example.com", "long-enough");
+    expect(state().orgs.map((o) => [o.name, o.role])).toEqual([["Zara's team", "owner"], ["Globex", "member"]]);
+    expect(state().org.id).toBe("o1");
+  });
+
+  it("switchOrg makes it current, with your role there, loads its people, and is remembered", async () => {
+    await actions.signIn("zara@example.com", "long-enough");
+    await actions.switchOrg("o2");
+    expect(state().org).toMatchObject({ id: "o2", name: "Globex" });
+    expect(currentUser()?.role).toBe("member");
+    expect(calls).toContain("GET /api/v1/orgs/o2/members");
+    expect(localStorage.getItem("botdesk.org")).toBe("o2");
+
+    // Next visit starts where you left off.
+    actions.reset();
+    await actions.restoreSession();
+    expect(state().org.id).toBe("o2");
+  });
+
+  it("falls back to the first organization when the remembered one is gone", async () => {
+    localStorage.setItem("botdesk.org", "o-you-left");
+    await actions.restoreSession();
+    expect(state().org.id).toBe("o1");
+  });
+
+  it("acceptInvitation adds the org to your list and remembers it", async () => {
+    await actions.signIn("zara@example.com", "long-enough");
+    const initech = { id: "o3", name: "Initech", slug: "initech", plan: "free", role: "admin" };
+    routes["POST /api/v1/invitations/accept"] = { status: 200, body: initech };
+    await actions.acceptInvitation("secret");
+    expect(state().orgs.map((o) => o.id)).toEqual(["o1", "o2", "o3"]);
+    expect(localStorage.getItem("botdesk.org")).toBe("o3");
+  });
+});

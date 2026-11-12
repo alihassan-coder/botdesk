@@ -1,24 +1,21 @@
 import Link from "next/link";
 import { toast } from "sonner";
-import { Building2, Check, ChevronsUpDown, Plus, Search, SquarePen, Store, UserPlus, Users } from "lucide-react";
+import { Plus, Search, SquarePen, Store, Users } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
-  DropdownMenuLabel,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Kbd } from "@/components/ui/kbd";
 import { SidebarInput, SidebarTrigger } from "@/components/ui/sidebar";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
-import { useOrg } from "@/data/store";
 import { useShortcut } from "@/hooks/use-shortcut";
 import { openCommandPalette } from "@/features/command-palette/command-palette";
 import { BotdeskMark } from "./logo";
-import { OrgAvatar } from "./org-avatar";
-import { PLAN_LABEL } from "./plan";
+import { OrgSwitcher } from "./org-switcher";
 
 /* Classes that only apply when the sidebar is collapsed to the icon rail. */
 const RAIL_HIDDEN = "group-data-[collapsible=icon]:hidden";
@@ -68,45 +65,6 @@ export function WorkspaceHeader({ query, onQueryChange, onNavigate }: { query: s
         <NewMenu onNavigate={onNavigate} />
       </div>
     </div>
-  );
-}
-
-/** Your organization: switch between orgs, manage it, invite people. */
-function OrgSwitcher({ onNavigate }: { onNavigate?: () => void }) {
-  const org = useOrg();
-  return (
-    <DropdownMenu>
-      <DropdownMenuTrigger
-        aria-label={`Organization: ${org.name}`}
-        className="flex w-full items-center gap-2.5 rounded-xl border bg-background/70 p-1.5 pr-2 text-left shadow-xs outline-none hover:bg-background focus-visible:ring-2 focus-visible:ring-ring group-data-[collapsible=icon]:justify-center group-data-[collapsible=icon]:border-0 group-data-[collapsible=icon]:bg-transparent group-data-[collapsible=icon]:p-0 group-data-[collapsible=icon]:shadow-none"
-      >
-        <OrgAvatar name={org.name} />
-        <span className={`min-w-0 flex-1 leading-tight ${RAIL_HIDDEN}`}>
-          <span className="block truncate text-sm font-medium">{org.name}</span>
-          <span className="block truncate text-xs text-muted-foreground">{PLAN_LABEL[org.plan]}</span>
-        </span>
-        <ChevronsUpDown className={`size-3.5 shrink-0 text-muted-foreground ${RAIL_HIDDEN}`} />
-      </DropdownMenuTrigger>
-      <DropdownMenuContent align="start" side="bottom" className="w-64">
-        <DropdownMenuLabel className="text-xs text-muted-foreground">Organizations</DropdownMenuLabel>
-        <DropdownMenuItem>
-          <OrgAvatar name={org.name} className="size-6 rounded-md text-xs" />
-          {org.name}
-          <Check className="ml-auto" />
-        </DropdownMenuItem>
-        <DropdownMenuSeparator />
-        <DropdownMenuItem asChild>
-          <Link href="/settings/organization" onClick={onNavigate}><Building2 /> Manage organization</Link>
-        </DropdownMenuItem>
-        <DropdownMenuItem asChild>
-          <Link href="/settings/members" onClick={onNavigate}><UserPlus /> Invite people</Link>
-        </DropdownMenuItem>
-        <DropdownMenuSeparator />
-        <DropdownMenuItem onSelect={() => toast("Creating organizations arrives with accounts on the API.")}>
-          <Plus /> New organization
-        </DropdownMenuItem>
-      </DropdownMenuContent>
-    </DropdownMenu>
   );
 }
 

@@ -4,7 +4,7 @@
  * Client-side data store for the UI.
  *
  * Two modes, picked by NEXT_PUBLIC_API_URL:
- * - Set: sign-in, the organization, its members and invitations come from apps/api
+ * - Set: sign-in, your organizations, their members and invitations come from apps/api
  *   (see `./api`). Bots, threads and everything else are still mock data for now.
  * - Not set (tests, e2e, demos): everything is the in-memory mock, with fake bot replies.
  * Screens can't tell the difference: they use the hooks and actions below either way.
@@ -15,9 +15,9 @@ import { parseMentions } from "@/lib/mentions";
 import { authApi, inviteApi, orgApi } from "./api/botdesk";
 import { ApiError, apiBaseUrl } from "./api/client";
 import { toInvitation, toOrg, toUser } from "./api/map";
-import type { ApiMe, ApiOrg } from "./api/types";
+import type { ApiMe } from "./api/types";
 import * as mock from "./mock/fixtures";
-import type { Approval, ApprovalStatus, Bot, Invitation, Message, Org, Participant, ProviderCredential, Routine, Thread, User } from "./types";
+import type { Approval, ApprovalStatus, Bot, Invitation, Membership, Message, Org, Participant, ProviderCredential, Routine, Thread, User } from "./types";
 
 /** What you fill in to create a bot; the rest (id, handle, status…) is filled in for you. */
 export type NewBotInput = Pick<
@@ -38,7 +38,10 @@ export type ActionResult = { ok: true } | { ok: false; error: string };
 export const isDemoMode = () => apiBaseUrl() === "";
 
 interface State {
+  /** The current organization: everything below belongs to it. */
   org: typeof mock.org;
+  /** Every organization you belong to, for the org switcher. */
+  orgs: Membership[];
   users: typeof mock.users;
   /** Invites sent but not yet accepted. API only: in the mock, invites join at once. */
   invitations: Invitation[];
@@ -63,6 +66,7 @@ interface State {
 function seed(): State {
   return {
     org: mock.org,
+    orgs: [{ ...mock.org, role: mock.users.find((u) => u.id === mock.currentUserId)!.role }],
     users: mock.users,
     invitations: [],
     currentUserId: mock.currentUserId,
@@ -162,23 +166,49 @@ function failure(error: unknown): { ok: false; error: string } {
   return { ok: false, error: error instanceof ApiError ? error.message : "Something went wrong. Try again." };
 }
 
-/** Signed in on the API: you, in your first organization (an org switcher comes later). */
-function startApiSession(me: ApiMe) {
-  const org = me.organizations[0];
-  const user = toUser(me.user, org?.role ?? "member");
-  set((st) => ({
-    ...st,
-    org: org ? toOrg(org) : st.org,
-    users: [user],
-    invitations: [],
-    currentUserId: user.id,
-    authStatus: "signed-in",
-  }));
-  if (org) void loadOrgPeople(org);
+/* The organization you last chose is remembered per browser, like Slack and Linear do. */
+const ORG_KEY = "botdesk.org";
+
+function rememberOrg(orgId: string) {
+  try {
+    localStorage.setItem(ORG_KEY, orgId);
+  } catch {}
 }
 
-/** Members, plus pending invites for admins. Until they arrive the list shows only you. */
-async function loadOrgPeople(org: ApiOrg) {
+function rememberedOrgId() {
+  try {
+    return localStorage.getItem(ORG_KEY);
+  } catch {
+    return null;
+  }
+}
+
+/** Signed in on the API: you, in the organization you used last here (else your first). */
+function startApiSession(me: ApiMe) {
+  const orgs: Membership[] = me.organizations;
+  const org = orgs.find((o) => o.id === rememberedOrgId()) ?? orgs[0];
+  const user = toUser(me.user, org?.role ?? "member");
+  set((st) => ({ ...st, orgs, users: [user], invitations: [], currentUserId: user.id, authStatus: "signed-in" }));
+  if (org) enterOrg(org);
+}
+
+/**
+ * Makes `org` the current organization: drops what belonged to the previous one,
+ * then loads this one's people. Until they arrive, the member list shows only you.
+ */
+function enterOrg(org: Membership) {
+  rememberOrg(org.id);
+  set((st) => ({
+    ...st,
+    org: toOrg(org),
+    users: st.users.filter((u) => u.id === st.currentUserId).map((u) => ({ ...u, role: org.role })),
+    invitations: [],
+  }));
+  void loadOrgPeople(org);
+}
+
+/** Members, plus pending invites for admins. */
+async function loadOrgPeople(org: Membership) {
   const canManage = org.role !== "member";
   const [members, invitations] = await Promise.all([
     orgApi.members(org.id).catch(() => null),
@@ -290,13 +320,8 @@ const authActions = {
     if (isDemoMode()) return { ok: false, error: "Invite links work once botdesk is connected to its API." };
     try {
       const org = await inviteApi.accept(token);
-      set((st) => ({
-        ...st,
-        org: toOrg(org),
-        users: st.users.filter((u) => u.id === st.currentUserId).map((u) => ({ ...u, role: org.role })),
-        invitations: [],
-      }));
-      void loadOrgPeople(org);
+      set((st) => ({ ...st, orgs: [...st.orgs.filter((o) => o.id !== org.id), org] }));
+      enterOrg(org);
       return { ok: true };
     } catch (error) {
       return failure(error);
@@ -307,14 +332,21 @@ const authActions = {
 /* ---------- Organization and members ---------- */
 
 const orgActions = {
+  /** Open another of your organizations. Its members, invites and bots replace the current ones. */
+  async switchOrg(orgId: string): Promise<void> {
+    const org = state.orgs.find((o) => o.id === orgId);
+    if (!org || org.id === state.org.id || isDemoMode()) return;
+    enterOrg(org);
+  },
+
   async updateOrg(patch: Partial<Pick<Org, "name" | "slug">>): Promise<ActionResult> {
     if (isDemoMode()) {
-      set((st) => ({ ...st, org: { ...st.org, ...patch } }));
+      set((st) => ({ ...st, org: { ...st.org, ...patch }, orgs: st.orgs.map((o) => (o.id === st.org.id ? { ...o, ...patch } : o)) }));
       return { ok: true };
     }
     try {
       const saved = await orgApi.update(state.org.id, patch);
-      set((st) => ({ ...st, org: toOrg(saved) }));
+      set((st) => ({ ...st, org: toOrg(saved), orgs: st.orgs.map((o) => (o.id === saved.id ? saved : o)) }));
       return { ok: true };
     } catch (error) {
       return failure(error);
@@ -651,6 +683,7 @@ export const selectPendingApprovals = (s: State) => s.approvals.filter((a) => a.
 const newestFirst = (a: Thread, b: Thread) => b.lastMessageAt.localeCompare(a.lastMessageAt);
 
 export const useOrg = () => useStore(useCallback((s: State) => s.org, []));
+export const useOrgs = () => useStore(useCallback((s: State) => s.orgs, []));
 export const useAuthStatus = () => useStore(useCallback((s: State) => s.authStatus, []));
 export const useCurrentUser = () => useStore(useCallback((s: State) => s.users.find((u) => u.id === s.currentUserId)!, []));
 export const useUser = (id?: string) => useStore(useCallback((s: State) => s.users.find((u) => u.id === id), [id]));

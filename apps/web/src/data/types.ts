@@ -48,6 +48,11 @@ export interface Org {
   plan: "self-hosted" | "free" | "pro" | "team";
 }
 
+/** An organization you belong to, with your role in it: what the org switcher lists. */
+export interface Membership extends Org {
+  role: User["role"];
+}
+
 export type BotStatus = "idle" | "working" | "waiting-approval" | "sleeping" | "error";
 
 export type BotAvatarColor =

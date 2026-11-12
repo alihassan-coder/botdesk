@@ -72,7 +72,7 @@ NEXT_PUBLIC_API_URL=http://localhost:8000   # run the API with `pnpm dev:api`
 | | Set (API mode) | Not set (demo / mock mode) |
 |---|---|---|
 | Sign in, sign up, sign out, forgot password | Real, on the API. Session is an httpOnly cookie (`botdesk_session`). | Mock. Session in `localStorage` (`botdesk.session`). Demo login `ali@acme.dev` / `botdesk123`. |
-| Organization (name, address, plan) | Real. Your first organization is the current one (no switcher yet). | Mock "Acme". |
+| Organizations (name, address, plan) | Real. The sidebar switcher lists every org you belong to; the one you pick is remembered in this browser (`botdesk.org`), else your first. Switching reloads members, invites and bots and goes home. Accepting an invite switches to that org. | Mock "Acme" only. |
 | Members, roles, remove | Real. | Mock people. |
 | Invites | Real: creates a one-time link to copy (no emails yet); pending invites can be revoked. | The person joins at once. |
 | Bots, threads, messages, approvals, routines, apps, keys, usage, memory | **Still mock**, even for real accounts. | Mock. |

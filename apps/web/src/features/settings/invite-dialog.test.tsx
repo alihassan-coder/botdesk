@@ -30,6 +30,7 @@ describe("InviteDialog", () => {
     await user.click(screen.getByRole("button", { name: "Send invite" }));
 
     expect(await screen.findByText("Only admins can invite people.")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Send invite" })).toBeInTheDocument();
+    // The button reads "Sending…" until the request settles, which can lag the error on slow machines.
+    expect(await screen.findByRole("button", { name: "Send invite" })).toBeInTheDocument();
   });
 });

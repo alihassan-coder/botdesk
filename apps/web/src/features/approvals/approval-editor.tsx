@@ -26,9 +26,11 @@ export function ApprovalEditor({ preview, onApprove, onCancel }: ApprovalEditorP
         onApprove(fields);
       }}
     >
-      {fields.map((field) => {
+      {fields.map((field, index) => {
         const id = `approval-field-${field.label}`;
-        const isLong = field.value.includes("\n") || field.value.length > 60;
+        // Decide from the ORIGINAL value: switching box type while typing would lose focus and your text.
+        const original = preview[index].value;
+        const isLong = original.includes("\n") || original.length > 60;
         return (
           <div key={field.label} className="flex flex-col gap-1.5">
             <Label htmlFor={id} className="text-xs text-muted-foreground">

@@ -64,11 +64,25 @@ Light by default, dark mode from day one (toggle in the user menu). Black and wh
 - Server components by default; `"use client"` only for interaction or store reads.
 - Every screen handles empty and not-found states.
 - Times like "2m ago" are computed in the browser only (`useNow`), so server and browser HTML match.
-- Logic lives in `src/lib/` and is tested with Vitest (`pnpm --filter @botdesk/web test`). Screens are checked in a real browser at phone, tablet and desktop sizes.
+- Logic lives in `src/lib/` or the store, with tests. Every new feature comes with tests in the layers below.
+
+## Tests
+
+Three layers, cheapest first. Add to each when you add a feature.
+
+| Layer | Where | Tools | Run |
+|---|---|---|---|
+| Logic | `src/lib/*.test.ts`, `src/data/store.test.ts` | Vitest | `pnpm test:web` |
+| UI components | `src/features/**/*.test.tsx` | Vitest + Testing Library in jsdom: render, click and type like a user | `pnpm test:web` |
+| Whole app | `e2e/desktop.spec.ts`, `e2e/phone.spec.ts` | Playwright in your installed Chrome, 1440px desktop and phone | `pnpm test:e2e` |
+
+- Test setup (browser stubs, fresh mock data after every test) is in `src/test/setup.ts`; render helper in `src/test/render.tsx`.
+- Find elements the way a person would: by role and visible text (`getByRole("button", { name: "Approve" })`), not by CSS class.
+- E2E builds the app and serves the production build on :3200, so it never clashes with `pnpm dev:web` on :3000 (change the port with `E2E_PORT`). The first run takes ~1–2 minutes because of the build.
 
 ## Build order
 
-1. **Slice 1 (now):** app shell, DM thread with all message cards and a working composer, inline approval card (Approve / Deny / Edit).
+1. **Slice 1 (done):** app shell, DM thread with all message cards and a working composer, inline approval card (Approve / Deny / Edit).
 2. Group chats with @mentions.
 3. Approvals inbox.
 4. Details pane tabs in depth (routines, memory, computer).

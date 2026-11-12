@@ -66,7 +66,12 @@ export function AppSidebar() {
         <SidebarMenu>
           <SidebarMenuItem>
             <SidebarMenuButton asChild>
-              <Link href="/approvals" onClick={closeOnPhone}>
+              <Link
+                href="/approvals"
+                onClick={closeOnPhone}
+                // The count badge sits outside the link visually; say it in the link's name for screen readers.
+                aria-label={pendingApprovals > 0 ? `Approvals, ${pendingApprovals} waiting` : "Approvals"}
+              >
                 <Inbox /> Approvals
               </Link>
             </SidebarMenuButton>

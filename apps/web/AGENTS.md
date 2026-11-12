@@ -17,4 +17,5 @@ Full guide: [docs/frontend/README.md](../../docs/frontend/README.md). In short:
 - **Size and names.** One component per file, under ~150 lines. Names from GLOSSARY.md. Comments explain why.
 - **Client vs server.** Server components by default. Put `"use client"` only on the entry component of an interactive tree (screens, shell), not on every child.
 - **Next 16 + Cache Components.** Dynamic params: `params.then(...)` inside `<Suspense>`. URL hooks (`usePathname`, `useSearchParams`) and anything time-based must sit inside `<Suspense>` or render client-only (`useNow`, `<TimeAgo>`, `<ClockTime>`). Never read `Date.now()` during render.
-- **Check before done.** `pnpm typecheck`, `pnpm test`, `pnpm lint`, `pnpm build`, then look at the screen at 390, 1024 and 1440px wide, light and dark.
+- **Tests with every feature.** Logic → `*.test.ts`; components → `*.test.tsx` (Testing Library, query by role/text); flows → `e2e/*.spec.ts` (Playwright). See docs/frontend/README.md → Tests.
+- **Check before done.** From the repo root: `pnpm check`, `pnpm test:e2e`, `pnpm build:web`, then look at the screen at 390, 1024 and 1440px wide, light and dark.

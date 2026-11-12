@@ -8,7 +8,9 @@
     "start": "next start",
     "lint": "eslint",
     "typecheck": "next typegen && tsc --noEmit",
-    "test": "vitest run"
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:e2e": "playwright test"
   },
   "dependencies": {
     "@base-ui/react": "^1.9.0",
@@ -35,12 +37,18 @@
     "vaul": "^1.1.2"
   },
   "devDependencies": {
+    "@playwright/test": "^1.65.0",
     "@tailwindcss/turbopack": "4.3.3",
+    "@testing-library/dom": "^10.4.2",
+    "@testing-library/jest-dom": "^7.0.1",
+    "@testing-library/react": "^16.3.3",
+    "@testing-library/user-event": "^14.6.9",
     "@types/node": "^20",
     "@types/react": "^19",
     "@types/react-dom": "^19",
     "eslint": "^9",
     "eslint-config-next": "16.4.6",
+    "jsdom": "^31.0.0",
     "tailwindcss": "4.3.3",
     "typescript": "^5",
     "vitest": "^5.1.0"

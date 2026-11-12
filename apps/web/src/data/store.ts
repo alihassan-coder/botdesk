@@ -67,6 +67,9 @@ function subscribe(l: () => void) {
 const getSnapshot = () => state;
 const getServerSnapshot = () => state;
 
+/** The whole state, read once. For tests and debugging only: screens use the hooks below. */
+export const getStoreSnapshot = () => state;
+
 function shallowEqual(a: unknown, b: unknown) {
   if (Object.is(a, b)) return true;
   if (Array.isArray(a) && Array.isArray(b)) return a.length === b.length && a.every((v, i) => Object.is(v, b[i]));
@@ -150,7 +153,7 @@ export const actions = {
 
     // MOCK: the bot confirms. Real bots report the actual result of the action.
     const text = status === "approved" ? `Done: ${a.title}.` : `Okay, I won't go ahead with “${a.title}”.`;
-    setTimeout(() => pushBotMessage(a.threadId, a.botId, [{ type: "text", text }]), 700);
+    later(() => pushBotMessage(a.threadId, a.botId, [{ type: "text", text }]), 700);
   },
 
   /** The member changed the action's details (e.g. the email body), then approved it. */
@@ -224,10 +227,41 @@ export const actions = {
     return threadId;
   },
 
+  /** Back to the original mock data. Also cancels bot replies still in progress, so none land afterwards. */
   reset() {
+    cancelMockTimers();
     set(() => seed());
   },
 };
+
+/* ---------- Mock timers ---------- */
+// Fake bot replies arrive on timers. They're tracked so reset() can cancel them;
+// otherwise a reply started before a reset would appear in the fresh data.
+
+const mockTimers = new Set<ReturnType<typeof setTimeout>>();
+
+function later(run: () => void, ms: number) {
+  const timer = setTimeout(() => {
+    mockTimers.delete(timer);
+    run();
+  }, ms);
+  mockTimers.add(timer);
+}
+
+function every(run: (stop: () => void) => void, ms: number) {
+  const timer = setInterval(() => run(stop), ms);
+  const stop = () => {
+    clearInterval(timer);
+    mockTimers.delete(timer);
+  };
+  mockTimers.add(timer);
+}
+
+function cancelMockTimers() {
+  // clearTimeout and clearInterval cancel either kind of timer.
+  mockTimers.forEach((timer) => clearTimeout(timer));
+  mockTimers.clear();
+}
 
 function pushBotMessage(threadId: string, botId: string, parts: Message["parts"], status?: Message["status"]) {
   const msg: Message = { id: id(), threadId, author: { type: "bot", id: botId }, parts, createdAt: now(), status };
@@ -254,14 +288,14 @@ function fakeBotReply(threadId: string, botId: string, userText: string) {
   let i = 0;
   let msgId: string | null = null;
 
-  setTimeout(() => {
+  later(() => {
     msgId = pushBotMessage(
       threadId,
       botId,
       [{ type: "reasoning", text: `Reading the request, checking ${bot.name}'s tools and memory, planning steps.`, durationSec: 2 }, { type: "text", text: "" }],
       "streaming",
     );
-    const timer = setInterval(() => {
+    every((stop) => {
       i += 2;
       const text = words.slice(0, i).join(" ");
       const done = i >= words.length;
@@ -274,7 +308,7 @@ function fakeBotReply(threadId: string, botId: string, userText: string) {
         ),
       }));
       if (done) {
-        clearInterval(timer);
+        stop();
         set((st) => ({ ...st, bots: st.bots.map((b) => (b.id === botId ? { ...b, status: "idle", statusText: "Just replied" } : b)) }));
       }
     }, 60);

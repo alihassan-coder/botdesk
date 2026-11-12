@@ -6,7 +6,7 @@ from datetime import UTC, datetime
 from typing import Any, ClassVar
 
 from fastapi import Request
-from sqlalchemy import JSON, DateTime, MetaData, event
+from sqlalchemy import JSON, DateTime, Dialect, MetaData, TypeDecorator, event
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
@@ -31,10 +31,31 @@ def as_utc(moment: datetime) -> datetime:
     return moment if moment.tzinfo else moment.replace(tzinfo=UTC)
 
 
+class UtcDateTime(TypeDecorator[datetime]):
+    """A timestamp that is always UTC with an offset, on every database.
+
+    Postgres keeps the zone (timestamptz); SQLite stores plain text and hands back naive
+    datetimes, which would reach the API as "2026-11-12T10:00:00" with no "+00:00". So values
+    are turned into UTC before they're saved (comparisons like `created_at < :before` then
+    line up on SQLite too) and marked UTC when they're read.
+    """
+
+    impl = DateTime(timezone=True)
+    cache_ok = True
+
+    def process_bind_param(self, value: datetime | None, dialect: Dialect) -> datetime | None:
+        if value is None:
+            return None
+        return value.astimezone(UTC) if value.tzinfo else value.replace(tzinfo=UTC)
+
+    def process_result_value(self, value: datetime | None, dialect: Dialect) -> datetime | None:
+        return as_utc(value) if value is not None else None
+
+
 class Base(DeclarativeBase):
     metadata = MetaData(naming_convention=NAMING_CONVENTION)
     type_annotation_map: ClassVar[dict[Any, Any]] = {
-        datetime: DateTime(timezone=True),
+        datetime: UtcDateTime(),
         # JSON lists (like a message's parts): JSONB on Postgres, plain JSON elsewhere.
         list[dict[str, Any]]: JSON().with_variant(JSONB(), "postgresql"),
         dict[str, Any]: JSON().with_variant(JSONB(), "postgresql"),

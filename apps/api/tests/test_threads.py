@@ -1,5 +1,6 @@
 """Chats: your DM with a bot, group chats, and their messages."""
 
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 import httpx
@@ -52,6 +53,23 @@ async def test_older_messages_page_with_before(client: httpx.AsyncClient) -> Non
     assert [m["parts"][0]["text"] for m in latest] == ["m3", "m4"]
     older = (await client.get(messages, params={"limit": 2, "before": latest[0]["createdAt"]})).json()
     assert [m["parts"][0]["text"] for m in older] == ["m1", "m2"]
+
+    # The same moment written in another time zone pages the same way.
+    in_karachi = datetime.fromisoformat(latest[0]["createdAt"]).astimezone(timezone(timedelta(hours=5)))
+    same = (await client.get(messages, params={"limit": 2, "before": in_karachi.isoformat()})).json()
+    assert [m["parts"][0]["text"] for m in same] == ["m1", "m2"]
+
+
+async def test_times_are_utc_with_an_offset(client: httpx.AsyncClient) -> None:
+    """SQLite forgets time zones; the API must still say "+00:00" (or "Z") everywhere."""
+    org, bot = await _org_with_bot(client)
+    thread = (await client.post(f"{org}/threads/dm", json={"botId": bot["id"]})).json()
+    await client.post(f"{org}/threads/{thread['id']}/messages", json={"text": "Hi"})
+
+    listed = (await client.get(f"{org}/threads")).json()[0]
+    message = (await client.get(f"{org}/threads/{thread['id']}/messages")).json()[0]
+    for moment in (listed["lastMessageAt"], message["createdAt"]):
+        assert datetime.fromisoformat(moment).utcoffset() == timedelta(0), moment
 
 
 async def test_empty_messages_are_refused(client: httpx.AsyncClient) -> None:

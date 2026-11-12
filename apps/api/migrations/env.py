@@ -6,6 +6,7 @@ alembic.ini, so migrations always hit the same database as the API.
 
 import asyncio
 from logging.config import fileConfig
+from typing import Literal
 
 from alembic import context
 from sqlalchemy.engine import Connection
@@ -13,7 +14,7 @@ from sqlalchemy.ext.asyncio import create_async_engine
 
 from src import models  # noqa: F401  (registers every table)
 from src.core.config import get_settings
-from src.core.database import Base
+from src.core.database import Base, UtcDateTime
 
 config = context.config
 if config.config_file_name is not None:
@@ -34,6 +35,13 @@ def include_object(obj: object, name: str | None, type_: str, reflected: bool, c
     return not (type_ == "index" and reflected and table is not None and table.name in FOREIGN_TABLES)
 
 
+def render_item(type_: str, obj: object, autogen_context: object) -> str | Literal[False]:
+    """Write our UTC timestamp type into migrations as the plain column type it is."""
+    if type_ == "type" and isinstance(obj, UtcDateTime):
+        return "sa.DateTime(timezone=True)"
+    return False
+
+
 def run_migrations_offline() -> None:
     """`alembic upgrade head --sql`: print the SQL instead of running it."""
     context.configure(
@@ -42,6 +50,7 @@ def run_migrations_offline() -> None:
         literal_binds=True,
         render_as_batch=True,
         include_object=include_object,
+        render_item=render_item,
     )
     with context.begin_transaction():
         context.run_migrations()
@@ -50,7 +59,11 @@ def run_migrations_offline() -> None:
 def do_run_migrations(connection: Connection) -> None:
     # Batch mode lets ALTER TABLE work on SQLite too (local default database).
     context.configure(
-        connection=connection, target_metadata=target_metadata, render_as_batch=True, include_object=include_object
+        connection=connection,
+        target_metadata=target_metadata,
+        render_as_batch=True,
+        include_object=include_object,
+        render_item=render_item,
     )
     with context.begin_transaction():
         context.run_migrations()

@@ -90,3 +90,49 @@ async def test_forgot_password_never_reveals_who_has_an_account(client: httpx.As
     unknown = await client.post(f"{AUTH}/forgot-password", json={"email": "nobody@acme.dev"})
     assert known.status_code == unknown.status_code == 202
     assert known.json() == unknown.json()
+
+
+async def test_you_can_change_your_name_and_handle(client: httpx.AsyncClient) -> None:
+    await sign_up(client, name="Ali", email="ali@acme.dev")
+    me = (await client.patch(f"{AUTH}/me", json={"name": "Ali Hassan", "handle": "alihassan"})).json()
+    assert (me["user"]["name"], me["user"]["handle"]) == ("Ali Hassan", "alihassan")
+
+
+async def test_handles_are_unique_and_tidy(client: httpx.AsyncClient) -> None:
+    await sign_up(client, name="Sara", email="sara@acme.dev")
+    client.cookies.clear()
+    await sign_up(client, name="Ali", email="ali@acme.dev")
+    taken = await client.patch(f"{AUTH}/me", json={"handle": "sara"})
+    assert taken.status_code == 409
+    assert taken.json()["detail"] == "@sara is taken. Try another."
+    assert (await client.patch(f"{AUTH}/me", json={"handle": "Not OK"})).status_code == 422
+
+
+async def test_changing_your_password_signs_out_other_devices(client: httpx.AsyncClient) -> None:
+    await sign_up(client)
+    laptop = client.cookies["botdesk_session"]
+    client.cookies.clear()
+    await client.post(f"{AUTH}/sign-in", json={"email": "ali@acme.dev", "password": PASSWORD})
+    phone = client.cookies["botdesk_session"]
+
+    wrong = await client.post(
+        f"{AUTH}/change-password", json={"currentPassword": "nope", "newPassword": "a-new-password"}
+    )
+    assert wrong.status_code == 401
+    ok = await client.post(
+        f"{AUTH}/change-password", json={"currentPassword": PASSWORD, "newPassword": "a-new-password"}
+    )
+    assert ok.status_code == 200
+
+    client.cookies.clear()  # a cookie would win over the Bearer header
+    me_on = {"laptop": laptop, "phone": phone}
+    statuses = {
+        device: (await client.get(f"{AUTH}/me", headers={"Authorization": f"Bearer {token}"})).status_code
+        for device, token in me_on.items()
+    }
+    assert statuses == {"laptop": 401, "phone": 200}
+
+    client.cookies.clear()
+    old = await client.post(f"{AUTH}/sign-in", json={"email": "ali@acme.dev", "password": PASSWORD})
+    new = await client.post(f"{AUTH}/sign-in", json={"email": "ali@acme.dev", "password": "a-new-password"})
+    assert (old.status_code, new.status_code) == (401, 200)

@@ -7,7 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.core.config import Settings
 from src.models import User
-from src.schemas.auth import MeOut, MessageOut, SignInIn, SignUpIn, UserOut
+from src.schemas.auth import ChangePasswordIn, MeOut, MessageOut, ProfileUpdate, SignInIn, SignUpIn, UserOut
 from src.services import auth_service, organization_service
 
 log = logging.getLogger(__name__)
@@ -57,3 +57,17 @@ async def forgot_password() -> MessageOut:
     # The reset email itself comes with the email provider (see docs/backend/README.md).
     log.info("Password reset requested")
     return MessageOut(message="If that email has an account, a reset link is on its way.")
+
+
+async def update_profile(db: AsyncSession, user: User, body: ProfileUpdate) -> MeOut:
+    await auth_service.update_profile(db, user, name=body.name, handle=body.handle)
+    await db.commit()
+    return await me(db, user)
+
+
+async def change_password(db: AsyncSession, user: User, body: ChangePasswordIn, token: str | None) -> MessageOut:
+    await auth_service.change_password(
+        db, user, current_password=body.current_password, new_password=body.new_password, keep_token=token
+    )
+    await db.commit()
+    return MessageOut(message="Password changed. Your other devices are signed out.")

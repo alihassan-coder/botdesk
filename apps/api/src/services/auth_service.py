@@ -63,3 +63,26 @@ async def user_for_token(db: AsyncSession, token: str) -> User | None:
 
 async def end_session(db: AsyncSession, token: str) -> None:
     await db.execute(delete(Session).where(Session.token_hash == security.hash_token(token)))
+
+
+async def update_profile(db: AsyncSession, user: User, *, name: str | None, handle: str | None) -> User:
+    if handle and handle != user.handle:
+        if await db.scalar(select(User.id).where(User.handle == handle)):
+            raise Conflict(f"@{handle} is taken. Try another.")
+        user.handle = handle
+    if name and name.strip():
+        user.name = name.strip()
+    return user
+
+
+async def change_password(
+    db: AsyncSession, user: User, *, current_password: str, new_password: str, keep_token: str | None
+) -> None:
+    """Check the current password, set the new one, and sign out every other device."""
+    if not security.verify_password(user.password_hash, current_password):
+        raise Unauthorized("Your current password isn't right.")
+    user.password_hash = security.hash_password(new_password)
+    other_sessions = delete(Session).where(Session.user_id == user.id)
+    if keep_token:
+        other_sessions = other_sessions.where(Session.token_hash != security.hash_token(keep_token))
+    await db.execute(other_sessions)

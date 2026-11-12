@@ -78,6 +78,8 @@ A service raises `NotFound("…")`, `Conflict("…")` and so on. `main.py` turns
 | `POST /api/v1/auth/sign-in` | Email + password → session cookie |
 | `POST /api/v1/auth/sign-out` | Ends this session everywhere it was used |
 | `GET /api/v1/auth/me` | You, and your organizations with your role |
+| `PATCH /api/v1/auth/me` | Change your name or @handle (unique) |
+| `POST /api/v1/auth/change-password` | Needs the current password; signs out your other devices |
 | `POST /api/v1/auth/forgot-password` | Always the same answer (doesn't reveal accounts) |
 | `GET /api/v1/orgs` | Your organizations |
 | `GET /api/v1/orgs/{id}` | One organization |

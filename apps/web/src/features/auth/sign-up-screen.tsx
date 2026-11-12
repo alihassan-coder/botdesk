@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useTransition } from "react";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { Field, FieldDescription, FieldGroup, FieldLabel } from "@/components/ui/field";
@@ -20,6 +20,7 @@ export function SignUpScreen() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
+  const [creating, startCreating] = useTransition();
 
   const emailValid = looksLikeEmail(email);
   const passwordLongEnough = password.length >= MIN_PASSWORD;
@@ -37,8 +38,10 @@ export function SignUpScreen() {
         onSubmit={(e) => {
           e.preventDefault();
           if (!ready) return;
-          const result = actions.signUp({ name, email, password });
-          setError(result.ok ? null : result.error);
+          startCreating(async () => {
+            const result = await actions.signUp({ name, email, password });
+            setError(result.ok ? null : result.error);
+          });
         }}
       >
         <FieldGroup>
@@ -58,8 +61,8 @@ export function SignUpScreen() {
               At least {MIN_PASSWORD} characters{password ? ` · ${password.length}/${MIN_PASSWORD}` : ""}
             </FieldDescription>
           </Field>
-          <Button type="submit" size="lg" disabled={!ready}>
-            Create account
+          <Button type="submit" size="lg" disabled={!ready || creating}>
+            {creating ? "Creating account…" : "Create account"}
           </Button>
           <p className="text-xs text-muted-foreground">By creating an account you agree to the terms and privacy policy.</p>
         </FieldGroup>

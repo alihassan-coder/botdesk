@@ -32,6 +32,15 @@ export interface User {
   presence: "online" | "away" | "offline";
 }
 
+/** An invite to join the org that hasn't been accepted yet. Admins can revoke it. */
+export interface Invitation {
+  id: ID;
+  email: string;
+  role: "admin" | "member";
+  createdAt: string;
+  expiresAt: string;
+}
+
 export interface Org {
   id: ID;
   name: string;

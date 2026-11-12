@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useTransition } from "react";
 import Link from "next/link";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
@@ -31,6 +31,7 @@ export function OrganizationSettings() {
   const bots = useBots();
   const [name, setName] = useState(org.name);
   const [slug, setSlug] = useState(org.slug);
+  const [saving, startSaving] = useTransition();
   const finalSlug = finishSlug(slug);
   const changed = name.trim() !== org.name || finalSlug !== org.slug;
   const valid = name.trim().length > 0 && finalSlug.length > 0;
@@ -51,9 +52,14 @@ export function OrganizationSettings() {
           className="max-w-md"
           onSubmit={(e) => {
             e.preventDefault();
-            actions.updateOrg({ name: name.trim(), slug: finalSlug });
-            setSlug(finalSlug);
-            toast.success("Organization saved");
+            startSaving(async () => {
+              // Send only what changed, so an unchanged address is never re-checked.
+              const patch = { ...(name.trim() !== org.name && { name: name.trim() }), ...(finalSlug !== org.slug && { slug: finalSlug }) };
+              const result = await actions.updateOrg(patch);
+              if (!result.ok) return void toast.error(result.error);
+              setSlug(finalSlug);
+              toast.success("Organization saved");
+            });
           }}
         >
           <FieldGroup>
@@ -66,7 +72,7 @@ export function OrganizationSettings() {
               <Input id="org-slug" value={slug} onChange={(e) => setSlug(slugWhileTyping(e.target.value))} />
               <FieldDescription>botdesk.app/{finalSlug || "…"}. Lowercase letters, numbers and dashes.</FieldDescription>
             </Field>
-            <Button type="submit" disabled={!changed || !valid} className="w-fit">Save changes</Button>
+            <Button type="submit" disabled={!changed || !valid || saving} className="w-fit">{saving ? "Saving…" : "Save changes"}</Button>
           </FieldGroup>
         </form>
       </SettingsSection>

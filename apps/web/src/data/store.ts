@@ -3,16 +3,21 @@
 /**
  * Client-side data store for the UI.
  *
- * Today it is seeded from mock fixtures and mutations happen in memory, with fake bot
- * replies, so every screen is clickable. When apps/api exists, replace the `seed()` and
- * the action bodies with calls to `packages/sdk` (and realtime events); the hooks and
- * screens stay the same.
+ * Two modes, picked by NEXT_PUBLIC_API_URL:
+ * - Set: sign-in, the organization, its members and invitations come from apps/api
+ *   (see `./api`). Bots, threads and everything else are still mock data for now.
+ * - Not set (tests, e2e, demos): everything is the in-memory mock, with fake bot replies.
+ * Screens can't tell the difference: they use the hooks and actions below either way.
  */
 import { useCallback, useRef, useSyncExternalStore } from "react";
 import { makeHandle } from "@/lib/handle";
 import { parseMentions } from "@/lib/mentions";
+import { authApi, inviteApi, orgApi } from "./api/botdesk";
+import { ApiError, apiBaseUrl } from "./api/client";
+import { toInvitation, toOrg, toUser } from "./api/map";
+import type { ApiMe, ApiOrg } from "./api/types";
 import * as mock from "./mock/fixtures";
-import type { Approval, ApprovalStatus, Bot, Message, Org, Participant, ProviderCredential, Routine, Thread, User } from "./types";
+import type { Approval, ApprovalStatus, Bot, Invitation, Message, Org, Participant, ProviderCredential, Routine, Thread, User } from "./types";
 
 /** What you fill in to create a bot; the rest (id, handle, status…) is filled in for you. */
 export type NewBotInput = Pick<
@@ -26,11 +31,17 @@ export type NewRoutineInput = Pick<Routine, "botId" | "name" | "description" | "
 /** "unknown" until the browser has checked for a saved session (first render, server). */
 export type AuthStatus = "unknown" | "signed-in" | "signed-out";
 
-type AuthResult = { ok: true } | { ok: false; error: string };
+/** What an action that can fail returns: screens show `error` as is. */
+export type ActionResult = { ok: true } | { ok: false; error: string };
+
+/** True when there's no API to talk to, so the demo accounts and mock data are in use. */
+export const isDemoMode = () => apiBaseUrl() === "";
 
 interface State {
   org: typeof mock.org;
   users: typeof mock.users;
+  /** Invites sent but not yet accepted. API only: in the mock, invites join at once. */
+  invitations: Invitation[];
   currentUserId: string;
   authStatus: AuthStatus;
   /** MOCK: email → password. Replaced by Better Auth on the API. */
@@ -53,6 +64,7 @@ function seed(): State {
   return {
     org: mock.org,
     users: mock.users,
+    invitations: [],
     currentUserId: mock.currentUserId,
     authStatus: "unknown",
     passwords: mock.mockPasswords,
@@ -122,48 +134,89 @@ const id = () => Math.random().toString(36).slice(2, 10);
 const now = () => new Date().toISOString();
 
 
-/* ---------- Session (MOCK) ----------
- * The signed-in user is remembered in this browser. The real app uses Better Auth
- * cookies set by apps/api; screens won't change, only these functions.
+/* ---------- Session ----------
+ * On the API the session is an httpOnly cookie the browser sends for us. In the mock,
+ * the signed-in user is remembered in localStorage instead.
  */
 const SESSION_KEY = "botdesk.session";
 
-function saveSession(user: User | null) {
+function saveMockSession(user: User | null) {
   try {
     if (user) localStorage.setItem(SESSION_KEY, JSON.stringify({ user }));
     else localStorage.removeItem(SESSION_KEY);
   } catch {}
 }
 
-function startSession(user: User) {
+function startMockSession(user: User) {
   set((st) => ({
     ...st,
     users: st.users.some((u) => u.id === user.id) ? st.users : [...st.users, user],
     currentUserId: user.id,
     authStatus: "signed-in",
   }));
-  saveSession(user);
+  saveMockSession(user);
 }
 
-const authActions = {
-  /** Called once when the app loads: are we already signed in on this device? */
+/** The API's message when it has one; screens show it to people as is. */
+function failure(error: unknown): { ok: false; error: string } {
+  return { ok: false, error: error instanceof ApiError ? error.message : "Something went wrong. Try again." };
+}
+
+/** Signed in on the API: you, in your first organization (an org switcher comes later). */
+function startApiSession(me: ApiMe) {
+  const org = me.organizations[0];
+  const user = toUser(me.user, org?.role ?? "member");
+  set((st) => ({
+    ...st,
+    org: org ? toOrg(org) : st.org,
+    users: [user],
+    invitations: [],
+    currentUserId: user.id,
+    authStatus: "signed-in",
+  }));
+  if (org) void loadOrgPeople(org);
+}
+
+/** Members, plus pending invites for admins. Until they arrive the list shows only you. */
+async function loadOrgPeople(org: ApiOrg) {
+  const canManage = org.role !== "member";
+  const [members, invitations] = await Promise.all([
+    orgApi.members(org.id).catch(() => null),
+    canManage ? inviteApi.list(org.id).catch(() => null) : Promise.resolve([]),
+  ]);
+  set((st) => {
+    if (st.org.id !== org.id) return st; // signed out or switched org while loading
+    const users = members?.map((m) => toUser(m, m.role)) ?? st.users;
+    const me = st.users.find((u) => u.id === st.currentUserId);
+    return {
+      ...st,
+      users: me && !users.some((u) => u.id === me.id) ? [me, ...users] : users,
+      invitations: invitations?.map(toInvitation) ?? st.invitations,
+    };
+  });
+}
+
+/* restoreSession can be asked for twice at once (auth gate + sign-in page); share one request. */
+let restoring: Promise<void> | null = null;
+
+const mockAuth = {
   restoreSession() {
     try {
       const saved = JSON.parse(localStorage.getItem(SESSION_KEY) ?? "null") as { user?: User; userId?: string } | null;
       const user = saved?.user ?? state.users.find((u) => u.id === saved?.userId);
-      if (user) return startSession(user);
+      if (user) return startMockSession(user);
     } catch {}
     set((st) => ({ ...st, authStatus: "signed-out" }));
   },
 
-  signIn(email: string, password: string): AuthResult {
+  signIn(email: string, password: string): ActionResult {
     const user = state.users.find((u) => u.email.toLowerCase() === email.trim().toLowerCase());
     if (!user || state.passwords[user.email] !== password) return { ok: false, error: "That email and password don't match." };
-    startSession(user);
+    startMockSession(user);
     return { ok: true };
   },
 
-  signUp(input: { name: string; email: string; password: string }): AuthResult {
+  signUp(input: { name: string; email: string; password: string }): ActionResult {
     const email = input.email.trim().toLowerCase();
     if (state.users.some((u) => u.email.toLowerCase() === email)) return { ok: false, error: "An account with this email already exists. Sign in instead." };
     if (input.password.length < 8) return { ok: false, error: "Use at least 8 characters for your password." };
@@ -174,18 +227,155 @@ const authActions = {
       role: "admin", presence: "online",
     };
     set((st) => ({ ...st, passwords: { ...st.passwords, [email]: input.password } }));
-    startSession(user);
+    startMockSession(user);
     return { ok: true };
   },
+};
 
-  signOut() {
-    saveSession(null);
+/*
+ * Auth actions are async because the API is. In the mock they finish before their first
+ * `await`, so the state is already updated when the call returns.
+ */
+const authActions = {
+  /** Called once when the app loads: are we already signed in on this device? */
+  async restoreSession(): Promise<void> {
+    if (isDemoMode()) return mockAuth.restoreSession();
+    restoring ??= authApi
+      .me()
+      .then(startApiSession, () => set((st) => ({ ...st, authStatus: "signed-out" })))
+      .finally(() => (restoring = null));
+    return restoring;
+  },
+
+  async signIn(email: string, password: string): Promise<ActionResult> {
+    if (isDemoMode()) return mockAuth.signIn(email, password);
+    try {
+      startApiSession(await authApi.signIn(email.trim(), password));
+      return { ok: true };
+    } catch (error) {
+      return failure(error);
+    }
+  },
+
+  async signUp(input: { name: string; email: string; password: string }): Promise<ActionResult> {
+    if (isDemoMode()) return mockAuth.signUp(input);
+    try {
+      startApiSession(await authApi.signUp({ ...input, name: input.name.trim(), email: input.email.trim() }));
+      return { ok: true };
+    } catch (error) {
+      return failure(error);
+    }
+  },
+
+  async signOut(): Promise<void> {
+    if (isDemoMode()) saveMockSession(null);
+    // Signed out here even if the API can't be reached; the cookie expires on its own.
+    else await authApi.signOut().catch(() => {});
     set((st) => ({ ...st, authStatus: "signed-out" }));
+  },
+
+  /** Ask for a reset link. The answer never says whether the email has an account. */
+  async requestPasswordReset(email: string): Promise<ActionResult> {
+    if (isDemoMode()) return { ok: true }; // MOCK: nothing is sent.
+    try {
+      await authApi.forgotPassword(email.trim());
+      return { ok: true };
+    } catch (error) {
+      return failure(error);
+    }
+  },
+
+  /** Join the organization an invite link is for, and switch to it. API only. */
+  async acceptInvitation(token: string): Promise<ActionResult> {
+    if (isDemoMode()) return { ok: false, error: "Invite links work once botdesk is connected to its API." };
+    try {
+      const org = await inviteApi.accept(token);
+      set((st) => ({
+        ...st,
+        org: toOrg(org),
+        users: st.users.filter((u) => u.id === st.currentUserId).map((u) => ({ ...u, role: org.role })),
+        invitations: [],
+      }));
+      void loadOrgPeople(org);
+      return { ok: true };
+    } catch (error) {
+      return failure(error);
+    }
+  },
+};
+
+/* ---------- Organization and members ---------- */
+
+const orgActions = {
+  async updateOrg(patch: Partial<Pick<Org, "name" | "slug">>): Promise<ActionResult> {
+    if (isDemoMode()) {
+      set((st) => ({ ...st, org: { ...st.org, ...patch } }));
+      return { ok: true };
+    }
+    try {
+      const saved = await orgApi.update(state.org.id, patch);
+      set((st) => ({ ...st, org: toOrg(saved) }));
+      return { ok: true };
+    } catch (error) {
+      return failure(error);
+    }
+  },
+
+  /**
+   * On the API this creates an invite and returns its link to share (no emails yet).
+   * MOCK: adds the invited person straight away.
+   */
+  async inviteMember(email: string, role: User["role"]): Promise<ActionResult & { inviteUrl?: string }> {
+    if (isDemoMode()) {
+      const name = email.split("@")[0].replace(/[._-]+/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
+      const handle = makeHandle(name, state.users.map((u) => u.handle));
+      set((st) => ({ ...st, users: [...st.users, { id: `u_${id()}`, name, email, handle, role, presence: "offline" }] }));
+      return { ok: true };
+    }
+    try {
+      // Owners are made from existing members, never by invite.
+      const invite = await inviteApi.create(state.org.id, { email, role: role === "owner" ? "admin" : role });
+      set((st) => ({ ...st, invitations: [...st.invitations.filter((i) => i.id !== invite.id), toInvitation(invite)] }));
+      return { ok: true, inviteUrl: invite.inviteUrl };
+    } catch (error) {
+      return failure(error);
+    }
+  },
+
+  async revokeInvitation(invitationId: string): Promise<ActionResult> {
+    try {
+      if (!isDemoMode()) await inviteApi.revoke(state.org.id, invitationId);
+      set((st) => ({ ...st, invitations: st.invitations.filter((i) => i.id !== invitationId) }));
+      return { ok: true };
+    } catch (error) {
+      return failure(error);
+    }
+  },
+
+  async changeMemberRole(userId: string, role: User["role"]): Promise<ActionResult> {
+    try {
+      const saved = isDemoMode() ? role : (await orgApi.changeRole(state.org.id, userId, role)).role;
+      set((st) => ({ ...st, users: st.users.map((u) => (u.id === userId ? { ...u, role: saved } : u)) }));
+      return { ok: true };
+    } catch (error) {
+      return failure(error);
+    }
+  },
+
+  async removeMember(userId: string): Promise<ActionResult> {
+    try {
+      if (!isDemoMode()) await orgApi.removeMember(state.org.id, userId);
+      set((st) => ({ ...st, users: st.users.filter((u) => u.id !== userId) }));
+      return { ok: true };
+    } catch (error) {
+      return failure(error);
+    }
   },
 };
 
 export const actions = {
   ...authActions,
+  ...orgActions,
 
   sendMessage(threadId: string, text: string) {
     const s = state;
@@ -334,23 +524,8 @@ export const actions = {
     return routineId;
   },
 
-  updateOrg(patch: Partial<Pick<Org, "name" | "slug">>) {
-    set((st) => ({ ...st, org: { ...st.org, ...patch } }));
-  },
-
   updateCurrentUser(patch: Partial<Pick<User, "name" | "handle">>) {
     set((st) => ({ ...st, users: st.users.map((u) => (u.id === st.currentUserId ? { ...u, ...patch } : u)) }));
-  },
-
-  /** MOCK: adds the invited person straight away. The real API sends an email invite. */
-  inviteMember(email: string, role: User["role"]) {
-    const name = email.split("@")[0].replace(/[._-]+/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
-    const handle = makeHandle(name, state.users.map((u) => u.handle));
-    set((st) => ({ ...st, users: [...st.users, { id: `u_${id()}`, name, email, handle, role, presence: "offline" }] }));
-  },
-
-  changeMemberRole(userId: string, role: User["role"]) {
-    set((st) => ({ ...st, users: st.users.map((u) => (u.id === userId ? { ...u, role } : u)) }));
   },
 
   addCredential(input: Pick<ProviderCredential, "provider" | "label" | "owner" | "baseUrl"> & { key: string }) {
@@ -378,6 +553,7 @@ export const actions = {
   /** Back to the original mock data. Also cancels bot replies still in progress, so none land afterwards. */
   reset() {
     cancelMockTimers();
+    restoring = null;
     set(() => seed());
   },
 };
@@ -504,6 +680,7 @@ export const useBotMemories = (botId?: string) =>
 /* Whole-collection hooks for the app pages (marketplace, settings, approvals…). */
 export const useBots = () => useStore(useCallback((s: State) => s.bots, []));
 export const useUsers = () => useStore(useCallback((s: State) => s.users, []));
+export const useInvitations = () => useStore(useCallback((s: State) => s.invitations, []));
 export const useModels = () => useStore(useCallback((s: State) => s.models, []));
 export const useCredentials = () => useStore(useCallback((s: State) => s.credentials, []));
 export const useTemplates = () => useStore(useCallback((s: State) => s.templates, []));

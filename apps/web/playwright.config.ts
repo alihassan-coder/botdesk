@@ -35,6 +35,8 @@ export default defineConfig({
   webServer: {
     command: `pnpm build && pnpm start --port ${PORT}`,
     url: `http://localhost:${PORT}`,
+    // E2E always runs on the mock data: an empty value beats the API URL in .env.local.
+    env: { NEXT_PUBLIC_API_URL: "" },
     reuseExistingServer: !process.env.CI,
     timeout: 180_000,
   },

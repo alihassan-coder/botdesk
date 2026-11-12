@@ -12,13 +12,14 @@ URL ─► src/app/            routes only: each page renders one feature screen
           │  read data with hooks, change it with actions
           ▼
        src/data/store.ts   the ONLY door to data (hooks + actions), including sign-in
-          │  today: in-memory mock with fake bot replies
+          │  API mode: auth + org + members from apps/api; the rest still mock
+          ├──────────────► src/data/api/   typed fetch client for apps/api (only store.ts uses it)
           ▼
-       src/data/mock/      fake bots, threads, messages… (deleted when the API lands)
+       src/data/mock/      fake bots, threads, messages… (deleted when the API covers them)
        src/data/types.ts   the shape of everything (Bot, Thread, Message, Approval…)
 ```
 
-When the API exists, only `store.ts` changes. No screen changes. The backend will be Python (FastAPI); see the architecture docs and ADR 0003.
+Screens never know where data comes from. The backend is Python (FastAPI): see [docs/backend](../backend/README.md) and ADR 0003.
 
 ## Folders
 
@@ -57,14 +58,30 @@ When the API exists, only `store.ts` changes. No screen changes. The backend wil
 | `/settings/<section>` | `profile`, `organization`, `appearance`, `models`, `security`, `members`, `usage`, `memory`. `/settings` opens Profile. The section nav stays in view as you scroll. |
 | `/sign-in` | Sign in with email and password. Returns you to `?next=` afterwards. |
 | `/sign-up` | Create an account. |
-| `/forgot-password` | Ask for a reset link (mock: shows a "check your email" message). |
+| `/forgot-password` | Ask for a reset link (shows a "check your email" message; no emails are sent yet). |
+| `/invite/[token]` | Accept an invite link from Settings → Members. Signed out, it offers sign in / create account and comes back. |
 
-## Sign-in (mock for now)
+## Talking to the API
 
+One setting picks where data comes from: `NEXT_PUBLIC_API_URL` in `apps/web/.env.local` (copy `.env.example`).
+
+```bash
+NEXT_PUBLIC_API_URL=http://localhost:8000   # run the API with `pnpm dev:api`
+```
+
+| | Set (API mode) | Not set (demo / mock mode) |
+|---|---|---|
+| Sign in, sign up, sign out, forgot password | Real, on the API. Session is an httpOnly cookie (`botdesk_session`). | Mock. Session in `localStorage` (`botdesk.session`). Demo login `ali@acme.dev` / `botdesk123`. |
+| Organization (name, address, plan) | Real. Your first organization is the current one (no switcher yet). | Mock "Acme". |
+| Members, roles, remove | Real. | Mock people. |
+| Invites | Real: creates a one-time link to copy (no emails yet); pending invites can be revoked. | The person joins at once. |
+| Bots, threads, messages, approvals, routines, apps, keys, usage, memory | **Still mock**, even for real accounts. | Mock. |
+
+- `src/data/api/client.ts` is the fetch wrapper: sends the cookie (`credentials: "include"`) and turns `{detail}` errors (and 422 lists) into an `ApiError` whose message screens show as is.
+- `src/data/api/botdesk.ts` lists every route the web app calls; `map.ts` turns API shapes into `types.ts` shapes.
+- Store actions that can fail return `{ ok: true } | { ok: false, error }` and are async in both modes.
+- **Tests and e2e always run in mock mode.** Vitest doesn't load `.env.local`, and the Playwright web server sets `NEXT_PUBLIC_API_URL` to empty for its build. Don't set it there.
 - Every page under `(app)/` sits behind `AuthGate` (`features/shell/auth-gate.tsx`). If there is no session, it sends you to `/sign-in?next=<where you were>`.
-- Sign-in, sign-up and sign-out are store actions (`actions.signIn`, `signUp`, `signOut`, `restoreSession`). The session is saved in `localStorage` under `botdesk.session`.
-- Demo login: `ali@acme.dev` / `botdesk123`. Other mock members use the same password.
-- This is a stand-in. The Python backend replaces it with real email/password auth and httpOnly session cookies; only `store.ts` changes.
 
 ## Layout by screen size
 
@@ -123,7 +140,7 @@ Inside `apps/web`, `pnpm test:watch` re-runs Vitest as you edit.
 1. **Slice 1 (done):** app shell, DM thread with all message cards and a working composer, inline approval card (Approve / Deny / Edit).
 2. **App pages (done):** create bot, marketplace, approvals inbox, routines, connect apps, settings, ⌘K palette, workspace header.
 3. **Accounts and polish (done):** mock sign in / sign up / forgot password with an auth gate, create routine, manage organization, collapsible sidebar, custom accent.
-4. **Wire to the API (next):** swap the mock in `store.ts` for the Python backend, starting with auth, orgs, bots, threads and streaming bot replies.
+4. **Wire to the API (in progress):** auth, organization, members and invites are on the API. Next: bots, threads and streaming bot replies, then an org switcher.
 5. **Later:** group chats with an @mention picker; then computer view (live screen, take over) and routine recording.
 
 Each slice is shown to the owner before the next starts.

@@ -1,12 +1,12 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useTransition } from "react";
 import Link from "next/link";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Field, FieldGroup, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
-import { actions } from "@/data/store";
+import { actions, isDemoMode } from "@/data/store";
 import { FormError } from "./form-error";
 import { PasswordInput } from "./password-input";
 import { useSignedInRedirect } from "./use-signed-in-redirect";
@@ -17,6 +17,7 @@ export function SignInScreen() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
+  const [signingIn, startSigningIn] = useTransition();
 
   return (
     <div className="flex flex-col gap-8">
@@ -29,8 +30,10 @@ export function SignInScreen() {
         noValidate
         onSubmit={(e) => {
           e.preventDefault();
-          const result = actions.signIn(email, password);
-          setError(result.ok ? null : result.error);
+          startSigningIn(async () => {
+            const result = await actions.signIn(email, password);
+            setError(result.ok ? null : result.error);
+          });
         }}
       >
         <FieldGroup>
@@ -48,8 +51,8 @@ export function SignInScreen() {
             </div>
             <PasswordInput id="password" autoComplete="current-password" value={password} onChange={(e) => setPassword(e.target.value)} required />
           </Field>
-          <Button type="submit" size="lg" disabled={!email || !password}>
-            Sign in
+          <Button type="submit" size="lg" disabled={!email || !password || signingIn}>
+            {signingIn ? "Signing in…" : "Sign in"}
           </Button>
         </FieldGroup>
       </form>
@@ -68,10 +71,10 @@ export function SignInScreen() {
         </Link>
       </p>
 
-      {/* MOCK: until accounts live on the API, these demo logins exist. */}
-      <p className="rounded-xl border border-dashed px-3 py-2.5 text-xs text-muted-foreground">
+      {/* MOCK: without the API, these demo logins exist. */}
+      {isDemoMode() && <p className="rounded-xl border border-dashed px-3 py-2.5 text-xs text-muted-foreground">
         Demo account: <span className="font-medium text-foreground">ali@acme.dev</span> · password <span className="font-medium text-foreground">botdesk123</span>
-      </p>
+      </p>}
     </div>
   );
 }

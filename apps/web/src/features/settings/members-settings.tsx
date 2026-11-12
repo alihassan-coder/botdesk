@@ -1,105 +1,33 @@
 "use client";
 
-import { useState } from "react";
-import { toast } from "sonner";
-import { UserPlus } from "lucide-react";
-import { Button } from "@/components/ui/button";
-import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
-import { Field, FieldError, FieldGroup, FieldLabel } from "@/components/ui/field";
-import { Input } from "@/components/ui/input";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { actions, useCurrentUser, useUsers } from "@/data/store";
-import type { User } from "@/data/types";
-import { looksLikeEmail } from "@/lib/email";
-import { MemberAvatar } from "@/features/bots/bot-avatar";
+import { useCurrentUser, useInvitations, useUsers } from "@/data/store";
+import { InviteDialog } from "./invite-dialog";
+import { MemberRow } from "./member-row";
+import { PendingInvitations } from "./pending-invitations";
 import { SettingsSection } from "./settings-shell";
 
-const ROLES: { value: User["role"]; label: string }[] = [
-  { value: "admin", label: "Admin" },
-  { value: "member", label: "Member" },
-];
-
-/** Settings → Members: who's in the org and what they can do. Owners can't be demoted here. */
+/** Settings → Members: who's in the org, what they can do, and invites still waiting. */
 export function MembersSettings() {
   const users = useUsers();
+  const invitations = useInvitations();
   const me = useCurrentUser();
+  // Members can see the team; only owners and admins change it.
+  const canManage = me.role !== "member";
 
   return (
-    <SettingsSection title="Members" description="Admins manage bots, keys and security. Members chat with bots and approve their own." action={<InviteDialog />}>
-      <ul className="flex flex-col divide-y rounded-2xl border">
-        {users.map((u) => (
-          <li key={u.id} className="flex items-center gap-3 p-3">
-            <MemberAvatar name={u.name} />
-            <div className="min-w-0 flex-1">
-              <p className="truncate text-sm font-medium">
-                {u.name} {u.id === me.id && <span className="text-muted-foreground">(you)</span>}
-              </p>
-              <p className="truncate text-xs text-muted-foreground">{u.email}</p>
-            </div>
-            {u.role === "owner" ? (
-              <span className="w-32 px-3 text-sm text-muted-foreground">Owner</span>
-            ) : (
-              <Select value={u.role} onValueChange={(role) => actions.changeMemberRole(u.id, role as User["role"])}>
-                <SelectTrigger className="w-32" aria-label={`Role for ${u.name}`}><SelectValue /></SelectTrigger>
-                <SelectContent>{ROLES.map((r) => <SelectItem key={r.value} value={r.value}>{r.label}</SelectItem>)}</SelectContent>
-              </Select>
-            )}
-          </li>
-        ))}
-      </ul>
-    </SettingsSection>
-  );
-}
-
-function InviteDialog() {
-  const [open, setOpen] = useState(false);
-  const [email, setEmail] = useState("");
-  const [role, setRole] = useState<User["role"]>("member");
-  const users = useUsers();
-  const address = email.trim().toLowerCase();
-  const alreadyIn = users.some((u) => u.email.toLowerCase() === address);
-  const valid = looksLikeEmail(address) && !alreadyIn;
-
-  return (
-    <Dialog open={open} onOpenChange={setOpen}>
-      <DialogTrigger asChild>
-        <Button size="sm"><UserPlus /> Invite</Button>
-      </DialogTrigger>
-      <DialogContent>
-        <DialogHeader>
-          <DialogTitle>Invite someone</DialogTitle>
-          <DialogDescription>They&apos;ll get an email with a link to join.</DialogDescription>
-        </DialogHeader>
-        <form
-          onSubmit={(e) => {
-            e.preventDefault();
-            if (!valid) return;
-            actions.inviteMember(address, role);
-            toast.success(`Invited ${address}`);
-            setEmail("");
-            setOpen(false);
-          }}
-        >
-          <FieldGroup>
-            <Field data-invalid={alreadyIn}>
-              <FieldLabel htmlFor="invite-email">Email</FieldLabel>
-              <Input id="invite-email" type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="teammate@company.com" aria-invalid={alreadyIn} />
-              {alreadyIn && <FieldError>{address} is already in this organization.</FieldError>}
-            </Field>
-            <Field>
-              <FieldLabel htmlFor="invite-role">Role</FieldLabel>
-              <Select value={role} onValueChange={(r) => setRole(r as User["role"])}>
-                <SelectTrigger id="invite-role" className="w-full"><SelectValue /></SelectTrigger>
-                <SelectContent>{ROLES.map((r) => <SelectItem key={r.value} value={r.value}>{r.label}</SelectItem>)}</SelectContent>
-              </Select>
-            </Field>
-          </FieldGroup>
-          <DialogFooter className="mt-6">
-            <Button type="button" variant="ghost" onClick={() => setOpen(false)}>Cancel</Button>
-            <Button type="submit" disabled={!valid}>Send invite</Button>
-          </DialogFooter>
-        </form>
-      </DialogContent>
-    </Dialog>
+    <div className="flex flex-col gap-8">
+      <SettingsSection
+        title="Members"
+        description="Admins manage bots, keys and security. Members chat with bots and approve their own."
+        action={canManage ? <InviteDialog /> : undefined}
+      >
+        <ul className="flex flex-col divide-y rounded-2xl border">
+          {users.map((u) => (
+            <MemberRow key={u.id} member={u} isMe={u.id === me.id} canManage={canManage} />
+          ))}
+        </ul>
+      </SettingsSection>
+      {canManage && invitations.length > 0 && <PendingInvitations invitations={invitations} />}
+    </div>
   );
 }

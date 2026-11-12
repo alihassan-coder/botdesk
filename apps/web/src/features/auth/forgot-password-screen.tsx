@@ -1,12 +1,14 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useTransition } from "react";
 import Link from "next/link";
 import { ArrowLeft, MailCheck } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Field, FieldGroup, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
+import { actions } from "@/data/store";
 import { looksLikeEmail } from "@/lib/email";
+import { FormError } from "./form-error";
 
 /**
  * /forgot-password — ask for a reset link. The answer is the same whether or not the
@@ -15,6 +17,8 @@ import { looksLikeEmail } from "@/lib/email";
 export function ForgotPasswordScreen() {
   const [email, setEmail] = useState("");
   const [sentTo, setSentTo] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [sending, startSending] = useTransition();
   const valid = looksLikeEmail(email);
 
   if (sentTo) {
@@ -42,17 +46,22 @@ export function ForgotPasswordScreen() {
         noValidate
         onSubmit={(e) => {
           e.preventDefault();
-          // MOCK: the API sends the email (Better Auth). Here we only confirm.
-          if (valid) setSentTo(email.trim());
+          if (!valid) return;
+          startSending(async () => {
+            const result = await actions.requestPasswordReset(email);
+            if (result.ok) setSentTo(email.trim());
+            else setError(result.error);
+          });
         }}
       >
         <FieldGroup>
+          {error && <FormError>{error}</FormError>}
           <Field>
             <FieldLabel htmlFor="email">Email</FieldLabel>
             <Input id="email" type="email" autoComplete="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="you@company.com" />
           </Field>
-          <Button type="submit" size="lg" disabled={!valid}>
-            Send reset link
+          <Button type="submit" size="lg" disabled={!valid || sending}>
+            {sending ? "Sending…" : "Send reset link"}
           </Button>
         </FieldGroup>
       </form>

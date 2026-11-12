@@ -3,7 +3,7 @@
   "private": true,
   "description": "BotDesk API (Python, FastAPI). These scripts let pnpm and Turborepo run it like the other apps.",
   "scripts": {
-    "dev": "uv run alembic upgrade head && uv run uvicorn src.main:app --reload --port 8000 --loop asyncio:SelectorEventLoop",
+    "dev": "node ../../scripts/check-port.mjs 8000 && uv run alembic upgrade head && uv run uvicorn src.main:app --reload --reload-dir src --port 8000 --loop asyncio:SelectorEventLoop",
     "start": "uv run alembic upgrade head && uv run uvicorn src.main:app --host 0.0.0.0 --port 8000 --loop asyncio:SelectorEventLoop",
     "test": "uv run pytest -q",
     "lint": "uv run ruff check . && uv run ruff format --check .",

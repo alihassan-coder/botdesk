@@ -72,8 +72,9 @@ botdesk/
 
 | Command (from the repo root) | What it does |
 |---|---|
-| `pnpm dev:web` | Run the web app at http://localhost:3000 |
-| `pnpm dev:api` | Run the API at http://localhost:8000 (interactive docs at `/api/docs`) |
+| `pnpm dev` | Run the web app and the API together, both reloading when you save |
+| `pnpm dev:web` | Run only the web app at http://localhost:3000 |
+| `pnpm dev:api` | Run only the API at http://localhost:8000 (interactive docs at `/api/docs`); applies new migrations first |
 | `pnpm test:web` / `pnpm test:api` | Run the web or API tests |
 | `pnpm test:e2e` | Browser tests of the web app (Playwright) |
 | `pnpm check` | Type checks, linting and all tests: run this before opening a pull request |

@@ -1,14 +1,14 @@
 {
   "name": "botdesk",
   "private": true,
-  "description": "BotDesk \u00e2\u20ac\u201d open-source AI assistant for teams. Any model, shared memory, agents you can @mention.",
+  "description": "BotDesk: open-source AI assistant for teams. Any model, shared memory, agents you can @mention.",
   "license": "MIT",
   "packageManager": "pnpm@12.14.0",
   "engines": {
     "node": ">=22"
   },
   "scripts": {
-    "dev": "turbo run dev",
+    "dev": "turbo run dev --ui stream",
     "dev:web": "pnpm --filter @botdesk/web dev",
     "dev:api": "pnpm --filter @botdesk/api dev",
     "build": "turbo run build",

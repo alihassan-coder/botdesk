@@ -66,6 +66,8 @@ pnpm db:seed            # optional: adds the demo team (ali@acme.dev / botdesk12
 pnpm dev:api            # API at http://localhost:8000
 ```
 
+Or run both together with `pnpm dev`. Both reload when you save a file: the API watches `apps/api/src`, the web app hot-reloads in the browser.
+
 Open <http://localhost:8000/api/docs>. You'll see every API route and can try them in the browser.
 
 ## Step 5: connect the web app to the API
@@ -98,7 +100,7 @@ pnpm test:e2e     # browser tests; they use your installed Google Chrome
 | Problem | Fix |
 |---|---|
 | `pnpm: command not found` | Run `corepack enable` (comes with Node.js), then try again. |
-| Port 3000 or 8000 is already in use | Another copy is still running. Close it, or find and stop the process using that port. |
+| `Port 3000 (or 8000) is already in use` | An old dev server is still running. The message shows the exact `taskkill` command to stop it; run it, then start again. |
 | API won't start: `password authentication failed` or `could not translate host name` | Check `DATABASE_URL` in `apps/api/.env`. For Neon, keep `?sslmode=require` at the end. |
 | Web app shows demo data even though the API is running | Check `apps/web/.env.local` has `NEXT_PUBLIC_API_URL=http://localhost:8000`, then restart `pnpm dev:web`. |
 | Sign-in works on the API docs page but not in the web app | The API only accepts calls from `WEB_ORIGINS` in `apps/api/.env`. Default: `http://localhost:3000`. |

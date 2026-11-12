@@ -58,7 +58,7 @@ Screens never know where data comes from. The backend is Python (FastAPI): see [
 | `/settings/<section>` | `profile`, `organization`, `appearance`, `models`, `security`, `members`, `usage`, `memory`. `/settings` opens Profile. The section nav stays in view as you scroll. |
 | `/sign-in` | Sign in with email and password. Returns you to `?next=` afterwards. |
 | `/sign-up` | Create an account. |
-| `/forgot-password` | Ask for a reset link (shows a "check your email" message; no emails are sent yet). |
+| `/forgot-password` | Ask for a reset link (shows a "check your email" message). |
 | `/invite/[token]` | Accept an invite link from Settings → Members. Signed out, it offers sign in / create account and comes back. |
 
 ## Talking to the API
@@ -76,11 +76,12 @@ NEXT_PUBLIC_API_URL=http://localhost:8000   # run the API with `pnpm dev:api`
 | Members, roles, remove | Real. Like GitHub and Slack, only owners see "Owner" in the role picker (with a confirm) and can change or remove owners; admins give admin or member. The API's refusals show as toasts. | Mock people. |
 | Invites | Real: creates a one-time link to copy (no emails yet); pending invites can be revoked. | The person joins at once. |
 | Bots: list, create (`/bots/new` and marketplace hire), edit and remove (details pane) | Real. Fields the API doesn't have yet get defaults: no computer, no connections, $0 spent. Model ids are translated in `api/map.ts` while the model list is mock. | Mock bots. |
-| Chats | Not on the API yet. Each real bot gets an empty DM (`dm-<botId>`) so it shows in the sidebar; opening it says "Chat with {name} is coming soon". The demo's threads, approvals, routines and memories are left out, since they belong to the demo bots. | Mock threads with fake bot replies. |
+| Profile and password | Real: Settings → Profile saves your name and @handle (`PATCH /auth/me`) and changes your password (`POST /auth/change-password`, which signs out your other devices). | Mock. |
+| Chats | Real. The chat list is `GET /threads`; every bot gets a DM, and one you haven't talked to yet has its DM opened (`POST /threads/dm`) when the org loads. DM titles follow the bot's current name. Opening a chat loads its newest 50 messages ("Show earlier messages" pages back with `before`) and follows its event stream (`GET /threads/{id}/events`, an `EventSource` with credentials). Your message shows at once, then `POST /messages` saves it; the bot's reply streams in: typing dots on `run_started`, words on `message_delta`, the saved reply on `message_saved`, and an inline error on `run_failed`. While a bot replies, Send becomes Stop (`POST /runs/{id}/cancel`). How events change the chat is the pure `api/run-events.ts`. No group creation UI yet, no unread counts (the API doesn't track them). | Mock threads with fake bot replies. |
 | Approvals, routines, apps, keys, usage, memory | **Still mock.** | Mock. |
 
 - `src/data/api/client.ts` is the fetch wrapper: sends the cookie (`credentials: "include"`) and turns `{detail}` errors (and 422 lists) into an `ApiError` whose message screens show as is.
-- `src/data/api/botdesk.ts` lists every route the web app calls; `map.ts` turns API shapes into `types.ts` shapes.
+- `src/data/api/botdesk.ts` lists every route the web app calls; `map.ts` turns API shapes into `types.ts` shapes (including reading zone-less SQLite times as UTC).
 - Store actions that can fail return `{ ok: true } | { ok: false, error }` and are async in both modes.
 - **Guest mode.** "Explore the demo, no account needed" on /sign-in and /sign-up opens the mock data as Ali in the demo team, in either mode, and never calls the API. `isDemoMode()` is true for guests. A banner on every app page says nothing is saved; "Create an account" signs the guest out and opens /sign-up. It lasts for the browser session (`sessionStorage` `botdesk.guest`), so a reload stays a guest. Entering and leaving both reset the mock store, so real and demo data never mix.
 - **Tests and e2e always run in mock mode.** Vitest doesn't load `.env.local`, and the Playwright web server sets `NEXT_PUBLIC_API_URL` to empty for its build. Don't set it there.

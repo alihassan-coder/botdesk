@@ -2,6 +2,12 @@
 
 A short history of BotDesk, newest first. For what is planned next, see the status section in [product/spec.md](product/spec.md#status-2026-11-12).
 
+## 2026-11-12: chats on the API, and the web checked end to end
+
+In API mode the web app now talks to bots for real. The chat list, each bot's DM, message history (50 at a time, with "Show earlier messages"), sending, and replies streamed live from the chat's event stream: typing dots, words as they arrive, the saved reply, an inline error when a reply fails, and a Stop button while a bot replies. The "chat coming soon" placeholder is gone. Settings → Profile saves your name and @handle on the API and gained a Password section.
+
+Every wired flow was clicked through in a browser against a local API: sign up, sign in, sign out, session restore, forgot password, org switcher and rename, members (role change, removal), invites (create, revoke, accept), bots (create, edit, remove). Fixed on the way: profile edits were only saved in the browser; handles allowed `_`, which the API rejects; times from a SQLite API showed 5 hours off; a renamed bot's DM kept its old name after a reload; a reload straight into a chat flashed "This chat doesn't exist".
+
 ## 2026-11-12: real email through Brevo
 
 The API now sends email through Brevo's transactional API, in the background so requests never wait on it ([backend guide → Email](backend/README.md#email)). Without a key, emails are written to the log instead.

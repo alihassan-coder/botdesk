@@ -57,7 +57,7 @@ BotDesk is an open-source (MIT) team of always-on AI bots that work in your apps
 | Doc | What it covers |
 |---|---|
 | [design/README.md](design/README.md) | Order of design work and rules |
-| [design/logo/README.md](design/logo/README.md) | The logo (v7, the always-on bd): files, usage, how it was chosen |
+| [design/logo/README.md](design/logo/README.md) | The logo (the botdesk wordmark with an online light): files, usage, rules, how it was chosen |
 
 ## Research
 

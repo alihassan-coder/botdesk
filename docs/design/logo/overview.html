@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>botdesk logo</title>
+<link href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  * { box-sizing: border-box; margin: 0; }
+  body { font-family: Geist, system-ui, sans-serif; background: #F3F2F8; color: #0E0E14; width: 1600px; padding: 56px 64px 64px; }
+  h1 { font-size: 30px; font-weight: 600; letter-spacing: -0.02em; }
+  .sub { color: #6B6B7B; font-size: 15px; margin-top: 8px; line-height: 1.5; max-width: 860px; }
+  h2 { font-size: 13px; font-weight: 600; color: #6B6B7B; margin: 34px 0 12px; }
+  .row { display: grid; gap: 18px; }
+  .two { grid-template-columns: 1fr 1fr; }
+  .panel { border-radius: 22px; display: grid; place-items: center; height: 230px; }
+  .white { background: #fff; border: 1px solid #E6E6EE; }
+  .night { background: #0B0B18; }
+  .ultra { background: #3B30FF; }
+  .icons { display: flex; align-items: end; gap: 22px; background: #fff; border: 1px solid #E6E6EE; border-radius: 22px; padding: 28px 32px; }
+  .icons figure { text-align: center; font-size: 12px; color: #6B6B7B; }
+  .icons img { display: block; margin: 0 auto 8px; }
+  .social { display: grid; grid-template-columns: 1.2fr 1fr; gap: 18px; }
+  .social img { width: 100%; border-radius: 16px; display: block; }
+  .specs { display: grid; grid-template-columns: repeat(4, 1fr); gap: 18px; }
+  .spec { background: #fff; border: 1px solid #E6E6EE; border-radius: 18px; padding: 18px 20px; font-size: 14px; line-height: 1.5; }
+  .spec b { display: block; font-size: 13px; color: #6B6B7B; font-weight: 600; margin-bottom: 6px; }
+  .sw { display: inline-block; width: 14px; height: 14px; border-radius: 4px; vertical-align: -2px; margin-right: 6px; border: 1px solid #0001; }
+</style>
+</head>
+<body>
+<h1>botdesk</h1>
+<p class="sub">The name is the logo. The o carries an online light, the same dot that shows a teammate is available: your bots are always on. Letters are Outfit ExtraBold, converted to outlines and set tight.</p>
+
+<h2>Wordmark</h2>
+<div class="row two">
+  <div class="panel white"><img src="svg/wordmark-ink.svg" height="88"></div>
+  <div class="panel night"><img src="svg/wordmark-white.svg" height="88"></div>
+</div>
+
+<h2>Mark and app icons</h2>
+<div class="icons">
+  <figure><img src="svg/app-icon.svg" width="160">App icon</figure>
+  <figure><img src="svg/app-icon-night.svg" width="160">Night</figure>
+  <figure><img src="png/app-icon-64.png" width="64">64</figure>
+  <figure><img src="png/app-icon-32.png" width="32">32</figure>
+  <figure><img src="png/app-icon-16.png" width="16">16</figure>
+  <figure style="margin-left:auto"><img src="svg/mark-ink.svg" height="110">Mark</figure>
+  <figure style="background:#0B0B18;border-radius:18px;padding:16px 18px 8px;color:#8D8DB0"><img src="svg/mark-white.svg" height="94">On dark</figure>
+  <figure><img src="svg/wordmark-ink-mono.svg" height="34" style="margin-bottom:14px">One colour</figure>
+</div>
+
+<h2>Social and link previews</h2>
+<div class="social">
+  <img src="png/og-image-1200x630.png">
+  <img src="png/banner-1500x500.png" style="align-self:end">
+</div>
+
+<h2>Rules</h2>
+<div class="specs">
+  <div class="spec"><b>Colours</b><span class="sw" style="background:#0E0E14"></span>Ink #0E0E14<br><span class="sw" style="background:#3B30FF"></span>Ultramarine #3B30FF (the light)<br><span class="sw" style="background:#8F88FF"></span>Light #8F88FF (the light on dark)<br><span class="sw" style="background:#0B0B18"></span>Night #0B0B18</div>
+  <div class="spec"><b>Clear space</b>Keep the height of the o free on every side. Don't place it on busy photos.</div>
+  <div class="spec"><b>Small sizes</b>Below 120 px wide, use the app icon or the mark instead of the full name.</div>
+  <div class="spec"><b>Don't</b>Stretch it, rotate it, add effects, retype it in another font, or move the light.</div>
+</div>
+</body>
+</html>

@@ -38,7 +38,7 @@ export function AuthLayout({ children }: { children: React.ReactNode }) {
         </div>
 
         <p className="text-sm text-neutral-500">Open source (MIT). Host it yourself or use ours.</p>
-        <BotdeskMark className="pointer-events-none absolute -right-24 -bottom-24 size-[420px] text-white/[0.03]" />
+        <BotdeskMark monochrome className="pointer-events-none absolute -right-24 -bottom-24 size-[420px] text-white/[0.03]" />
       </aside>
 
       <main className="flex flex-col justify-center px-6 py-12 sm:px-12">

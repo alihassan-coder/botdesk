@@ -25,7 +25,7 @@ export function ThreadRow({ thread, onNavigate }: { thread: Thread; onNavigate?:
       title={thread.title}
       className={cn(
         "flex items-center gap-3 rounded-[10px] px-2 py-2 outline-none transition-colors",
-        "group-data-[collapsible=icon]:justify-center group-data-[collapsible=icon]:px-0",
+        "group-data-[collapsible=icon]:justify-center group-data-[collapsible=icon]:px-0 group-data-[collapsible=icon]:py-1.5",
         "hover:bg-sidebar-accent/70 focus-visible:ring-2 focus-visible:ring-ring",
         isActive && "bg-sidebar-accent",
       )}
@@ -59,7 +59,7 @@ function GroupAvatar({ thread }: { thread: Thread }) {
   const second = useBot(botIds[1]);
 
   return (
-    <span className="relative size-9 shrink-0">
+    <span className="relative size-9 shrink-0 group-data-[collapsible=icon]:size-8">
       {first && <BotAvatar name={first.name} color={first.avatarColor} size="sm" className="absolute top-0 left-0" />}
       {second && (
         <BotAvatar name={second.name} color={second.avatarColor} size="sm" className="absolute right-0 bottom-0 rounded-md ring-2 ring-sidebar" />

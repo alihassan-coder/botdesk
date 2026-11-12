@@ -22,7 +22,7 @@ export const COLOR_CLASS: Record<BotAvatarColor, string> = {
 
 const SIZE_CLASS = {
   sm: "size-6 rounded-md text-[11px]",
-  md: "size-9 rounded-[10px] text-sm",
+  md: "size-9 rounded-[10px] text-sm group-data-[collapsible=icon]:size-8 group-data-[collapsible=icon]:text-[13px]",
   lg: "size-14 rounded-2xl text-xl",
 };
 

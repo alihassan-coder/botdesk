@@ -1,7 +1,7 @@
 <p align="center">
   <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="docs/design/logo/v7/svg/lockup-white.svg">
-    <img src="docs/design/logo/v7/svg/lockup-black.svg" alt="BotDesk" height="56">
+    <source media="(prefers-color-scheme: dark)" srcset="docs/design/logo/svg/wordmark-white.svg">
+    <img src="docs/design/logo/svg/wordmark-ink.svg" alt="botdesk" height="56">
   </picture>
 </p>
 

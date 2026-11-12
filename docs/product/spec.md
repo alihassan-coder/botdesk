@@ -64,7 +64,7 @@ History: [PROGRESS.md](../PROGRESS.md).
 **Done**
 
 - Docs: this spec, vision, ADRs 0001–0002, architecture, research, glossary.
-- Logo v7, the always-on bd, with all files in [docs/design/logo](../design/logo/README.md).
+- Logo: the botdesk wordmark with an online light on the o, with all files in [docs/design/logo](../design/logo/README.md).
 - Web frontend on mock data (`apps/web`, Next.js 16, React 19, Tailwind 4, shadcn/ui). Plan and rules: [docs/frontend](../frontend/README.md).
   - App shell: sidebar that collapses to an icon rail, workspace header with org switcher, light/dark, phone/tablet/desktop layouts.
   - DM and group threads with all 9 message cards, composer with streaming mock replies, inline approval card (Approve / Deny / Edit), details pane.

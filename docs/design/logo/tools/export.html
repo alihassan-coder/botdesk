@@ -1,0 +1,172 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>botdesk logo export</title>
+<!--
+  Builds every logo file from the Outfit ExtraBold letters (converted to outlines, so no font is needed).
+  The "o" is the real Outfit o; the online light is cut into it with a mask, so files work on any background.
+  Run: open this page (served over http) and call `await build()`. tools/build.mjs does that for you.
+-->
+<script src="https://cdn.jsdelivr.net/npm/opentype.js@1.3.4/dist/opentype.min.js"></script>
+</head><body>
+<script>
+const INK = "#0E0E14", PAPER = "#FFFFFF", ULTRA = "#3B30FF", LIGHT = "#8F88FF", NIGHT = "#0B0B18", MUTED = "#9A9AB5";
+const FONT_BOLD = "https://cdn.jsdelivr.net/npm/@fontsource/outfit@5.1.0/files/outfit-latin-800-normal.woff";
+const FONT_REG = "https://cdn.jsdelivr.net/npm/@fontsource/outfit@5.1.0/files/outfit-latin-500-normal.woff";
+const TRACK = -0.05;            // letter spacing, in em
+const LIGHT_AT = 0.64;          // light centre offset (x and y), as a share of the o's radius: it sits on the o's outer edge, like an avatar's status badge
+const LIGHT_R = 0.25, HALO_R = 0.37;
+const O_ROOM = 0.035;           // extra space after the o (em), so the light never touches the t
+const r2 = (v) => +(+v).toFixed(2);
+let BOLD, REG;
+
+// Lay out a word; returns the o separately (it gets the light) plus the overall box.
+function layout(text, font, size, x, baseline, track = TRACK) {
+  const scale = size / font.unitsPerEm, glyphs = font.stringToGlyphs(text);
+  let pen = x, rest = "", o = null;
+  glyphs.forEach((g, i) => {
+    const d = g.getPath(pen, baseline, size).toPathData(2);
+    if (text[i] === "o" && !o) {
+      const b = g.getBoundingBox();
+      o = { d, x1: pen + b.x1 * scale, x2: pen + b.x2 * scale, y1: baseline - b.y2 * scale, y2: baseline - b.y1 * scale };
+    } else rest += d;
+    pen += g.advanceWidth * scale + track * size;
+    if (text[i] === "o" && text === "botdesk") pen += O_ROOM * size;
+    if (glyphs[i + 1]) pen += font.getKerningValue(g, glyphs[i + 1]) * scale;
+  });
+  const tmp = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+  tmp.innerHTML = `<path d="${rest}${o ? o.d : ""}"/>`;
+  document.body.appendChild(tmp);
+  const bb = tmp.firstChild.getBBox();
+  tmp.remove();
+  return { rest, o, bb };
+}
+
+// The online light on an o: where the dot sits and the halo cut around it.
+function lightOf(o) {
+  const R = ((o.x2 - o.x1) + (o.y2 - o.y1)) / 4, cx = (o.x1 + o.x2) / 2, cy = (o.y1 + o.y2) / 2;
+  const k = LIGHT_AT * R;
+  return { cx: cx + k, cy: cy - k, r: LIGHT_R * R, halo: HALO_R * R };
+}
+
+let maskN = 0;
+// The o with the light cut in, plus the dot. `letters` colours the o, `dot` the light.
+function oWithLight(o, letters, dot) {
+  const L = lightOf(o), id = `bdo${++maskN}`;
+  return `<mask id="${id}" maskUnits="userSpaceOnUse" x="${r2(o.x1 - 50)}" y="${r2(o.y1 - 50)}" width="${r2(o.x2 - o.x1 + 100)}" height="${r2(o.y2 - o.y1 + 100)}">` +
+    `<rect x="${r2(o.x1 - 50)}" y="${r2(o.y1 - 50)}" width="${r2(o.x2 - o.x1 + 100)}" height="${r2(o.y2 - o.y1 + 100)}" fill="#fff"/>` +
+    `<circle cx="${r2(L.cx)}" cy="${r2(L.cy)}" r="${r2(L.halo)}" fill="#000"/></mask>` +
+    `<path d="${o.d}" fill="${letters}" mask="url(#${id})"/><circle cx="${r2(L.cx)}" cy="${r2(L.cy)}" r="${r2(L.r)}" fill="${dot}"/>`;
+}
+
+const svg = (w, h, body, x = 0, y = 0) =>
+  `<svg xmlns="http://www.w3.org/2000/svg" width="${r2(w)}" height="${r2(h)}" viewBox="${r2(x)} ${r2(y)} ${r2(w)} ${r2(h)}">${body}</svg>\n`;
+
+// The full wordmark, cropped tight.
+function wordmark(letters, dot) {
+  const w = layout("botdesk", BOLD, 100, 0, 100);
+  return svg(w.bb.width, w.bb.height, `<path d="${w.rest}" fill="${letters}"/>` + oWithLight(w.o, letters, dot), w.bb.x, w.bb.y);
+}
+
+// The mark: the o with its light, alone.
+function markParts(size = 100) {
+  const w = layout("o", BOLD, size, 0, size);
+  return w.o;
+}
+function mark(letters, dot) {
+  const o = markParts();
+  return svg(o.x2 - o.x1, o.y2 - o.y1, oWithLight(o, letters, dot), o.x1, o.y1);
+}
+
+// App icon: the mark on a tile. rounded = web and desktop; square = app stores (the OS rounds it).
+function appIcon(bg, letters, dot, { size = 1024, rounded = true } = {}) {
+  const o0 = markParts(100), ow = o0.x2 - o0.x1, s = (size * 0.56) / ow;
+  const o = markParts(100 * s);
+  const dx = (size - (o.x2 - o.x1)) / 2 - o.x1, dy = (size - (o.y2 - o.y1)) / 2 - o.y1;
+  const shifted = { ...o, d: o.d, x1: o.x1 + dx, x2: o.x2 + dx, y1: o.y1 + dy, y2: o.y2 + dy };
+  const tile = rounded ? `<rect width="${size}" height="${size}" rx="${size * 0.225}" fill="${bg}"/>` : `<rect width="${size}" height="${size}" fill="${bg}"/>`;
+  return svg(size, size, tile + `<g transform="translate(${r2(dx)} ${r2(dy)})">${oWithLight(o, letters, dot)}</g>`);
+}
+
+// Favicon: transparent, follows the browser's light or dark theme.
+function favicon() {
+  const o = markParts();
+  const body = oWithLight(o, "var(--l)", "var(--d)");
+  return svg(o.x2 - o.x1, o.y2 - o.y1,
+    `<style>:root{--l:${INK};--d:${ULTRA}}@media (prefers-color-scheme: dark){:root{--l:${PAPER};--d:${LIGHT}}}</style>` + body, o.x1, o.y1);
+}
+
+// Social images: the wordmark on night, with the tagline underneath.
+function social(w, h, withTagline = true) {
+  const size = h * 0.2, word0 = layout("botdesk", BOLD, size, 0, 0);
+  const x = (w - word0.bb.width) / 2 - word0.bb.x;
+  const baseline = withTagline ? h * 0.5 : h * 0.5 + size * 0.25;
+  const word = layout("botdesk", BOLD, size, x, baseline);
+  let tag = "";
+  if (withTagline) {
+    const ts = h * 0.05, t0 = layout("Your AI team. Always on.", REG, ts, 0, 0, -0.01);
+    const t = layout("Your AI team. Always on.", REG, ts, (w - t0.bb.width) / 2 - t0.bb.x, baseline + h * 0.17, -0.01);
+    tag = `<path d="${t.rest}${t.o ? t.o.d : ""}" fill="${MUTED}"/>`;
+  }
+  return svg(w, h, `<rect width="${w}" height="${h}" fill="${NIGHT}"/><path d="${word.rest}" fill="${PAPER}"/>` + oWithLight(word.o, PAPER, LIGHT) + tag);
+}
+
+// Rasterise an SVG string to an exact pixel size; returns base64 PNG.
+function png(text, w, h) {
+  return new Promise((res, rej) => {
+    const img = new Image();
+    img.onload = () => {
+      const c = document.createElement("canvas"); c.width = w; c.height = h;
+      const x = c.getContext("2d"); x.imageSmoothingQuality = "high"; x.drawImage(img, 0, 0, w, h);
+      res(c.toDataURL("image/png").split(",")[1]);
+    };
+    img.onerror = rej;
+    img.src = "data:image/svg+xml;charset=utf-8," + encodeURIComponent(text);
+  });
+}
+const aspect = (t) => { const m = t.match(/viewBox="[-\d.]+ [-\d.]+ ([\d.]+) ([\d.]+)"/); return +m[1] / +m[2]; };
+
+// Data the web app draws inline (so it can follow the text colour).
+function webData() {
+  const w = layout("botdesk", BOLD, 100, 0, 100), L = lightOf(w.o);
+  const o = markParts(), M = lightOf(o);
+  const box = (b) => [r2(b.x), r2(b.y), r2(b.width), r2(b.height)];
+  return {
+    wordmark: { viewBox: box(w.bb), rest: w.rest, o: w.o.d, light: { cx: r2(L.cx), cy: r2(L.cy), r: r2(L.r), halo: r2(L.halo) } },
+    mark: { viewBox: [r2(o.x1), r2(o.y1), r2(o.x2 - o.x1), r2(o.y2 - o.y1)], o: o.d, light: { cx: r2(M.cx), cy: r2(M.cy), r: r2(M.r), halo: r2(M.halo) } },
+  };
+}
+
+window.build = async () => {
+  BOLD = await opentype.load(FONT_BOLD);
+  REG = await opentype.load(FONT_REG);
+  const svgs = {
+    "wordmark-ink.svg": wordmark(INK, ULTRA),
+    "wordmark-white.svg": wordmark(PAPER, LIGHT),
+    "wordmark-ink-mono.svg": wordmark(INK, INK),
+    "wordmark-white-mono.svg": wordmark(PAPER, PAPER),
+    "mark-ink.svg": mark(INK, ULTRA),
+    "mark-white.svg": mark(PAPER, LIGHT),
+    "mark-ultramarine.svg": mark(ULTRA, ULTRA),
+    "app-icon.svg": appIcon(ULTRA, PAPER, PAPER),
+    "app-icon-night.svg": appIcon(NIGHT, PAPER, LIGHT),
+    "favicon.svg": favicon(),
+    "og-image.svg": social(1200, 630),
+  };
+  const pngs = {};
+  for (const n of [16, 32, 48, 64, 128, 192, 256, 512, 1024]) pngs[`app-icon-${n}.png`] = await png(svgs["app-icon.svg"], n, n);
+  pngs["app-icon-night-1024.png"] = await png(svgs["app-icon-night.svg"], 1024, 1024);
+  pngs["apple-touch-icon.png"] = await png(appIcon(ULTRA, PAPER, PAPER, { rounded: false }), 180, 180);
+  pngs["app-store-1024.png"] = await png(appIcon(ULTRA, PAPER, PAPER, { rounded: false }), 1024, 1024);
+  for (const n of [16, 32, 48]) pngs[`favicon-${n}.png`] = await png(svgs["app-icon.svg"], n, n);
+  for (const [name, file] of [["ink", "mark-ink.svg"], ["white", "mark-white.svg"]])
+    for (const n of [64, 128, 256, 512, 1024]) { const t = svgs[file]; pngs[`mark-${name}-${n}.png`] = await png(t, Math.round(n * aspect(t)), n); }
+  for (const [name, file] of [["ink", "wordmark-ink.svg"], ["white", "wordmark-white.svg"]]) {
+    const t = svgs[file]; pngs[`wordmark-${name}-200h.png`] = await png(t, Math.round(200 * aspect(t)), 200);
+  }
+  pngs["og-image-1200x630.png"] = await png(svgs["og-image.svg"], 1200, 630);
+  pngs["github-social-1280x640.png"] = await png(social(1280, 640), 1280, 640);
+  pngs["banner-1500x500.png"] = await png(social(1500, 500, false), 1500, 500);
+  pngs["avatar-800.png"] = await png(appIcon(ULTRA, PAPER, PAPER, { rounded: false, size: 800 }), 800, 800);
+  return { svgs, pngs, web: webData() };
+};
+</script>
+</body></html>

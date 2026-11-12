@@ -22,7 +22,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       <SidebarProvider
         open={sidebarOpen}
         onOpenChange={setSidebarOpen}
-        style={{ "--sidebar-width": "17.5rem", "--sidebar-width-icon": "4rem" } as React.CSSProperties}
+        style={{ "--sidebar-width": "17.5rem", "--sidebar-width-icon": "3rem" } as React.CSSProperties}
         className="h-svh"
       >
         <AppSidebar />

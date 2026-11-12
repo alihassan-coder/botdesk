@@ -2,8 +2,9 @@
  * Domain types for the BotDesk web UI.
  *
  * These mirror the data model in docs/architecture/high-level.md §8 and will move to
- * `packages/contract` once the API exists. Screens import only from `@/data`, never
- * from `@/data/mock`, so swapping the mock source for the real SDK touches one file.
+ * `packages/contract` once the API exists. Screens import types from here and data
+ * from `@/data/store`, never from `@/data/mock`, so swapping the mock for the real
+ * SDK touches one file.
  */
 
 export type ID = string;

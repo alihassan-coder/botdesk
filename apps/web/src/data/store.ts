@@ -9,8 +9,9 @@
  * screens stay the same.
  */
 import { useCallback, useRef, useSyncExternalStore } from "react";
+import { parseMentions } from "@/lib/mentions";
 import * as mock from "./mock/fixtures";
-import type { Approval, ApprovalStatus, Bot, Message, Thread } from "./types";
+import type { Approval, ApprovalStatus, Bot, Message, Participant, Thread } from "./types";
 
 interface State {
   org: typeof mock.org;
@@ -97,19 +98,10 @@ export function useStore<T>(selector: (s: State) => T): T {
 const id = () => Math.random().toString(36).slice(2, 10);
 const now = () => new Date().toISOString();
 
-const MENTION = /@([a-z0-9_-]+)/gi;
-
 export const actions = {
   sendMessage(threadId: string, text: string) {
     const s = state;
-    const mentions = [...text.matchAll(MENTION)]
-      .map(([, h]) => {
-        const bot = s.bots.find((b) => b.handle === h.toLowerCase());
-        if (bot) return { type: "bot" as const, id: bot.id };
-        const user = s.users.find((u) => u.handle === h.toLowerCase());
-        return user ? { type: "user" as const, id: user.id } : null;
-      })
-      .filter((m) => m !== null);
+    const mentions = parseMentions(text, s.bots, s.users);
 
     const msg: Message = {
       id: id(),
@@ -127,10 +119,13 @@ export const actions = {
       ),
     }));
 
-    // MOCK: pick who replies: a mentioned bot, else the DM's bot.
+    // MOCK: pick who replies. In a DM it's always that bot (it can hand work off to others);
+    // in a group it's the first bot you mentioned, else the first bot in the group.
     const thread = s.threads.find((t) => t.id === threadId);
     const replyBotId =
-      mentions.find((m) => m.type === "bot")?.id ?? thread?.botId ?? thread?.participants.find((p) => p.type === "bot")?.id;
+      thread?.kind === "dm"
+        ? thread.botId
+        : (mentions.find((m) => m.type === "bot")?.id ?? thread?.participants.find((p) => p.type === "bot")?.id);
     if (replyBotId) fakeBotReply(threadId, replyBotId, text);
   },
 
@@ -142,11 +137,29 @@ export const actions = {
       ),
     }));
     const a = state.approvals.find((x) => x.id === approvalId);
-    if (a) {
-      const text =
-        status === "approved" ? `Approved. Done: ${a.title.toLowerCase()}.` : `Okay, I won't ${a.title.toLowerCase()}.`;
-      setTimeout(() => pushBotMessage(a.threadId, a.botId, [{ type: "text", text }]), 700);
-    }
+    if (!a) return;
+
+    // Keep the bot's status honest: how many decisions does it still need from you?
+    const stillWaiting = state.approvals.filter((x) => x.botId === a.botId && x.status === "pending").length;
+    actions.updateBot(
+      a.botId,
+      stillWaiting > 0
+        ? { status: "waiting-approval", statusText: `${stillWaiting} waiting for you` }
+        : { status: "idle", statusText: "All caught up" },
+    );
+
+    // MOCK: the bot confirms. Real bots report the actual result of the action.
+    const text = status === "approved" ? `Done: ${a.title}.` : `Okay, I won't go ahead with “${a.title}”.`;
+    setTimeout(() => pushBotMessage(a.threadId, a.botId, [{ type: "text", text }]), 700);
+  },
+
+  /** The member changed the action's details (e.g. the email body), then approved it. */
+  editAndApprove(approvalId: string, preview: Approval["preview"]) {
+    set((st) => ({
+      ...st,
+      approvals: st.approvals.map((a) => (a.id === approvalId ? { ...a, preview } : a)),
+    }));
+    actions.decideApproval(approvalId, "approved");
   },
 
   answerQuestion(messageId: string, answer: string) {
@@ -273,3 +286,47 @@ function fakeBotReply(threadId: string, botId: string, userText: string) {
 export const selectBot = (botId?: string) => (s: State) => s.bots.find((b) => b.id === botId);
 export const selectThread = (threadId?: string) => (s: State) => s.threads.find((t) => t.id === threadId);
 export const selectPendingApprovals = (s: State) => s.approvals.filter((a) => a.status === "pending");
+
+/* ---------- Named hooks: what screens actually use ---------- */
+// Each hook reads one clear slice of data. Screens never write selectors themselves.
+
+const newestFirst = (a: Thread, b: Thread) => b.lastMessageAt.localeCompare(a.lastMessageAt);
+
+export const useOrg = () => useStore(useCallback((s: State) => s.org, []));
+export const useCurrentUser = () => useStore(useCallback((s: State) => s.users.find((u) => u.id === s.currentUserId)!, []));
+export const useUser = (id?: string) => useStore(useCallback((s: State) => s.users.find((u) => u.id === id), [id]));
+export const useBot = (id?: string) => useStore(useCallback((s: State) => s.bots.find((b) => b.id === id), [id]));
+export const useModel = (id?: string) => useStore(useCallback((s: State) => s.models.find((m) => m.id === id), [id]));
+export const useThread = (id?: string) => useStore(useCallback((s: State) => s.threads.find((t) => t.id === id), [id]));
+
+/** All threads, newest activity first. */
+export const useThreads = () => useStore(useCallback((s: State) => [...s.threads].sort(newestFirst), []));
+
+/** The thread with the most recent activity: where "/" takes you on bigger screens. */
+export const useLatestThreadId = () => useStore(useCallback((s: State) => [...s.threads].sort(newestFirst)[0]?.id, []));
+
+export const useThreadMessages = (threadId: string) =>
+  useStore(useCallback((s: State) => s.messages.filter((m) => m.threadId === threadId), [threadId]));
+
+export const useApproval = (id: string) => useStore(useCallback((s: State) => s.approvals.find((a) => a.id === id), [id]));
+export const usePendingApprovalCount = () => useStore(useCallback((s: State) => selectPendingApprovals(s).length, []));
+
+export const useBotRoutines = (botId?: string) =>
+  useStore(useCallback((s: State) => s.routines.filter((r) => r.botId === botId), [botId]));
+
+/** Memories this bot can use: its own plus the ones shared with every bot. */
+export const useBotMemories = (botId?: string) =>
+  useStore(useCallback((s: State) => s.memories.filter((m) => !m.botId || m.botId === botId), [botId]));
+
+/** Display name for whoever wrote a message or is in a thread. */
+export const useParticipantName = (p?: Participant | { type: "system"; id: "system" }) =>
+  useStore(
+    useCallback(
+      (s: State) => {
+        if (!p || p.type === "system") return "BotDesk";
+        if (p.type === "bot") return s.bots.find((b) => b.id === p.id)?.name ?? "Unknown bot";
+        return s.users.find((u) => u.id === p.id)?.name ?? "Unknown member";
+      },
+      [p],
+    ),
+  );

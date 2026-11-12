@@ -1,6 +1,6 @@
 /**
  * MOCK DATA: delete this folder once apps/api is live.
- * Only src/data/source.ts imports it.
+ * Only src/data/store.ts imports it.
  */
 import type {
   Approval,
@@ -19,7 +19,14 @@ import type {
   User,
 } from "../types";
 
-const ago = (minutes: number) => new Date(Date.now() - minutes * 60_000).toISOString();
+/*
+ * Mock timestamps are measured back from a fixed moment, not from the real clock.
+ * Reading the clock here would give the server and the browser different data,
+ * and Next.js refuses to prerender pages that read the current time.
+ * Keep this moment in the past: as days go by the mock simply looks older.
+ */
+const MOCK_NOW = Date.parse("2026-11-12T05:00:00Z");
+const ago = (minutes: number) => new Date(MOCK_NOW - minutes * 60_000).toISOString();
 
 export const org: Org = { id: "org_1", name: "Acme Labs", slug: "acme", plan: "team" };
 

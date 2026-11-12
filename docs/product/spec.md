@@ -61,7 +61,8 @@ Layout: bot sidebar (left) · thread (centre) · bot details pane (right, collap
 
 - Done: docs (this spec, vision, ADRs 0001–0002, architecture, research); monorepo root; `apps/web` (Next.js 16, React 19, Tailwind 4); mock data layer in `apps/web/src/data/`.
 - In progress: shadcn/ui (Radix, Nova preset, all components) install in `apps/web`.
-- Next: build the screens above on mock data.
+- Done: web slice 1 on mock data: app shell (sidebar, responsive phone/tablet/desktop, light/dark), DM and group threads with all 9 message cards, composer with streaming mock replies, inline approval card (Approve / Deny / Edit), details pane. Plan and rules: [docs/frontend](../frontend/README.md).
+- Next: slice 2, group chats with an @mention picker; then the approvals inbox.
 - Done: logo (v7, the always-on bd) with all files in [docs/design/logo](../design/logo/README.md).
 - Next in design: brand tokens (colour, type, radius, motion), then the bot avatar system.
 - Open: owner questions in [architecture §16](../architecture/high-level.md).

@@ -9,6 +9,7 @@ Open-source (MIT) Grok Bot: a team of always-on AI bots that work in your apps, 
 - **Architecture** (API, agent runtime, computers, plugins, data model, security) → [docs/architecture/high-level.md](docs/architecture/high-level.md)
 - **Decisions already made** → [docs/adr/](docs/adr/). Treat accepted ADRs as fixed; propose changes as a new ADR.
 - **UI reference** (Grok Bot layout and components) → [docs/research/grok-bot-teardown.md](docs/research/grok-bot-teardown.md)
+- **Brand and visual design** (logo, tokens, avatars; approved before building) → [docs/design/](docs/design/README.md)
 
 ## Rules
 
@@ -18,3 +19,18 @@ Open-source (MIT) Grok Bot: a team of always-on AI bots that work in your apps, 
 - **No Grok/xAI assets.** Match Grok Bot's flows and layout; use BotDesk's own name, colours and icons.
 - **Network is slow** on the owner's machine: batch installs, avoid cloning large repos (read them on GitHub instead).
 - `apps/web/AGENTS.md` has Next.js 16 rules: read it before writing Next code.
+
+## Skills
+
+Load the matching skill before starting the task:
+
+- **Screens and components:** `frontend-design`, then `modern-web-guidance` for HTML/CSS/browser APIs, `vercel-react-best-practices` for React code; `emil-design-eng` for motion and polish. Check the result in a real browser with the Playwright tools (screenshot, then critique), and review with `web-design-guidelines`.
+- **Library APIs** (Next 16, Tailwind 4, shadcn, Better Auth, Drizzle, DBOS): look them up with Context7 before writing code; training data is older than these versions.
+- **New feature end to end:** `/feature-dev`; for design exploration, `playground`.
+- **System design:** `mattpocock-skills:to-spec`, then `to-tickets`; architecture health with `mattpocock-skills:improve-codebase-architecture`. Record decisions as ADRs in `docs/adr/`.
+- **GLOSSARY.md, ADRs, naming:** `mattpocock-skills:domain-modeling`.
+- **Module boundaries** (store/mock seam, `packages/*`): `mattpocock-skills:codebase-design`.
+- **Auth, orgs, roles** (`apps/api`): `better-auth-best-practices`, `organization-best-practices`.
+- **Bugs:** `mattpocock-skills:diagnosing-bugs`. **Logic with tests:** `mattpocock-skills:tdd`. **Reviews:** `mattpocock-skills:code-review`.
+
+Adding skills: Claude Code plugins go in `enabledPlugins` in [.claude/settings.json](.claude/settings.json); standalone skills go in with `npx skills add <owner/repo>`, which writes `.claude/skills/` and `skills-lock.json`.

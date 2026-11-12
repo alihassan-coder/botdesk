@@ -4,7 +4,9 @@
   "description": "BotDesk — open-source AI assistant for teams. Any model, shared memory, agents you can @mention.",
   "license": "MIT",
   "packageManager": "pnpm@12.14.0",
-  "engines": { "node": ">=22" },
+  "engines": {
+    "node": ">=22"
+  },
   "scripts": {
     "dev": "turbo run dev",
     "build": "turbo run build",
@@ -12,6 +14,7 @@
     "typecheck": "turbo run typecheck"
   },
   "devDependencies": {
-    "turbo": "^2.5.8"
+    "turbo": "^2.5.8",
+    "typescript": "^5.9.3"
   }
 }

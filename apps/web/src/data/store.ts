@@ -873,8 +873,36 @@ export const actions = {
     return routineId;
   },
 
-  updateCurrentUser(patch: Partial<Pick<User, "name" | "handle">>) {
-    set((st) => ({ ...st, users: st.users.map((u) => (u.id === st.currentUserId ? { ...u, ...patch } : u)) }));
+  /** Change your name or @handle. */
+  async updateCurrentUser(patch: Partial<Pick<User, "name" | "handle">>): Promise<ActionResult> {
+    let saved = patch;
+    if (!isDemoMode()) {
+      try {
+        const { user } = await authApi.updateProfile(patch);
+        saved = { name: user.name, handle: user.handle };
+      } catch (error) {
+        return failure(error);
+      }
+    }
+    set((st) => ({ ...st, users: st.users.map((u) => (u.id === st.currentUserId ? { ...u, ...saved } : u)) }));
+    return { ok: true };
+  },
+
+  /** Needs your current password. On the API, your other devices are signed out. */
+  async changePassword(currentPassword: string, newPassword: string): Promise<ActionResult> {
+    if (isDemoMode()) {
+      const email = state.users.find((u) => u.id === state.currentUserId)?.email ?? "";
+      if (state.passwords[email] !== currentPassword) return { ok: false, error: "Your current password isn't right." };
+      if (newPassword.length < 8) return { ok: false, error: "Use at least 8 characters for your password." };
+      set((st) => ({ ...st, passwords: { ...st.passwords, [email]: newPassword } }));
+      return { ok: true };
+    }
+    try {
+      await authApi.changePassword(currentPassword, newPassword);
+      return { ok: true };
+    } catch (error) {
+      return failure(error);
+    }
   },
 
   addCredential(input: Pick<ProviderCredential, "provider" | "label" | "owner" | "baseUrl"> & { key: string }) {

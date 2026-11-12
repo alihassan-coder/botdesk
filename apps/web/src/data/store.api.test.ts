@@ -303,6 +303,32 @@ describe("guest mode, even with the API set", () => {
   });
 });
 
+describe("your profile on the API", () => {
+  beforeEach(async () => {
+    await actions.signIn("zara@example.com", "long-enough");
+  });
+
+  it("updateCurrentUser saves your name and handle as the API answers them", async () => {
+    routes["PATCH /api/v1/auth/me"] = { status: 200, body: { ...me, user: { ...me.user, name: "Zara K", handle: "zara-k" } } };
+    await expect(actions.updateCurrentUser({ name: "Zara K", handle: "zara-k" })).resolves.toEqual({ ok: true });
+    expect(currentUser()).toMatchObject({ name: "Zara K", handle: "zara-k", role: "owner" });
+  });
+
+  it("updateCurrentUser explains a taken handle and changes nothing", async () => {
+    routes["PATCH /api/v1/auth/me"] = { status: 409, body: { detail: "@omar is taken. Try another." } };
+    await expect(actions.updateCurrentUser({ handle: "omar" })).resolves.toEqual({ ok: false, error: "@omar is taken. Try another." });
+    expect(currentUser()?.handle).toBe("zara");
+  });
+
+  it("changePassword sends both passwords and passes on a refusal", async () => {
+    routes["POST /api/v1/auth/change-password"] = { status: 200, body: { message: "Password changed." } };
+    await expect(actions.changePassword("old-one", "new-password")).resolves.toEqual({ ok: true });
+
+    routes["POST /api/v1/auth/change-password"] = { status: 401, body: { detail: "Your current password isn't right." } };
+    await expect(actions.changePassword("wrong", "new-password")).resolves.toEqual({ ok: false, error: "Your current password isn't right." });
+  });
+});
+
 /** Stands in for the browser's EventSource, so tests can play a chat's live updates. */
 class FakeEventSource {
   static last: FakeEventSource | null = null;

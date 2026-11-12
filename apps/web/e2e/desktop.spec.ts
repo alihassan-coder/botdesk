@@ -1,4 +1,4 @@
-import { expect, test } from "@playwright/test";
+import { expect, test } from "./fixtures";
 
 /* Desktop, 1440×900: sidebar + chat + details pane. Each test starts from fresh mock data (a page load resets it). */
 

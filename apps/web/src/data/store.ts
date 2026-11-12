@@ -12,7 +12,7 @@ import { useCallback, useRef, useSyncExternalStore } from "react";
 import { makeHandle } from "@/lib/handle";
 import { parseMentions } from "@/lib/mentions";
 import * as mock from "./mock/fixtures";
-import type { Approval, ApprovalStatus, Bot, Message, Participant, ProviderCredential, Thread, User } from "./types";
+import type { Approval, ApprovalStatus, Bot, Message, Org, Participant, ProviderCredential, Routine, Thread, User } from "./types";
 
 /** What you fill in to create a bot; the rest (id, handle, status…) is filled in for you. */
 export type NewBotInput = Pick<
@@ -20,10 +20,21 @@ export type NewBotInput = Pick<
   "name" | "role" | "description" | "avatarColor" | "modelId" | "securityLevel" | "computerMode" | "instructions" | "monthlyBudgetUsd"
 >;
 
+/** What you fill in to create a routine. */
+export type NewRoutineInput = Pick<Routine, "botId" | "name" | "description" | "schedule" | "steps" | "enabled">;
+
+/** "unknown" until the browser has checked for a saved session (first render, server). */
+export type AuthStatus = "unknown" | "signed-in" | "signed-out";
+
+type AuthResult = { ok: true } | { ok: false; error: string };
+
 interface State {
   org: typeof mock.org;
   users: typeof mock.users;
   currentUserId: string;
+  authStatus: AuthStatus;
+  /** MOCK: email → password. Replaced by Better Auth on the API. */
+  passwords: Record<string, string>;
   bots: Bot[];
   threads: Thread[];
   messages: Message[];
@@ -43,6 +54,8 @@ function seed(): State {
     org: mock.org,
     users: mock.users,
     currentUserId: mock.currentUserId,
+    authStatus: "unknown",
+    passwords: mock.mockPasswords,
     bots: mock.bots,
     threads: mock.threads,
     messages: mock.messages,
@@ -108,7 +121,72 @@ export function useStore<T>(selector: (s: State) => T): T {
 const id = () => Math.random().toString(36).slice(2, 10);
 const now = () => new Date().toISOString();
 
+
+/* ---------- Session (MOCK) ----------
+ * The signed-in user is remembered in this browser. The real app uses Better Auth
+ * cookies set by apps/api; screens won't change, only these functions.
+ */
+const SESSION_KEY = "botdesk.session";
+
+function saveSession(user: User | null) {
+  try {
+    if (user) localStorage.setItem(SESSION_KEY, JSON.stringify({ user }));
+    else localStorage.removeItem(SESSION_KEY);
+  } catch {}
+}
+
+function startSession(user: User) {
+  set((st) => ({
+    ...st,
+    users: st.users.some((u) => u.id === user.id) ? st.users : [...st.users, user],
+    currentUserId: user.id,
+    authStatus: "signed-in",
+  }));
+  saveSession(user);
+}
+
+const authActions = {
+  /** Called once when the app loads: are we already signed in on this device? */
+  restoreSession() {
+    try {
+      const saved = JSON.parse(localStorage.getItem(SESSION_KEY) ?? "null") as { user?: User; userId?: string } | null;
+      const user = saved?.user ?? state.users.find((u) => u.id === saved?.userId);
+      if (user) return startSession(user);
+    } catch {}
+    set((st) => ({ ...st, authStatus: "signed-out" }));
+  },
+
+  signIn(email: string, password: string): AuthResult {
+    const user = state.users.find((u) => u.email.toLowerCase() === email.trim().toLowerCase());
+    if (!user || state.passwords[user.email] !== password) return { ok: false, error: "That email and password don't match." };
+    startSession(user);
+    return { ok: true };
+  },
+
+  signUp(input: { name: string; email: string; password: string }): AuthResult {
+    const email = input.email.trim().toLowerCase();
+    if (state.users.some((u) => u.email.toLowerCase() === email)) return { ok: false, error: "An account with this email already exists. Sign in instead." };
+    if (input.password.length < 8) return { ok: false, error: "Use at least 8 characters for your password." };
+
+    const user: User = {
+      id: `u_${id()}`, name: input.name.trim(), email,
+      handle: makeHandle(input.name, [...state.users.map((u) => u.handle), ...state.bots.map((b) => b.handle)]),
+      role: "admin", presence: "online",
+    };
+    set((st) => ({ ...st, passwords: { ...st.passwords, [email]: input.password } }));
+    startSession(user);
+    return { ok: true };
+  },
+
+  signOut() {
+    saveSession(null);
+    set((st) => ({ ...st, authStatus: "signed-out" }));
+  },
+};
+
 export const actions = {
+  ...authActions,
+
   sendMessage(threadId: string, text: string) {
     const s = state;
     const mentions = parseMentions(text, s.bots, s.users);
@@ -240,6 +318,24 @@ export const actions = {
       modelId: "m_claude", securityLevel: "ask-before-acting", computerMode: "own",
       instructions: "", monthlyBudgetUsd: 20,
     });
+  },
+
+  /** Saves a routine and has its bot confirm in their chat, the way it would after "do this every week". */
+  createRoutine(input: NewRoutineInput) {
+    const routineId = `r_${id()}`;
+    set((st) => ({ ...st, routines: [...st.routines, { ...input, id: routineId, source: "edit" }] }));
+    const thread = state.threads.find((t) => t.kind === "dm" && t.botId === input.botId);
+    if (thread) {
+      pushBotMessage(thread.id, input.botId, [
+        { type: "routine-created", routineId, name: input.name },
+        { type: "text", text: `Got it. I'll run “${input.name}” ${input.schedule.charAt(0).toLowerCase()}${input.schedule.slice(1)}.` },
+      ]);
+    }
+    return routineId;
+  },
+
+  updateOrg(patch: Partial<Pick<Org, "name" | "slug">>) {
+    set((st) => ({ ...st, org: { ...st.org, ...patch } }));
   },
 
   updateCurrentUser(patch: Partial<Pick<User, "name" | "handle">>) {
@@ -379,6 +475,7 @@ export const selectPendingApprovals = (s: State) => s.approvals.filter((a) => a.
 const newestFirst = (a: Thread, b: Thread) => b.lastMessageAt.localeCompare(a.lastMessageAt);
 
 export const useOrg = () => useStore(useCallback((s: State) => s.org, []));
+export const useAuthStatus = () => useStore(useCallback((s: State) => s.authStatus, []));
 export const useCurrentUser = () => useStore(useCallback((s: State) => s.users.find((u) => u.id === s.currentUserId)!, []));
 export const useUser = (id?: string) => useStore(useCallback((s: State) => s.users.find((u) => u.id === id), [id]));
 export const useBot = (id?: string) => useStore(useCallback((s: State) => s.bots.find((b) => b.id === id), [id]));

@@ -22,15 +22,17 @@ export function ThreadRow({ thread, onNavigate }: { thread: Thread; onNavigate?:
       href={`/chat/${thread.id}`}
       onClick={onNavigate}
       aria-current={isActive ? "page" : undefined}
+      title={thread.title}
       className={cn(
         "flex items-center gap-3 rounded-[10px] px-2 py-2 outline-none transition-colors",
+        "group-data-[collapsible=icon]:justify-center group-data-[collapsible=icon]:px-0",
         "hover:bg-sidebar-accent/70 focus-visible:ring-2 focus-visible:ring-ring",
         isActive && "bg-sidebar-accent",
       )}
     >
       {bot ? <BotAvatar name={bot.name} color={bot.avatarColor} status={bot.status} /> : <GroupAvatar thread={thread} />}
 
-      <span className="min-w-0 flex-1">
+      <span className="min-w-0 flex-1 group-data-[collapsible=icon]:hidden">
         <span className="flex items-baseline gap-2">
           <span className={cn("truncate text-sm", thread.unread ? "font-semibold" : "font-medium")}>{thread.title}</span>
           <TimeAgo iso={thread.lastMessageAt} className="ml-auto shrink-0 text-xs text-muted-foreground" />

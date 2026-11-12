@@ -37,9 +37,10 @@ globalThis.ResizeObserver ??= class {
 };
 Element.prototype.scrollIntoView ??= vi.fn();
 
-// Each test starts with fresh mock data and an empty page.
+// Each test starts with fresh mock data, an empty page and nothing saved (no session, no preferences).
 afterEach(() => {
   cleanup();
   actions.reset();
+  localStorage.clear();
   vi.useRealTimers();
 });

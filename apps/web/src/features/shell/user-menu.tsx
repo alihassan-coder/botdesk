@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { useTheme } from "next-themes";
-import { ChevronsUpDown, Monitor, Moon, Settings, Sun } from "lucide-react";
+import { useRouter } from "next/navigation";
+import { ChevronsUpDown, LogOut, Monitor, Moon, Settings, Sun } from "lucide-react";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -11,23 +12,24 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { useCurrentUser } from "@/data/store";
+import { actions, useCurrentUser } from "@/data/store";
 import { MemberAvatar } from "@/features/bots/bot-avatar";
 
-/** You, at the bottom of the sidebar: theme switch and settings. */
+/** You, at the bottom of the sidebar: theme switch, settings and sign out. */
 export function UserMenu() {
   const user = useCurrentUser();
   const { theme, setTheme } = useTheme();
+  const router = useRouter();
 
   return (
     <DropdownMenu>
-      <DropdownMenuTrigger className="flex w-full items-center gap-3 rounded-[10px] p-2 text-left outline-none hover:bg-sidebar-accent focus-visible:ring-2 focus-visible:ring-ring">
+      <DropdownMenuTrigger aria-label={`Account: ${user.name}`} className="flex w-full items-center gap-3 rounded-[10px] p-2 text-left outline-none hover:bg-sidebar-accent focus-visible:ring-2 focus-visible:ring-ring group-data-[collapsible=icon]:justify-center group-data-[collapsible=icon]:p-1">
         <MemberAvatar name={user.name} size="sm" className="size-8" />
-        <span className="min-w-0 flex-1">
+        <span className="min-w-0 flex-1 group-data-[collapsible=icon]:hidden">
           <span className="block truncate text-sm font-medium">{user.name}</span>
           <span className="block truncate text-xs text-muted-foreground">{user.email}</span>
         </span>
-        <ChevronsUpDown className="size-4 text-muted-foreground" />
+        <ChevronsUpDown className="size-4 text-muted-foreground group-data-[collapsible=icon]:hidden" />
       </DropdownMenuTrigger>
 
       <DropdownMenuContent side="top" align="start" className="w-60">
@@ -39,7 +41,15 @@ export function UserMenu() {
         </DropdownMenuRadioGroup>
         <DropdownMenuSeparator />
         <DropdownMenuItem asChild>
-          <Link href="/settings"><Settings /> Settings</Link>
+          <Link href="/settings/profile"><Settings /> Settings</Link>
+        </DropdownMenuItem>
+        <DropdownMenuItem
+          onSelect={() => {
+            actions.signOut();
+            router.replace("/sign-in");
+          }}
+        >
+          <LogOut /> Sign out
         </DropdownMenuItem>
       </DropdownMenuContent>
     </DropdownMenu>

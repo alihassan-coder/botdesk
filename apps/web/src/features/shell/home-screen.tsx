@@ -7,7 +7,7 @@ import { Inbox } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { SidebarTrigger } from "@/components/ui/sidebar";
 import { useLatestThreadId, usePendingApprovalCount } from "@/data/store";
-import { BotdeskTile } from "./logo";
+import { BotdeskLockup } from "./logo";
 import { ThreadList } from "./thread-list";
 
 const PHONE = "(max-width: 767px)";
@@ -30,8 +30,7 @@ export function HomeScreen() {
     <>
       <div className="flex h-full flex-col md:hidden">
         <header className="flex h-14 shrink-0 items-center gap-2.5 border-b px-4">
-          <BotdeskTile className="size-8 rounded-[10px]" />
-          <span className="text-[15px] font-semibold tracking-[-0.03em]">botdesk</span>
+          <BotdeskLockup />
           <Button asChild variant="ghost" size="icon-sm" className="relative ml-auto" aria-label={`Approvals, ${pendingApprovals} waiting`}>
             <Link href="/approvals">
               <Inbox />

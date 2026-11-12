@@ -20,8 +20,15 @@ const PAGES = [
   { label: "Routines", href: "/routines", icon: Repeat },
   { label: "Connect apps", href: "/apps", icon: Plug },
   { label: "Marketplace", href: "/marketplace", icon: Store },
-  { label: "Settings", href: "/settings", icon: Settings },
+  { label: "Settings", href: "/settings/profile", icon: Settings },
 ];
+
+const OPEN_EVENT = "botdesk:open-command-palette";
+
+/** Opens the palette from a button (e.g. the search icon in the collapsed sidebar). */
+export function openCommandPalette() {
+  window.dispatchEvent(new Event(OPEN_EVENT));
+}
 
 /** ⌘K / Ctrl+K anywhere: jump to a bot, a group or a page, create a bot, or switch the theme. */
 export function CommandPalette() {
@@ -38,8 +45,13 @@ export function CommandPalette() {
         setOpen((isOpen) => !isOpen);
       }
     }
+    const onOpen = () => setOpen(true);
     window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
+    window.addEventListener(OPEN_EVENT, onOpen);
+    return () => {
+      window.removeEventListener("keydown", onKey);
+      window.removeEventListener(OPEN_EVENT, onOpen);
+    };
   }, []);
 
   /** Close the palette, then do the thing. */

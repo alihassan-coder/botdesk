@@ -1,17 +1,16 @@
 import { useState } from "react";
 import Link from "next/link";
-import { Inbox, Plug, Repeat, Search, Settings, Store } from "lucide-react";
-import { Kbd } from "@/components/ui/kbd";
+import { Inbox, Plug, Repeat, Settings, Store } from "lucide-react";
 import {
   Sidebar,
   SidebarContent,
   SidebarFooter,
   SidebarHeader,
-  SidebarInput,
   SidebarMenu,
   SidebarMenuBadge,
   SidebarMenuButton,
   SidebarMenuItem,
+  SidebarRail,
   useSidebar,
 } from "@/components/ui/sidebar";
 import { usePendingApprovalCount } from "@/data/store";
@@ -24,10 +23,13 @@ const FOOTER_LINKS = [
   { href: "/routines", label: "Routines", icon: Repeat },
   { href: "/apps", label: "Connect apps", icon: Plug },
   { href: "/marketplace", label: "Marketplace", icon: Store },
-  { href: "/settings", label: "Settings", icon: Settings },
+  { href: "/settings/profile", label: "Settings", icon: Settings },
 ];
 
-/** The left column: brand and "+", search, approvals, your bots and groups, then app pages and you. */
+/**
+ * The left column: logo, organization, search and new; approvals; your bots and groups;
+ * then app pages and you. Collapses to an icon rail (⌘B); on phones it's a sheet.
+ */
 export function AppSidebar() {
   const pendingApprovals = usePendingApprovalCount();
   const [query, setQuery] = useState("");
@@ -37,32 +39,19 @@ export function AppSidebar() {
   const closeOnPhone = () => isMobile && setOpenMobile(false);
 
   return (
-    <Sidebar collapsible="offcanvas">
-      <SidebarHeader className="gap-3 px-3 pt-3">
-        <WorkspaceHeader onNavigate={closeOnPhone} />
-        <div className="relative">
-          <Search className="pointer-events-none absolute top-1/2 left-2.5 size-4 -translate-y-1/2 text-muted-foreground" />
-          <SidebarInput
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            placeholder="Search bots and groups"
-            aria-label="Search bots and groups"
-            className="h-9 rounded-[10px] pr-12 pl-8"
-          />
-          <Kbd className="pointer-events-none absolute top-1/2 right-2 -translate-y-1/2" title="Open the command palette">
-            ⌘K
-          </Kbd>
-        </div>
+    <Sidebar collapsible="icon">
+      <SidebarHeader className="gap-3 px-3 pt-3 group-data-[collapsible=icon]:px-2">
+        <WorkspaceHeader query={query} onQueryChange={setQuery} onNavigate={closeOnPhone} />
         <SidebarMenu>
           <SidebarMenuItem>
-            <SidebarMenuButton asChild>
+            <SidebarMenuButton asChild tooltip="Approvals">
               <Link
                 href="/approvals"
                 onClick={closeOnPhone}
                 // The count badge sits outside the link visually; say it in the link's name for screen readers.
                 aria-label={pendingApprovals > 0 ? `Approvals, ${pendingApprovals} waiting` : "Approvals"}
               >
-                <Inbox /> Approvals
+                <Inbox /> <span>Approvals</span>
               </Link>
             </SidebarMenuButton>
             {pendingApprovals > 0 && <SidebarMenuBadge className="text-brand">{pendingApprovals}</SidebarMenuBadge>}
@@ -78,9 +67,9 @@ export function AppSidebar() {
         <SidebarMenu>
           {FOOTER_LINKS.map(({ href, label, icon: Icon }) => (
             <SidebarMenuItem key={href}>
-              <SidebarMenuButton asChild>
+              <SidebarMenuButton asChild tooltip={label}>
                 <Link href={href} onClick={closeOnPhone}>
-                  <Icon /> {label}
+                  <Icon /> <span>{label}</span>
                 </Link>
               </SidebarMenuButton>
             </SidebarMenuItem>
@@ -88,6 +77,7 @@ export function AppSidebar() {
         </SidebarMenu>
         <UserMenu />
       </SidebarFooter>
+      <SidebarRail />
     </Sidebar>
   );
 }

@@ -1,8 +1,9 @@
 "use client";
 
 import { useTheme } from "next-themes";
-import { Check, Monitor, Moon, Sun } from "lucide-react";
+import { Check, Monitor, Moon, Pipette, Sun } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { isHexColor, readableTextOn } from "@/lib/color";
 import { ACCENTS, applyAccent, useAccent } from "./accent";
 import { SettingsSection } from "./settings-shell";
 
@@ -73,8 +74,43 @@ export function AppearanceSettings() {
               </button>
             );
           })}
+          <CustomAccent
+            value={isHexColor(accent) ? accent : null}
+            onChange={(hex) => {
+              setAccent(hex);
+              applyAccent(hex);
+            }}
+          />
         </div>
       </SettingsSection>
     </div>
+  );
+}
+
+/**
+ * "Custom": any colour from the system colour picker. The swatch shows a rainbow until
+ * a custom colour is chosen, then that colour and its hex code.
+ */
+function CustomAccent({ value, onChange }: { value: `#${string}` | null; onChange: (hex: `#${string}`) => void }) {
+  return (
+    <label className="flex cursor-pointer flex-col items-center gap-1.5 text-xs" aria-checked={value !== null} role="radio">
+      <span
+        style={value ? { backgroundColor: value } : { background: "conic-gradient(#ff3b30, #ffcc00, #34c759, #0a84ff, #bf5af2, #ff3b30)" }}
+        className={cn(
+          "relative grid size-10 place-items-center rounded-full ring-offset-2 ring-offset-background focus-within:ring-2 focus-within:ring-ring",
+          value && "ring-2 ring-foreground",
+        )}
+      >
+        {value ? <Check className="size-4" style={{ color: readableTextOn(value) }} /> : <Pipette className="size-4 text-white drop-shadow" />}
+        <input
+          type="color"
+          aria-label="Custom colour"
+          value={value ?? "#3b30ff"}
+          onChange={(e) => onChange(e.target.value as `#${string}`)}
+          className="absolute inset-0 cursor-pointer opacity-0"
+        />
+      </span>
+      {value ? value.toUpperCase() : "Custom"}
+    </label>
   );
 }

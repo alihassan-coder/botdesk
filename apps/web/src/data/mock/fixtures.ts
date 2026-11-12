@@ -38,6 +38,16 @@ export const users: User[] = [
 
 export const currentUserId = "u_me";
 
+/**
+ * MOCK ONLY: sign-in passwords for the demo accounts above. The real API stores
+ * password hashes (Better Auth); passwords never live in the web app.
+ */
+export const mockPasswords: Record<string, string> = {
+  "ali@acme.dev": "botdesk123",
+  "sara@acme.dev": "botdesk123",
+  "omar@acme.dev": "botdesk123",
+};
+
 export const models: Model[] = [
   { id: "m_grok", provider: "xAI", name: "Grok 4.5", capabilities: ["vision", "tools", "reasoning"], priceInPerMTok: 3, priceOutPerMTok: 15, contextWindow: 256_000 },
   { id: "m_claude", provider: "Anthropic", name: "Claude Sonnet 5.5", capabilities: ["vision", "tools", "reasoning", "computer-use"], priceInPerMTok: 3, priceOutPerMTok: 15, contextWindow: 1_000_000 },

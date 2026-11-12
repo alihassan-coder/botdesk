@@ -1,4 +1,4 @@
-import { expect, test } from "@playwright/test";
+import { expect, test } from "./fixtures";
 
 /* Phone (Pixel 7 size): one screen at a time. */
 

@@ -17,21 +17,7 @@ export function BotdeskMark({ className, weight = 10.5 }: { className?: string; 
   );
 }
 
-/** The app icon: the mark on a dark rounded tile (inverts in dark mode). Used where the brand leads, like the sidebar header. */
-export function BotdeskTile({ className }: { className?: string }) {
-  return (
-    <span
-      className={cn(
-        "grid size-9 shrink-0 place-items-center rounded-[11px] bg-foreground text-background shadow-sm ring-1 ring-black/5",
-        className,
-      )}
-    >
-      <BotdeskMark weight={12} className="size-[22px]" />
-    </span>
-  );
-}
-
-/** Mark + name, as in the sidebar header. Heavier mark weight to match the bold text (see logo README). */
+/** The official lockup: mark + name. Heavier mark weight to match the bold text (see logo README). */
 export function BotdeskLockup({ className }: { className?: string }) {
   return (
     <span className={cn("inline-flex items-center gap-2", className)}>

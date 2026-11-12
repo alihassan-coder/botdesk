@@ -1,0 +1,99 @@
+"use client";
+
+import { useState } from "react";
+import Link from "next/link";
+import { toast } from "sonner";
+import { Button } from "@/components/ui/button";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from "@/components/ui/alert-dialog";
+import { Field, FieldDescription, FieldGroup, FieldLabel } from "@/components/ui/field";
+import { Input } from "@/components/ui/input";
+import { makeHandle } from "@/lib/handle";
+import { actions, useBots, useOrg, useUsers } from "@/data/store";
+import { OrgAvatar } from "@/features/shell/org-avatar";
+import { SettingsSection } from "./settings-shell";
+
+const PLAN_LABEL = { "self-hosted": "Self-hosted", free: "Free", pro: "Pro", team: "Team" };
+
+/** Settings → Organization: the org's name and address, what's in it, and deleting it. */
+export function OrganizationSettings() {
+  const org = useOrg();
+  const users = useUsers();
+  const bots = useBots();
+  const [name, setName] = useState(org.name);
+  const [slug, setSlug] = useState(org.slug);
+  const changed = name !== org.name || slug !== org.slug;
+  const valid = name.trim().length > 0 && /^[a-z0-9-]+$/.test(slug);
+
+  return (
+    <div className="flex flex-col gap-8">
+      <SettingsSection title="Organization" description="Everything your team shares: bots, chats, apps, keys and budgets.">
+        <div className="flex items-center gap-4">
+          <OrgAvatar name={name || org.name} className="size-14 rounded-2xl text-xl" />
+          <div>
+            <p className="font-medium">{org.name}</p>
+            <p className="text-sm text-muted-foreground">
+              {PLAN_LABEL[org.plan]} plan · {users.length} people · {bots.length} bots
+            </p>
+          </div>
+        </div>
+        <form
+          className="max-w-md"
+          onSubmit={(e) => {
+            e.preventDefault();
+            actions.updateOrg({ name: name.trim(), slug });
+            toast.success("Organization saved");
+          }}
+        >
+          <FieldGroup>
+            <Field>
+              <FieldLabel htmlFor="org-name">Name</FieldLabel>
+              <Input id="org-name" value={name} onChange={(e) => setName(e.target.value)} />
+            </Field>
+            <Field>
+              <FieldLabel htmlFor="org-slug">Address</FieldLabel>
+              <Input id="org-slug" value={slug} onChange={(e) => setSlug(makeHandle(e.target.value, []))} />
+              <FieldDescription>botdesk.app/{slug || "…"}. Lowercase letters, numbers and dashes.</FieldDescription>
+            </Field>
+            <Button type="submit" disabled={!changed || !valid} className="w-fit">Save changes</Button>
+          </FieldGroup>
+        </form>
+      </SettingsSection>
+
+      <SettingsSection title="People" description="Invite teammates and set what they can do.">
+        <Button asChild variant="outline" className="w-fit">
+          <Link href="/settings/members">Manage members</Link>
+        </Button>
+      </SettingsSection>
+
+      <SettingsSection title="Delete organization" description="Removes every bot, chat, routine, connection and key. This can't be undone.">
+        <AlertDialog>
+          <AlertDialogTrigger asChild>
+            <Button variant="destructive" className="w-fit">Delete {org.name}</Button>
+          </AlertDialogTrigger>
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle>Delete {org.name}?</AlertDialogTitle>
+              <AlertDialogDescription>
+                All {bots.length} bots stop, and every chat, routine, connection and key is deleted for all {users.length} people. This can&apos;t be undone.
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel>Keep it</AlertDialogCancel>
+              <AlertDialogAction onClick={() => toast("Deleting an organization arrives with the API. Nothing was deleted.")}>Delete</AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
+      </SettingsSection>
+    </div>
+  );
+}

@@ -134,6 +134,22 @@ describe("smaller actions", () => {
     expect(messagesIn(threadId)[0].parts[0]).toMatchObject({ type: "text", text: expect.stringContaining("Second chief") });
   });
 
+  it("createRoutine saves it and the bot confirms in its chat", () => {
+    const routineId = actions.createRoutine({
+      botId: "b_expense", name: "Friday report", description: "", schedule: "Every Friday at 5 PM", steps: ["Find receipts", "File"], enabled: true,
+    });
+    expect(state().routines.find((r) => r.id === routineId)).toMatchObject({ name: "Friday report", source: "edit", enabled: true });
+
+    const confirmation = lastMessageIn("t_expense");
+    expect(confirmation.parts[0]).toEqual({ type: "routine-created", routineId, name: "Friday report" });
+    expect(confirmation.parts[1]).toMatchObject({ text: "Got it. I'll run “Friday report” every Friday at 5 PM." });
+  });
+
+  it("updateOrg renames the organization", () => {
+    actions.updateOrg({ name: "Acme Inc", slug: "acme-inc" });
+    expect(state().org).toMatchObject({ name: "Acme Inc", slug: "acme-inc" });
+  });
+
   it("updateCurrentUser renames you", () => {
     actions.updateCurrentUser({ name: "Ali H.", handle: "alih" });
     expect(state().users.find((u) => u.id === "u_me")).toMatchObject({ name: "Ali H.", handle: "alih" });

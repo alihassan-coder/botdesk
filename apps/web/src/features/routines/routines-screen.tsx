@@ -1,6 +1,6 @@
 "use client";
 
-import { toast } from "sonner";
+import Link from "next/link";
 import { Plus } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useRoutines } from "@/data/store";
@@ -15,8 +15,10 @@ export function RoutinesScreen() {
   return (
     <div className="flex h-full flex-col">
       <PageHeader title="Routines">
-        <Button size="sm" onClick={() => toast("Ask any bot in chat: “do this every Monday”. Recording a routine arrives with the Computer view.")}>
-          <Plus /> New routine
+        <Button asChild size="sm">
+          <Link href="/routines/new">
+            <Plus /> New routine
+          </Link>
         </Button>
       </PageHeader>
       <div className="flex-1 overflow-y-auto">

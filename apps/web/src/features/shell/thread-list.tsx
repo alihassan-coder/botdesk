@@ -41,7 +41,7 @@ function Section({ title, threads, onNavigate }: { title: string; threads: Threa
   if (threads.length === 0) return null;
   return (
     <section aria-label={title}>
-      <h2 className="px-2 pb-1 text-xs font-medium text-muted-foreground">{title}</h2>
+      <h2 className="px-2 pb-1 text-xs font-medium text-muted-foreground group-data-[collapsible=icon]:sr-only">{title}</h2>
       <ul className="flex flex-col gap-0.5">
         {threads.map((thread) => (
           <li key={thread.id}>

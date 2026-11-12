@@ -45,12 +45,14 @@ All screenshots are from the demo (**Explore the demo** on the sign-in page). Ev
 | **Sign in.** Or explore the demo without an account. | **Dark mode.** Pick light, dark or system in settings. |
 | ![Sign in](docs/screenshots/sign-in.png) | ![Dark mode](docs/screenshots/chat-dark.png) |
 
-**On a phone:** the chat list, then a chat.
+**On a phone:** the chat list, a chat, and approvals.
 
 <p>
   <img src="docs/screenshots/phone-home.png" alt="Chat list on a phone" width="260">
   &nbsp;
   <img src="docs/screenshots/phone-chat.png" alt="A chat on a phone" width="260">
+  &nbsp;
+  <img src="docs/screenshots/phone-approvals.png" alt="Approvals on a phone" width="260">
 </p>
 
 ## Status

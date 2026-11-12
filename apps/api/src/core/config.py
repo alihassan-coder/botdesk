@@ -38,6 +38,13 @@ class Settings(BaseSettings):
     run_max_seconds: int = 900
     bot_max_running_runs: int = 2
 
+    # Tools. PLUGINS is the allowlist of built-in plugins to load (ADR 0006); "demo" adds fake
+    # tools (notes, a fake outbox) so approvals can be tried with no outside account.
+    plugins: str = "demo"
+    tool_timeout_seconds: int = 30
+    # An approval nobody answers in this time counts as "no" (approvals fail closed).
+    approval_expiry_hours: int = 72
+
     # Memory (mem0 on pgvector). Needs MEMORY_ENABLED=true, Postgres and OPENAI_API_KEY.
     memory_enabled: bool = False
 
@@ -82,6 +89,10 @@ class Settings(BaseSettings):
         """A plain `postgresql://` address for psycopg itself (checkpoints, memory)."""
         url = self.database_url_direct or self.database_url
         return url.replace("postgresql+psycopg://", "postgresql://", 1)
+
+    @property
+    def plugin_ids(self) -> list[str]:
+        return [plugin.strip() for plugin in self.plugins.split(",") if plugin.strip()]
 
     @property
     def allowed_origins(self) -> list[str]:

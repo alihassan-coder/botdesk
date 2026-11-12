@@ -1,12 +1,14 @@
 stateDiagram-v2
   [*] --> queued: message · routine · trigger · handoff
-  queued --> running: the worker picks it up (one at a time per bot)
-  running --> waiting_approval: policy says ask, interrupt()
-  waiting_approval --> running: approved or edited, resume
-  waiting_approval --> running: denied, the model is told no
+  queued --> running: a worker takes the job (one at a time per chat)
+  running --> waiting_approval: policy says ask (the worker is freed)
+  waiting_approval --> queued: approved, edited or denied (resume job)
   waiting_approval --> expired: nobody answered in time (no answer = no)
   running --> succeeded: final answer saved
-  running --> failed: error after retries
+  running --> queued: worker died, retried from the last checkpoint
+  running --> failed: error after retries, or a limit was hit
+  running --> needs_attention: a risky call may or may not have happened
+  needs_attention --> queued: a person says retry or skip
   running --> cancelled: you press Stop
   waiting_approval --> cancelled: you press Stop
   succeeded --> [*]

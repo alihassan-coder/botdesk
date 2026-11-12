@@ -1,41 +1,33 @@
 flowchart TB
   subgraph People["People"]
-    U1["Web app<br/>(Next.js)"]
-    U2["Desktop and mobile<br/>(later)"]
+    U1["Web app (Next.js)<br/>desktop and mobile later"]
   end
-  subgraph API["apps/api: FastAPI, /api/v1"]
-    R["Routes → Controllers → Services"]
-    AUTH["Sign-in · Orgs · Roles"]
-    CHAT["Chats and messages<br/>+ live stream (SSE)"]
-    APR["Approvals API"]
+  subgraph API["API process"]
+    R["apps/api: FastAPI, /api/v1<br/>Routes → Controllers → Services<br/>sign-in · chats · approvals"]
+    SSE["Live stream (SSE)<br/>one per person, resumable"]
   end
-  subgraph WORKER["Bot worker (Python)"]
-    RUN["Run engine<br/>one LangGraph graph per run"]
+  DB[("Postgres: the only required service<br/>app data · job queue · run checkpoints<br/>events · memories (pgvector)")]
+  subgraph WORKER["Worker process"]
+    RUN["Run engine (same code, second entrypoint)<br/>one LangGraph graph per run"]
+    SCHED["Scheduler<br/>routines · triggers · expiry sweeps"]
     PIPE["Tool pipeline<br/>policy → approval → execute → audit"]
-    SCHED["Scheduler<br/>routines and triggers"]
     REG["Plugin registry"]
   end
   subgraph PLUG["Plugins"]
     P0["Gmail (built-in)"]
-    P1["HTTP plugins<br/>(no code)"]
     P3["Remote MCP servers"]
+    P1["HTTP plugins<br/>(no code, later)"]
   end
-  DB[("Postgres (Neon)<br/>app data · run checkpoints<br/>pgvector memories")]
   LLM["Model providers<br/>Anthropic · OpenAI · any"]
-  PC["Bot computers<br/>(sandboxes, later)"]
-  U1 -- "HTTPS + cookie" --> R
-  U2 -- "Bearer token" --> R
-  R --- AUTH
-  R --- CHAT
-  R --- APR
-  CHAT -- "start run" --> RUN
-  APR -- "resume run" --> RUN
-  SCHED -- "start run" --> RUN
+  U1 -- "cookie or Bearer token" --> R
+  SSE -- "live updates" --> U1
+  R -- "save message or decision<br/>+ enqueue a job (one transaction)" --> DB
+  DB -- "events" --> SSE
+  DB -- "jobs" --> RUN
+  SCHED -- "enqueue jobs" --> DB
+  RUN -- "checkpoints · steps · events" --> DB
   RUN --> PIPE --> REG
-  REG --> P0
-  REG --> P1
-  REG --> P3
   RUN -- "LangChain" --> LLM
-  RUN <--> DB
-  R <--> DB
-  PIPE -.-> PC
+  REG --> P0
+  REG --> P3
+  REG --> P1

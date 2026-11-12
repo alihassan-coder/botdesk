@@ -1,0 +1,21 @@
+sequenceDiagram
+  autonumber
+  actor B as Browser
+  participant API as API (any copy)
+  participant BUS as Event bus
+  participant W as Worker
+  participant DB as Postgres (run_events)
+  B->>API: GET /api/v1/orgs/{id}/events (SSE)
+  API->>BUS: subscribe to this person's chats
+  W->>BUS: token batch (every ~100 ms, not saved)
+  BUS-->>API: token batch
+  API-->>B: event: message.delta
+  W->>DB: save event 812 "approval.requested"
+  W->>BUS: "new event 812" (only the id)
+  BUS-->>API: 812
+  API->>DB: read event 812
+  API-->>B: id: 812 · event: approval.requested
+  Note over B,API: The connection drops (deploy, wifi)
+  B->>API: reconnect with Last-Event-ID: 812
+  API->>DB: read events after 812 for this person
+  API-->>B: replay what was missed, then go live

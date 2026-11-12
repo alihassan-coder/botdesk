@@ -1,15 +1,15 @@
 sequenceDiagram
   autonumber
   participant G as Gmail
-  participant API as API (webhook)
+  participant API as API (poll every 60 s, or push)
   participant SCH as Scheduler and triggers
   participant RUN as Run engine
   participant DB as Postgres
   actor Ali as Ali
-  G->>API: push: a new email arrived
+  G->>API: a new email arrived
   API->>SCH: trigger new_email for bots that subscribed
   SCH->>DB: skip duplicates (message id), save the cursor
-  SCH->>RUN: start a run (bot = Inbox, input = the email, marked untrusted)
+  SCH->>RUN: queue a run (bot = Inbox, input = the email, marked untrusted)
   RUN->>RUN: read and label (auto), draft a reply (auto)
   RUN->>RUN: send the reply: policy says ASK (untrusted input keeps it ask)
   RUN->>DB: approval request + checkpoint

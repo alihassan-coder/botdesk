@@ -1,0 +1,20 @@
+flowchart TB
+  subgraph S0["Stage 0 · Laptop: one process"]
+    direction LR
+    A0["API + worker in one process<br/>(pnpm dev:api)<br/>events: in memory"] --> P0[("Postgres<br/>data · queue · checkpoints")]
+  end
+  subgraph S1["Stage 1 · Small server: API + worker (docker compose)"]
+    direction LR
+    A1["API<br/>(1 process)"] --> P1[("Postgres<br/>events: LISTEN/NOTIFY<br/>+ run_events table")]
+    W1["Worker<br/>(1 process, about 20 runs at once)"] --> P1
+  end
+  subgraph S2["Stage 2 · Growing: many of each"]
+    direction LR
+    LB["Load balancer"] --> A2["API × N<br/>(stateless)"]
+    A2 --> PB["Connection pooler<br/>(PgBouncer or Neon pooled)"] --> P2[("Postgres<br/>read replica later")]
+    W2["Workers × M<br/>queues: chat · triggers · memory"] --> PB
+    W2 -. "events" .-> V["Valkey pub/sub<br/>(optional: only when<br/>NOTIFY is the limit)"]
+    V -.-> A2
+  end
+  S0 == "same code: run the worker as its own process" ==> S1
+  S1 == "same code: add copies and a pooler" ==> S2

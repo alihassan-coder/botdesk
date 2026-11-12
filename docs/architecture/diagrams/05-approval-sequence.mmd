@@ -2,26 +2,28 @@ sequenceDiagram
   autonumber
   actor Ali as Ali (web app)
   participant API as API
-  participant RUN as Run engine (LangGraph)
+  participant Q as Job queue (Postgres)
+  participant RUN as Worker: run engine
   participant LLM as Model
   participant GM as Gmail plugin
   participant DB as Postgres
   Ali->>API: Send "@Inbox reply to Vicky"
-  API->>DB: save the message
-  API->>RUN: start a run (thread, bot)
+  API->>DB: save message + run + job (one transaction)
+  Q->>RUN: job "advance run" (lock: this chat)
   RUN->>LLM: instructions + history + tools
-  LLM-->>RUN: tool call gmail.send_email(...)
+  LLM-->>RUN: tool call gmail_send_email(...)
   RUN->>RUN: policy: Ask before acting × send = ASK
   RUN->>DB: save approval request + checkpoint
-  RUN-->>API: interrupt (run paused)
-  API-->>Ali: live update: approval card (to, subject, body)
-  Note over RUN,DB: The run is asleep and uses no compute.<br/>It survives restarts and deploys.
+  RUN-->>Q: job done (run is waiting_approval)
+  DB-->>Ali: event, live update: approval card
+  Note over Q,DB: The run is asleep: no worker, no compute.<br/>It survives restarts and deploys.
   Ali->>API: Approve (with an edited body)
-  API->>DB: save the decision (who, when, final args hash)
-  API->>RUN: Command(resume = approved + final args)
-  RUN->>GM: send_email(final args, idempotency key)
+  API->>DB: pending to approved, only if still pending<br/>(who, when, final args hash) + resume job
+  Q->>RUN: job "resume run" (same lock)
+  RUN->>DB: tool execution: started (unique per tool call)
+  RUN->>GM: send_email(final args)
   GM-->>RUN: sent, message id
-  RUN->>DB: audit log + run step
+  RUN->>DB: tool execution: succeeded + audit log
   RUN->>LLM: tool result
   LLM-->>RUN: "Sent. I told Vicky we can't do Q3."
-  RUN-->>Ali: live update: reply + Done card
+  DB-->>Ali: event, live update: reply + Done card

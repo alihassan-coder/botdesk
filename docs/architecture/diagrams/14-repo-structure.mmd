@@ -1,0 +1,26 @@
+flowchart TB
+  subgraph APPS["apps/ · things you run"]
+    WEB["web<br/>Next.js"]
+    APIA["api<br/>FastAPI + worker<br/>one code base, two entrypoints"]
+  end
+  subgraph PLUGS["plugins/ · built-in integrations"]
+    GMAIL["gmail"]
+    ECHO["demo-echo"]
+    TPL["_template<br/>(copy to start a plugin)"]
+  end
+  subgraph PKGS["packages/ · shared code"]
+    SDK["plugin-sdk (Python)<br/>published to PyPI"]
+    CLIENT["api-client (TypeScript, later)<br/>generated from OpenAPI"]
+  end
+  subgraph REST["Around the code"]
+    DEP["deploy/<br/>docker compose"]
+    GH[".github/<br/>CI · templates"]
+    DOCS["docs/<br/>guides · ADRs"]
+  end
+  WEB -- "HTTP /api/v1" --> APIA
+  APIA -- "loads (allowlist)" --> GMAIL
+  APIA -- "imports" --> SDK
+  GMAIL -- "imports only" --> SDK
+  ECHO -- "imports only" --> SDK
+  WEB -. "later" .-> CLIENT
+  DEP -. "builds and runs" .-> APIA

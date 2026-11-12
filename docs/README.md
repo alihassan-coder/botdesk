@@ -32,7 +32,9 @@ BotDesk is an open-source (MIT) team of always-on AI bots that work in your apps
 | Doc | What it covers |
 |---|---|
 | [architecture/high-level.md](architecture/high-level.md) | API, agent runtime, computers, plugins, data model, security levels, approvals, open owner questions (§16) |
-| [architecture/agents-and-plugins.md](architecture/agents-and-plugins.md) | **Start here for bots and plugins:** how a run works, the tool pipeline, approvals, triggers, memory and the plugin platform, with diagrams |
+| [architecture/agents-and-plugins.md](architecture/agents-and-plugins.md) | **Start here for bots and plugins:** how a run works, the tool pipeline, approvals, triggers, memory, the plugin platform and **scaling** (laptop → API + worker → many workers), with diagrams |
+| [architecture/review-2026-11-12.md](architecture/review-2026-11-12.md) | Critical review of the design: ranked findings, what's already good, decisions for the owner |
+| [architecture/repo-structure.md](architecture/repo-structure.md) | Recommended monorepo layout for open source: apps, packages, plugins, plugin SDK, deploy, CI, community files, releases |
 | [adr/0001-product-scope-and-deployment.md](adr/0001-product-scope-and-deployment.md) | ADR 0001: product scope and deployment |
 | [adr/0002-grok-bot-parity-and-plugin-platform.md](adr/0002-grok-bot-parity-and-plugin-platform.md) | ADR 0002: Grok Bot parity, plugin integrations, security levels, approvals |
 | [adr/0003-python-backend.md](adr/0003-python-backend.md) | ADR 0003: Python backend (FastAPI, SQLAlchemy, Alembic, LangGraph, mem0) |

@@ -1,16 +1,18 @@
 flowchart TD
   START(["Run starts<br/>message · routine · trigger · handoff"]) --> CTX["load_context<br/>instructions + recent messages<br/>+ memories + allowed tools"]
-  CTX --> MODEL["call_model<br/>streams tokens to the chat"]
-  MODEL --> ROUTE{"Did the model<br/>ask for a tool?"}
-  ROUTE -- "no: final answer" --> SAVE["save_reply<br/>message + run steps"]
-  ROUTE -- "yes" --> TOOLS["tool_pipeline<br/>one tool call at a time"]
-  TOOLS --> GATE{"Policy decision"}
-  GATE -- "auto" --> EXEC["execute the tool"]
-  GATE -- "ask" --> WAIT["interrupt()<br/>run sleeps in Postgres<br/>approval card shown"]
+  CTX --> MODEL["call_model<br/>streams tokens to the chat<br/>(checks step and budget limits first)"]
+  MODEL --> ROUTE{"Any tool calls<br/>left to handle?"}
+  ROUTE -- "no tool calls: final answer" --> SAVE["save_reply<br/>message + run steps"]
+  ROUTE -- "yes: take the next one" --> PREP["prepare_call<br/>validate args · risk class · policy<br/>save decision trace<br/>(safe to run twice)"]
+  PREP --> GATE{"Policy decision"}
+  GATE -- "auto" --> EXEC["execute_tool<br/>records 'started' first,<br/>never repeats a finished call"]
+  GATE -- "ask" --> WAIT["approval_gate<br/>only interrupt(), nothing else<br/>run sleeps in Postgres"]
   WAIT -- "Command(resume=decision)" --> DEC{"Approved?"}
   DEC -- "yes, maybe edited" --> EXEC
-  DEC -- "no" --> DENY["tool result: denied by Ali"]
+  DEC -- "no / expired" --> DENY["record_denial<br/>tool result: denied"]
   GATE -- "deny" --> DENY
-  EXEC --> MODEL
-  DENY --> MODEL
-  SAVE --> MEM["remember<br/>in the background (mem0)"] --> END(["Run done"])
+  EXEC --> POST["post_execute<br/>check output · mark taint<br/>audit log + usage"]
+  POST --> ROUTE
+  DENY --> ROUTE
+  ROUTE -- "all handled: back to the model" --> MODEL
+  SAVE --> MEM["remember<br/>separate background job (mem0)"] --> END(["Run done"])

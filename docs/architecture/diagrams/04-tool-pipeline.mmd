@@ -1,9 +1,9 @@
 flowchart LR
   CALL["Model asks for<br/>gmail.send_email(to, subject, body)"] --> PRE["1 · pre_execute<br/>check args against the schema<br/>work out the risk class<br/>(outside recipient raises it)"]
   PRE --> POL["2 · policy<br/>security level × risk<br/>→ auto · ask · deny<br/>+ taint rule + budget<br/>→ decision trace"]
-  POL -- "ask" --> APPROVE["3 · approval<br/>answerers in order:<br/>rules → auto-review → person<br/>no answer = no"]
+  POL -- "ask" --> APPROVE["3 · approval<br/>answerers in order:<br/>rules → auto-review → person<br/>no answer = no<br/>(auto-review can't approve tainted calls)"]
   POL -- "auto" --> EXEC
-  APPROVE -- "approved" --> EXEC["4 · execute<br/>plugin tool, with timeout<br/>and idempotency key"]
+  APPROVE -- "approved" --> EXEC["4 · execute<br/>plugin tool, with timeout<br/>recorded: started, then succeeded<br/>(never repeated silently)"]
   POL -- "deny" --> OUT
   APPROVE -- "denied or expired" --> OUT
   EXEC --> POST["5 · post_execute<br/>check the output schema<br/>mark outside text untrusted<br/>audit log + usage"]

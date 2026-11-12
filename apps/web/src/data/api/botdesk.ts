@@ -12,6 +12,9 @@ export const authApi = {
   me: () => apiFetch<ApiMe>("/api/v1/auth/me"),
   forgotPassword: (email: string) =>
     apiFetch<{ message: string }>("/api/v1/auth/forgot-password", { method: "POST", body: { email } }),
+  /** Set a new password from an emailed reset link. Works once; signs out every device. */
+  resetPassword: (token: string, password: string) =>
+    apiFetch<{ message: string }>("/api/v1/auth/reset-password", { method: "POST", body: { token, password } }),
 };
 
 export const orgApi = {

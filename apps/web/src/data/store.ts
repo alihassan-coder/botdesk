@@ -405,6 +405,18 @@ const authActions = {
     }
   },
 
+  /** Set a new password from an emailed reset link. The API signs out every device, this one too. */
+  async resetPassword(token: string, password: string): Promise<ActionResult> {
+    if (isDemoMode()) return { ok: true }; // MOCK: there are no reset links without the API.
+    try {
+      await authApi.resetPassword(token, password);
+      set((st) => ({ ...st, authStatus: "signed-out" }));
+      return { ok: true };
+    } catch (error) {
+      return failure(error);
+    }
+  },
+
   /** Join the organization an invite link is for, and switch to it. API only. */
   async acceptInvitation(token: string): Promise<ActionResult> {
     if (isDemoMode()) return { ok: false, error: "Invite links work once botdesk is connected to its API." };

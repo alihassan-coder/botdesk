@@ -28,7 +28,7 @@ export function ForgotPasswordScreen() {
         <div>
           <h1 className="text-3xl font-semibold tracking-tight">Check your email</h1>
           <p className="mt-2 text-muted-foreground">
-            If <span className="font-medium text-foreground">{sentTo}</span> has an account, a link to reset your password is on its way. It works for 30 minutes.
+            If <span className="font-medium text-foreground">{sentTo}</span> has an account, a link to reset your password is on its way. It works for an hour.
           </p>
         </div>
         <BackToSignIn />

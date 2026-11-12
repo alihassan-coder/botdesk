@@ -82,8 +82,20 @@ async def test_pending_invites_can_be_listed_and_revoked(client: httpx.AsyncClie
 
 async def test_members_cannot_invite_or_change_roles(client: httpx.AsyncClient) -> None:
     org_id, ali_id, _ = await _team(client)  # signed in as Sara, a member
-    assert (await client.post(f"{ORGS}/{org_id}/invitations", json={"email": "x@acme.dev"})).status_code == 403
+    refused = await client.post(f"{ORGS}/{org_id}/invitations", json={"email": "x@acme.dev"})
+    assert refused.status_code == 403
+    assert refused.json() == {"detail": "Only owners and admins can do that."}
     assert (await client.patch(f"{ORGS}/{org_id}/members/{ali_id}", json={"role": "member"})).status_code == 403
+    assert (await client.get(f"{ORGS}/{org_id}/invitations")).status_code == 403
+
+
+async def test_admins_can_invite(client: httpx.AsyncClient) -> None:
+    org_id, _, sara_id = await _team(client)
+    await _sign_in(client, "ali@acme.dev")
+    await client.patch(f"{ORGS}/{org_id}/members/{sara_id}", json={"role": "admin"})
+    await _sign_in(client, "sara@acme.dev")
+
+    assert await _invite(client, org_id, "omar@acme.dev")
 
 
 async def test_the_owner_can_promote_and_only_owners_touch_owners(client: httpx.AsyncClient) -> None:

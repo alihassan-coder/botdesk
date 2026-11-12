@@ -153,7 +153,7 @@ A service raises `NotFound("…")`, `Conflict("…")` and so on. `main.py` turns
 | `GET /api/v1/orgs/{id}/members` | People and their roles |
 | `PATCH /api/v1/orgs/{id}/members/{userId}` | Change a role (owners and admins; only owners touch owners) |
 | `DELETE /api/v1/orgs/{id}/members/{userId}` | Remove someone, or leave (your own id). There's always one owner |
-| `POST /api/v1/orgs/{id}/invitations` | Invite an email as admin or member; emails them the link, and returns it once |
+| `POST /api/v1/orgs/{id}/invitations` | Invite an email as admin or member (owners and admins only; members get 403); emails them the link, and returns it once |
 | `GET /api/v1/orgs/{id}/invitations` | Pending invites (owners and admins) |
 | `DELETE /api/v1/orgs/{id}/invitations/{invId}` | Revoke an invite |
 | `POST /api/v1/invitations/accept` | Join from an invite link (signed in with the invited email) |

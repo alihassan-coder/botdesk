@@ -8,6 +8,16 @@ In API mode the web app now talks to bots for real. The chat list, each bot's DM
 
 Every wired flow was clicked through in a browser against a local API: sign up, sign in, sign out, session restore, forgot password, org switcher and rename, members (role change, removal), invites (create, revoke, accept), bots (create, edit, remove). Fixed on the way: profile edits were only saved in the browser; handles allowed `_`, which the API rejects; times from a SQLite API showed 5 hours off; a renamed bot's DM kept its old name after a reload; a reload straight into a chat flashed "This chat doesn't exist".
 
+## 2026-11-12: tools, the policy and approvals (build step 2, API)
+
+Bots can now use tools, and risky ones wait for a person ([ADR 0004](adr/0004-agent-runtime-and-safety.md); details in the [backend guide](backend/README.md#tools-and-approvals)).
+
+- **One pipeline for every tool call:** validate the arguments, work out the risk class, ask the policy (3 levels × 7 risk classes, a pure module with a table test), then run, ask or refuse. One call at a time.
+- **Approvals pause the run** with LangGraph `interrupt()`; the checkpoint waits in Postgres. Approve, edit-and-approve or deny resumes it with `Command(resume=...)`. Deciding is one guarded `UPDATE`, so a double click can't approve twice. New table `approvals`, routes under `/orgs/{id}/approvals`, live events `approval_requested`, `approval_decided`, `run_resumed`, `tool_started`, `tool_finished`, `run_needs_attention`.
+- **Nothing runs twice:** every call is a `tool_executions` row keyed by run and tool call. A call left half done after a restart puts the run in `needs_attention` instead of retrying.
+- **Strict taint:** once a tool returns outside text, every action above `write-internal` asks, even for Autonomous bots, and the run saves no memories.
+- **A demo plugin** (`src/plugins/demo`) with fake tools (clock, knowledge base, notes, a fake outbox and an inbox with a prompt injection), registered through a small manifest + registry shaped like the coming plugin SDK. Without an API key, `/tool demo.send_email to=… subject=…` makes the stand-in model call a tool, so an approval can be tried end to end.
+
 ## 2026-11-12: real email through Brevo
 
 The API now sends email through Brevo's transactional API, in the background so requests never wait on it ([backend guide → Email](backend/README.md#email)). Without a key, emails are written to the log instead.

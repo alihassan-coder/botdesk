@@ -143,7 +143,7 @@ A run stops with a clear message when it reaches any of these. All are settings 
 
 - **Fixed rules:** `credential` (logins, keys, sharing) is never automatic, and in v1 neither is `destructive`.
 - **Effective level** = the strictest of: organization ceiling, bot level, routine level.
-- **Not in the code yet:** the web app's `POLICY` table (`apps/web/src/features/bots/security-levels.ts`) still has six classes; adding `write-external` is a to-do from ADR 0004.
+- **In the code:** the API applies this table in `apps/api/src/runtime/policy.py` (with a table test). The web app's `POLICY` table (`apps/web/src/features/bots/security-levels.ts`) still has six classes; adding `write-external` there is a to-do from ADR 0004.
 
 > **Taint still applies:** after a run reads outside text, everything above *write-internal* asks, even for *Autonomous* bots (see below).
 

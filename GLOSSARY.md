@@ -15,8 +15,11 @@ The words BotDesk uses for its domain. Use these exact terms in code, UI copy, d
 | **Thread** | A conversation. `dm` = one member + one bot. `group` = several members and bots. |
 | **Mention** | `@handle` inside a message. Mentioning a bot starts a run for it; mentioning a member notifies them. |
 | **Handoff** | One bot passing a task to another bot, visible in the thread. |
-| **Run** | One piece of work by one bot, from a trigger to a final answer. It is a LangGraph graph and will be able to pause for an approval. For now the API process runs it ([ADR 0007](docs/adr/0007-runs-in-the-api-process-for-now.md)); later a worker moves it forward by taking **jobs** from the queue. |
+| **Run** | One piece of work by one bot, from a trigger to a final answer. It is a LangGraph graph and can pause: `waiting_approval` (a risky tool call waits for a person) or `needs_attention` (a tool may have half run; a person checks). For now the API process runs it ([ADR 0007](docs/adr/0007-runs-in-the-api-process-for-now.md)); later a worker moves it forward by taking **jobs** from the queue. |
 | **Approval** | A run paused on a risky action. A member sees the exact action and approves, denies, or edits it. |
+| **Approval status** | `pending`, then `approved`, `edited` (approved with changed arguments), `denied`, or `expired` (nobody answered in time, or the run was stopped). Expired counts as no. |
+| **Tool call** | One use of a tool by a run, as the model asked for it. Recorded as a **tool execution** (`tool_executions`): `ready` / `waiting_approval` → `started` → `succeeded` / `failed`, or `denied`. Run + tool call id is its idempotency key, so it never runs twice. |
+| **Policy** | Security level × risk class → `auto`, `ask` or `deny`, made stricter by taint. Every decision is saved with a **decision trace** saying why. |
 | **Risk class** | How dangerous a tool action is: `read`, `write-internal`, `write-external` (a reversible change in another app: draft, label, calendar hold), `external-send`, `spend`, `destructive`, `credential`. |
 | **Security level** | One of three: *Read only*, *Ask before acting* (default), *Autonomous within limits*. Maps each risk class to `auto` / `ask` / `deny` ([ADR 0004](docs/adr/0004-agent-runtime-and-safety.md)). The strictest of org, bot and routine wins. |
 | **Taint** | A mark on a run once it has read outside text (an email, a web page, an MCP result). After that, every action above `write-internal` asks for approval, even for Autonomous bots. |

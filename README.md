@@ -46,6 +46,7 @@ Python 3.13 + FastAPI, run with [uv](https://docs.astral.sh/uv/). First time: `c
 | `pnpm start:api` | Same, without auto-reload |
 | `pnpm test:api` | pytest on in-memory SQLite, no network (~5s) |
 | `pnpm db:migrate` | Apply Alembic migrations to `DATABASE_URL` |
+| `pnpm db:seed` | Demo team for local use: ali@acme.dev / botdesk123 |
 
 `pnpm check` covers the API too (mypy, ruff, pytest). More: [docs/backend/README.md](docs/backend/README.md).
 

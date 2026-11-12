@@ -34,3 +34,19 @@ def test_neon_urls_get_the_async_driver() -> None:
     settings = Settings(database_url="postgresql://u:p@host/db?sslmode=require", _env_file=None)
     assert settings.sqlalchemy_url == "postgresql+psycopg://u:p@host/db?sslmode=require"
     assert Settings(web_origins="http://a, http://b", _env_file=None).allowed_origins == ["http://a", "http://b"]
+
+
+async def test_seed_creates_the_demo_team_once() -> None:
+    from src.core.database import Base, create_engine, create_sessionmaker
+    from src.seed import seed
+
+    engine = create_engine("sqlite+aiosqlite://")
+    async with engine.begin() as connection:
+        await connection.run_sync(Base.metadata.create_all)
+    async with create_sessionmaker(engine)() as db:
+        first = await seed(db)
+        again = await seed(db)
+    await engine.dispose()
+    assert "user ali@acme.dev" in first
+    assert "sara@acme.dev as admin" in first
+    assert again == []

@@ -22,6 +22,7 @@ Open **http://localhost:8000/api/docs** to see and try every route.
 | `pnpm start:api` | Migrate, then run without reload (production style) |
 | `pnpm test:api` | pytest: unit and HTTP tests on in-memory SQLite (~5 s, no network) |
 | `pnpm db:migrate` | Apply migrations to `DATABASE_URL` |
+| `pnpm db:seed` | Add the demo team (ali@acme.dev / botdesk123, Sara, Omar in Acme Labs). Not in production |
 | `pnpm check` | typecheck (mypy) + lint (ruff) + tests, for web and API together |
 
 Inside `apps/api`: `pnpm db:revision "add bots"` writes a new migration from model changes; `pnpm format` formats and fixes lint.
@@ -31,7 +32,7 @@ Inside `apps/api`: `pnpm db:revision "add bots"` writes a new migration from mod
 1. Create a project at [neon.tech](https://neon.tech) (free plan is fine).
 2. Dashboard → **Connect** → copy the connection string. Keep `?sslmode=require`.
 3. Put it in `apps/api/.env` as `DATABASE_URL=postgresql://…`. The API adds the async driver itself.
-4. `pnpm db:migrate`.
+4. `pnpm db:migrate`, then `pnpm db:seed` for the demo accounts.
 
 ## Folders
 
@@ -82,6 +83,12 @@ A service raises `NotFound("…")`, `Conflict("…")` and so on. `main.py` turns
 | `GET /api/v1/orgs/{id}` | One organization |
 | `PATCH /api/v1/orgs/{id}` | Rename / change address (owner or admin) |
 | `GET /api/v1/orgs/{id}/members` | People and their roles |
+| `PATCH /api/v1/orgs/{id}/members/{userId}` | Change a role (owners and admins; only owners touch owners) |
+| `DELETE /api/v1/orgs/{id}/members/{userId}` | Remove someone, or leave (your own id). There's always one owner |
+| `POST /api/v1/orgs/{id}/invitations` | Invite an email as admin or member; returns the invite link once |
+| `GET /api/v1/orgs/{id}/invitations` | Pending invites (owners and admins) |
+| `DELETE /api/v1/orgs/{id}/invitations/{invId}` | Revoke an invite |
+| `POST /api/v1/invitations/accept` | Join from an invite link (signed in with the invited email) |
 
 Error messages match the web app's wording, e.g. `401 "That email and password don't match."`.
 
@@ -96,7 +103,7 @@ Error messages match the web app's wording, e.g. `401 "That email and password d
 ## Not yet (in order)
 
 1. Wire the web app's sign-in to this API (replace the mock in `apps/web/src/data/store.ts`).
-2. Invitations and member roles.
+2. Invite emails (the link is copied by hand until an email provider is added).
 3. Bots, then threads and messages with streamed replies (SSE).
 4. Agent runtime: LangGraph + LangChain models, Postgres checkpointer, approvals via `interrupt()`.
 5. Memory with mem0 (pgvector).

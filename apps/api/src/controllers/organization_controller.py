@@ -1,10 +1,12 @@
-"""Handles organization requests: read, rename, list members."""
+"""Handles organization requests: read, rename, members and their roles."""
+
+import uuid
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.api.deps import Access
 from src.models import User
-from src.schemas.organization import MemberOut, OrgOut, OrgUpdate
+from src.schemas.organization import MemberOut, MemberRoleUpdate, OrgOut, OrgUpdate
 from src.services import organization_service
 
 
@@ -25,3 +27,20 @@ async def update(db: AsyncSession, access: Access, body: OrgUpdate) -> OrgOut:
 
 async def members(db: AsyncSession, access: Access) -> list[MemberOut]:
     return await organization_service.list_members(db, access.org.id)
+
+
+async def change_role(db: AsyncSession, access: Access, user_id: uuid.UUID, body: MemberRoleUpdate) -> MemberOut:
+    access.require_admin()
+    await organization_service.change_role(
+        db, org_id=access.org.id, actor_role=access.role, user_id=user_id, role=body.role
+    )
+    await db.commit()
+    member = next(m for m in await organization_service.list_members(db, access.org.id) if m.id == user_id)
+    return member
+
+
+async def remove_member(db: AsyncSession, access: Access, user_id: uuid.UUID) -> None:
+    await organization_service.remove_member(
+        db, org_id=access.org.id, actor_id=access.user.id, actor_role=access.role, user_id=user_id
+    )
+    await db.commit()

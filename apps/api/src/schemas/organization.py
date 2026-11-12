@@ -21,6 +21,10 @@ class OrgUpdate(ApiModel):
     slug: str | None = Field(default=None, min_length=1, max_length=64, pattern=r"^[a-z0-9]+(-[a-z0-9]+)*$")
 
 
+class MemberRoleUpdate(ApiModel):
+    role: Role
+
+
 class MemberOut(ApiModel):
     id: uuid.UUID
     name: str

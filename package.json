@@ -22,7 +22,8 @@
     "test:api": "pnpm --filter @botdesk/api test",
     "test:e2e": "pnpm --filter @botdesk/web test:e2e",
     "check": "turbo run typecheck lint test",
-    "db:migrate": "pnpm --filter @botdesk/api db:migrate"
+    "db:migrate": "pnpm --filter @botdesk/api db:migrate",
+    "db:seed": "pnpm --filter @botdesk/api db:seed"
   },
   "devDependencies": {
     "turbo": "^2.5.8",

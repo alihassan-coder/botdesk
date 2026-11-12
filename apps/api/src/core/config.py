@@ -21,8 +21,12 @@ class Settings(BaseSettings):
     # Comma-separated origins allowed to call the API with cookies (the web app).
     web_origins: str = "http://localhost:3000"
 
+    # Where the web app lives; invite links point here.
+    web_app_url: str = "http://localhost:3000"
+
     session_cookie_name: str = "botdesk_session"
     session_days: int = 30
+    invitation_days: int = 7
 
     @property
     def is_production(self) -> bool:

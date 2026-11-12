@@ -11,6 +11,14 @@ dependencies = [
     "argon2-cffi>=25.1.0",
     "email-validator>=2.3.0",
     "fastapi>=0.162.5",
+    "langchain>=1.5.0",
+    "langchain-anthropic>=1.7.10",
+    "langchain-core>=1.8.0",
+    "langchain-openai>=1.7.4",
+    "langgraph>=1.2.20",
+    "langgraph-checkpoint-postgres>=3.2.0",
+    "mem0ai>=2.2.1",
+    "psycopg-pool>=3.3.3",
     "psycopg[binary]>=3.3.8",
     "pydantic-settings>=2.16.2",
     "sqlalchemy[asyncio]>=2.1.8",
@@ -52,3 +60,7 @@ python_version = "3.13"
 strict = true
 plugins = ["pydantic.mypy"]
 files = ["src", "tests", "migrations"]
+
+[[tool.mypy.overrides]]
+module = ["mem0", "mem0.*"]  # ships no type hints
+ignore_missing_imports = true

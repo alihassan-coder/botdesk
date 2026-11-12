@@ -37,6 +37,7 @@ class Base(DeclarativeBase):
         datetime: DateTime(timezone=True),
         # JSON lists (like a message's parts): JSONB on Postgres, plain JSON elsewhere.
         list[dict[str, Any]]: JSON().with_variant(JSONB(), "postgresql"),
+        dict[str, Any]: JSON().with_variant(JSONB(), "postgresql"),
     }
 
 
@@ -58,10 +59,29 @@ def _enforce_sqlite_foreign_keys(engine: AsyncEngine) -> None:
         cursor.close()
 
 
+def postgres_connect_args(url: str) -> dict[str, Any]:
+    """Behind a pooler (Neon's pooled hosts end in `-pooler`), one session's prepared statements
+    can land on another session's connection, so psycopg must not prepare them."""
+    return {"prepare_threshold": None} if "-pooler" in url else {}
+
+
+def is_in_memory(url: str) -> bool:
+    return url.startswith("sqlite") and (":memory:" in url or url.endswith("://"))
+
+
 def create_engine(url: str) -> AsyncEngine:
     if not url.startswith("sqlite"):
-        return create_async_engine(url, pool_pre_ping=True)
-    in_memory = ":memory:" in url or url.endswith("://")
+        return create_async_engine(
+            url,
+            # Neon suspends after 5 idle minutes, which closes every connection. Replacing
+            # connections older than 4 minutes means we never use one from before a suspend,
+            # without `pool_pre_ping`'s extra round trip on every request.
+            pool_recycle=240,
+            pool_size=5,
+            max_overflow=5,
+            connect_args=postgres_connect_args(url),
+        )
+    in_memory = is_in_memory(url)
     # In memory: one shared connection, so the test database lives for the whole app.
     options: dict[str, Any] = (
         {"poolclass": StaticPool, "connect_args": {"check_same_thread": False}} if in_memory else {}

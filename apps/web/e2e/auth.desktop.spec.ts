@@ -69,7 +69,8 @@ signedInTest("signing out returns you to sign in, and the app stays locked", asy
   await page.evaluate(() => sessionStorage.setItem("e2e.signedOut", "1"));
   await page.getByRole("button", { name: "Account: Ali Hassan" }).click();
   await page.getByRole("menuitem", { name: "Sign out" }).click();
-  await expect(page).toHaveURL(/\/sign-in/);
+  // You chose to leave, so signing in again shouldn't drop you back on that chat.
+  await expect(page).toHaveURL(/\/sign-in$/);
   await expect(page.getByRole("heading", { name: "Welcome back" })).toBeVisible();
 
   await page.goto("/chat/t_chief");

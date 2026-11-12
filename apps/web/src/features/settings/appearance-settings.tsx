@@ -62,11 +62,14 @@ export function AppearanceSettings() {
                   setAccent(a.id);
                   applyAccent(a.id);
                 }}
-                className="flex flex-col items-center gap-1.5 text-xs outline-none"
+                className="group flex flex-col items-center gap-1.5 text-xs outline-none"
               >
                 <span
                   style={{ backgroundColor: a.light }}
-                  className={cn("grid size-10 place-items-center rounded-full text-white ring-offset-2 ring-offset-background", selected && "ring-2 ring-foreground")}
+                  className={cn(
+                    "grid size-10 place-items-center rounded-full text-white ring-offset-2 ring-offset-background group-focus-visible:ring-2 group-focus-visible:ring-ring",
+                    selected && "ring-2 ring-foreground",
+                  )}
                 >
                   {selected && <Check className="size-4" />}
                 </span>
@@ -93,7 +96,7 @@ export function AppearanceSettings() {
  */
 function CustomAccent({ value, onChange }: { value: `#${string}` | null; onChange: (hex: `#${string}`) => void }) {
   return (
-    <label className="flex cursor-pointer flex-col items-center gap-1.5 text-xs" aria-checked={value !== null} role="radio">
+    <label className="flex cursor-pointer flex-col items-center gap-1.5 text-xs">
       <span
         style={value ? { backgroundColor: value } : { background: "conic-gradient(#ff3b30, #ffcc00, #34c759, #0a84ff, #bf5af2, #ff3b30)" }}
         className={cn(
@@ -104,7 +107,7 @@ function CustomAccent({ value, onChange }: { value: `#${string}` | null; onChang
         {value ? <Check className="size-4" style={{ color: readableTextOn(value) }} /> : <Pipette className="size-4 text-white drop-shadow" />}
         <input
           type="color"
-          aria-label="Custom colour"
+          aria-label={value ? `Custom colour, ${value} selected` : "Custom colour"}
           value={value ?? "#3b30ff"}
           onChange={(e) => onChange(e.target.value as `#${string}`)}
           className="absolute inset-0 cursor-pointer opacity-0"

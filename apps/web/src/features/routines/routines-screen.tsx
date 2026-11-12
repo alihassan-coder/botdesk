@@ -29,6 +29,11 @@ export function RoutinesScreen() {
               {active} of {routines.length} running. A bot learns a routine by watching you once, or when you ask in chat.
             </p>
           </div>
+          {routines.length === 0 && (
+            <p className="rounded-2xl border border-dashed p-6 text-center text-sm text-muted-foreground">
+              No routines yet. Ask a bot to do something every week, or create one with New routine.
+            </p>
+          )}
           {routines.map((r) => (
             <RoutineCard key={r.id} routine={r} />
           ))}

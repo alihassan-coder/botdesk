@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
@@ -29,12 +30,13 @@ export function CreateRoutineScreen() {
   const [showErrors, setShowErrors] = useState(false);
 
   const cleanSteps = steps.map((s) => s.trim()).filter(Boolean);
-  const missing = { name: !name.trim(), steps: cleanSteps.length === 0 };
+  const bot = bots.find((b) => b.id === botId);
+  const missing = { name: !name.trim(), bot: !bot, steps: cleanSteps.length === 0 };
 
   function save() {
-    if (missing.name || missing.steps) return setShowErrors(true);
-    actions.createRoutine({ botId, name: name.trim(), description: description.trim(), schedule: describeSchedule(schedule), steps: cleanSteps, enabled });
-    toast.success(`“${name.trim()}” saved. ${bots.find((b) => b.id === botId)?.name} confirmed it in your chat.`);
+    if (!bot || missing.name || missing.steps) return setShowErrors(true);
+    actions.createRoutine({ botId: bot.id, name: name.trim(), description: description.trim(), schedule: describeSchedule(schedule), steps: cleanSteps, enabled });
+    toast.success(`“${name.trim()}” saved. ${bot.name} confirmed it in your chat.`);
     router.push("/routines");
   }
 
@@ -61,10 +63,10 @@ export function CreateRoutineScreen() {
               <Input id="routine-name" value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Friday expense report" />
               {showErrors && missing.name && <FieldError>Give the routine a name.</FieldError>}
             </Field>
-            <Field>
+            <Field data-invalid={showErrors && missing.bot}>
               <FieldLabel htmlFor="routine-bot">Who runs it</FieldLabel>
               <Select value={botId} onValueChange={setBotId}>
-                <SelectTrigger id="routine-bot" className="w-full"><SelectValue /></SelectTrigger>
+                <SelectTrigger id="routine-bot" className="w-full"><SelectValue placeholder="Pick a bot" /></SelectTrigger>
                 <SelectContent>
                   {bots.map((b) => (
                     <SelectItem key={b.id} value={b.id}>
@@ -73,17 +75,23 @@ export function CreateRoutineScreen() {
                   ))}
                 </SelectContent>
               </Select>
+              {showErrors && missing.bot && (
+                <FieldError>
+                  Routines need a bot to run them. <Link href="/bots/new" className="underline">Create a bot</Link> first.
+                </FieldError>
+              )}
             </Field>
             <Field>
               <FieldLabel htmlFor="routine-description">What it does</FieldLabel>
               <Textarea id="routine-description" value={description} onChange={(e) => setDescription(e.target.value)} rows={2} placeholder="One sentence, so the team knows what this is." />
             </Field>
-            <Field>
-              <FieldLabel>When</FieldLabel>
+            {/* These labels name a group of controls, not one input, so the group points at them. */}
+            <Field aria-labelledby="routine-when">
+              <FieldLabel id="routine-when">When</FieldLabel>
               <SchedulePicker value={schedule} onChange={setSchedule} />
             </Field>
-            <Field data-invalid={showErrors && missing.steps}>
-              <FieldLabel>Steps</FieldLabel>
+            <Field data-invalid={showErrors && missing.steps} aria-labelledby="routine-steps">
+              <FieldLabel id="routine-steps">Steps</FieldLabel>
               <FieldDescription>In order. Plain words are fine; the bot works out the details.</FieldDescription>
               <StepsEditor steps={steps} onChange={setSteps} />
               {showErrors && missing.steps && <FieldError>Add at least one step.</FieldError>}
@@ -96,7 +104,9 @@ export function CreateRoutineScreen() {
 
           <div className="flex gap-2 border-t pt-6">
             <Button type="submit">Save routine</Button>
-            <Button type="button" variant="ghost" onClick={() => router.back()}>Cancel</Button>
+            <Button asChild variant="ghost">
+              <Link href="/routines">Cancel</Link>
+            </Button>
           </div>
         </form>
       </div>

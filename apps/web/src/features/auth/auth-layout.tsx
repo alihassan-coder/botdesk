@@ -11,12 +11,13 @@ export function AuthLayout({ children }: { children: React.ReactNode }) {
       <aside className="relative hidden flex-col justify-between overflow-hidden bg-neutral-950 p-12 text-white lg:flex">
         <BotdeskLockup className="text-white" />
 
+        {/* A <p>, not a heading: each auth page's own title is its one h1. */}
         <div className="flex max-w-md flex-col gap-8">
-          <h1 className="text-5xl font-semibold tracking-[-0.045em] leading-[1.02]">
+          <p className="text-5xl font-semibold tracking-[-0.045em] leading-[1.02]">
             Your AI team.
             <br />
             Always on.
-          </h1>
+          </p>
           <p className="text-lg text-neutral-400">Bots that work in your apps, talk in threads, and ask before anything risky.</p>
 
           {/* A taste of the product: the moment a bot asks before acting. */}

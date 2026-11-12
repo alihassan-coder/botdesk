@@ -129,6 +129,15 @@ test.describe("Settings", () => {
     await page.getByRole("button", { name: "Save changes" }).click();
     await expect(page.getByRole("button", { name: "Organization: Acme Inc" })).toBeVisible();
   });
+
+  test("the organization address can be typed with dashes", async ({ page }) => {
+    await page.goto("/settings/organization");
+    const address = page.getByLabel("Address");
+    await address.clear();
+    await address.pressSequentially("my team-");
+    await expect(address).toHaveValue("my-team-");
+    await expect(page.getByText("botdesk.app/my-team.")).toBeVisible();
+  });
 });
 
 test("the organization menu leads to managing the org", async ({ page }) => {

@@ -41,7 +41,7 @@ export function SchedulePicker({ value, onChange }: { value: Schedule; onChange:
             aria-label="Time"
             value={time}
             onChange={(e) => e.target.value && onChange({ ...value, time: e.target.value } as Schedule)}
-            className="w-32"
+            className="w-36"
           />
         )}
       </div>

@@ -1,6 +1,5 @@
 import Link from "next/link";
 import { useTheme } from "next-themes";
-import { useRouter } from "next/navigation";
 import { ChevronsUpDown, LogOut, Monitor, Moon, Settings, Sun } from "lucide-react";
 import {
   DropdownMenu,
@@ -12,6 +11,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { useSidebar } from "@/components/ui/sidebar";
 import { actions, useCurrentUser } from "@/data/store";
 import { MemberAvatar } from "@/features/bots/bot-avatar";
 
@@ -19,7 +19,7 @@ import { MemberAvatar } from "@/features/bots/bot-avatar";
 export function UserMenu() {
   const user = useCurrentUser();
   const { theme, setTheme } = useTheme();
-  const router = useRouter();
+  const { isMobile, setOpenMobile } = useSidebar();
 
   return (
     <DropdownMenu>
@@ -41,14 +41,10 @@ export function UserMenu() {
         </DropdownMenuRadioGroup>
         <DropdownMenuSeparator />
         <DropdownMenuItem asChild>
-          <Link href="/settings/profile"><Settings /> Settings</Link>
+          <Link href="/settings/profile" onClick={() => isMobile && setOpenMobile(false)}><Settings /> Settings</Link>
         </DropdownMenuItem>
-        <DropdownMenuItem
-          onSelect={() => {
-            actions.signOut();
-            router.replace("/sign-in");
-          }}
-        >
+        {/* AuthGate notices and takes you to the sign-in page. */}
+        <DropdownMenuItem onSelect={actions.signOut}>
           <LogOut /> Sign out
         </DropdownMenuItem>
       </DropdownMenuContent>

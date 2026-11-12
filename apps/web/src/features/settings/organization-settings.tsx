@@ -17,7 +17,7 @@ import {
 } from "@/components/ui/alert-dialog";
 import { Field, FieldDescription, FieldGroup, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
-import { makeHandle } from "@/lib/handle";
+import { finishSlug, slugWhileTyping } from "@/lib/handle";
 import { actions, useBots, useOrg, useUsers } from "@/data/store";
 import { OrgAvatar } from "@/features/shell/org-avatar";
 import { SettingsSection } from "./settings-shell";
@@ -31,8 +31,9 @@ export function OrganizationSettings() {
   const bots = useBots();
   const [name, setName] = useState(org.name);
   const [slug, setSlug] = useState(org.slug);
-  const changed = name !== org.name || slug !== org.slug;
-  const valid = name.trim().length > 0 && /^[a-z0-9-]+$/.test(slug);
+  const finalSlug = finishSlug(slug);
+  const changed = name.trim() !== org.name || finalSlug !== org.slug;
+  const valid = name.trim().length > 0 && finalSlug.length > 0;
 
   return (
     <div className="flex flex-col gap-8">
@@ -50,7 +51,8 @@ export function OrganizationSettings() {
           className="max-w-md"
           onSubmit={(e) => {
             e.preventDefault();
-            actions.updateOrg({ name: name.trim(), slug });
+            actions.updateOrg({ name: name.trim(), slug: finalSlug });
+            setSlug(finalSlug);
             toast.success("Organization saved");
           }}
         >
@@ -61,8 +63,8 @@ export function OrganizationSettings() {
             </Field>
             <Field>
               <FieldLabel htmlFor="org-slug">Address</FieldLabel>
-              <Input id="org-slug" value={slug} onChange={(e) => setSlug(makeHandle(e.target.value, []))} />
-              <FieldDescription>botdesk.app/{slug || "…"}. Lowercase letters, numbers and dashes.</FieldDescription>
+              <Input id="org-slug" value={slug} onChange={(e) => setSlug(slugWhileTyping(e.target.value))} />
+              <FieldDescription>botdesk.app/{finalSlug || "…"}. Lowercase letters, numbers and dashes.</FieldDescription>
             </Field>
             <Button type="submit" disabled={!changed || !valid} className="w-fit">Save changes</Button>
           </FieldGroup>
@@ -89,7 +91,7 @@ export function OrganizationSettings() {
             </AlertDialogHeader>
             <AlertDialogFooter>
               <AlertDialogCancel>Keep it</AlertDialogCancel>
-              <AlertDialogAction onClick={() => toast("Deleting an organization arrives with the API. Nothing was deleted.")}>Delete</AlertDialogAction>
+              <AlertDialogAction variant="destructive" onClick={() => toast("Deleting an organization arrives with the API. Nothing was deleted.")}>Delete</AlertDialogAction>
             </AlertDialogFooter>
           </AlertDialogContent>
         </AlertDialog>

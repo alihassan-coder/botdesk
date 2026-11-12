@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { makeHandle } from "./handle";
+import { finishSlug, makeHandle, slugWhileTyping } from "./handle";
 
 describe("makeHandle", () => {
   it("lowercases and joins words with dashes", () => {
@@ -8,6 +8,7 @@ describe("makeHandle", () => {
 
   it("drops symbols and accents", () => {
     expect(makeHandle("  Café & Ops! ", [])).toBe("cafe-ops");
+    expect(makeHandle("Renée Smith", [])).toBe("renee-smith");
   });
 
   it("adds a number when the handle is taken", () => {
@@ -17,5 +18,26 @@ describe("makeHandle", () => {
 
   it("falls back to 'bot' for names with no letters", () => {
     expect(makeHandle("!!!", [])).toBe("bot");
+  });
+});
+
+describe("slugWhileTyping", () => {
+  it("keeps a trailing dash so the next word can be typed", () => {
+    expect(slugWhileTyping("my-")).toBe("my-");
+    expect(slugWhileTyping("My Team")).toBe("my-team");
+  });
+
+  it("stays empty when cleared", () => {
+    expect(slugWhileTyping("")).toBe("");
+  });
+
+  it("drops leading dashes and accents", () => {
+    expect(slugWhileTyping("--Équipe")).toBe("equipe");
+  });
+});
+
+describe("finishSlug", () => {
+  it("trims the trailing dash before saving", () => {
+    expect(finishSlug("my-team-")).toBe("my-team");
   });
 });

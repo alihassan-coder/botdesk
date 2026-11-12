@@ -1,9 +1,16 @@
-"""A run as a LangGraph graph (agents-and-plugins.md §4), without tools for now:
+"""A run as a LangGraph graph (agents-and-plugins.md §4):
 
-    load_context → recall → call_model → save_reply → remember
+    load_context → recall → call_model ─┬─ no tool calls ─→ save_reply → remember
+                                        └─ tool calls ─→ prepare_call ─┬─ auto ──→ execute_tool ─┐
+                                                                       ├─ ask ───→ approval_gate ┤
+                                                                       └─ deny ──────────────────┤
+                         call_model ←─ (no calls left) ─ finish_call ←──────────────────────────┘
+                                       (calls left) → prepare_call
 
-The checkpointer saves the state after every node, keyed by the run id. Each node is safe
-to run twice (§4.1): if a run is ever resumed, a node may start again from its first line.
+Tool calls are handled one at a time (ADR 0004 §7). The checkpointer saves the state after
+every node, keyed by the run id. Each node is safe to run twice (§4.1): when a paused run
+resumes, `approval_gate` starts again from its first line, which is why it does nothing but
+pause. Side effects happen only in `execute_tool`, after the decision is saved.
 """
 
 import logging
@@ -11,23 +18,43 @@ import time
 import uuid
 from collections.abc import Callable, Coroutine
 from dataclasses import dataclass
-from typing import Any, TypedDict
+from datetime import timedelta
+from typing import Any, Literal, TypedDict, cast
 
 from langchain_core.language_models import BaseChatModel
+from langchain_core.messages import (
+    AIMessage,
+    AIMessageChunk,
+    BaseMessage,
+    ToolMessage,
+    message_chunk_to_message,
+    message_to_dict,
+    messages_from_dict,
+)
+from langchain_core.runnables import Runnable
 from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.graph import END, START, StateGraph
 from langgraph.graph.state import CompiledStateGraph
 from langgraph.runtime import Runtime
+from langgraph.types import interrupt
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from src.models.bot import SecurityLevel
+from src.plugins.registry import ToolRegistry
+from src.runtime import tool_pipeline
 from src.runtime.limits import RunLimits, limit_reached
 from src.runtime.memory import MemoryScope, MemoryService
+from src.runtime.policy import LEVELS
 from src.runtime.prompt import HistoryLine, build_prompt
 from src.runtime.reporter import RunReporter
 from src.runtime.token_batcher import BackgroundSender, TokenBatcher
+from src.runtime.tool_pipeline import ToolCallRequest, finished_event
 from src.services import run_service, thread_service
+from src.services.tool_execution_service import RunRef
 
 logger = logging.getLogger(__name__)
+
+STEP_SEPARATOR = "\n\n"  # between the text of two model steps in one reply
 
 
 class RunError(Exception):
@@ -38,16 +65,33 @@ class RunStopped(Exception):
     """Someone pressed Stop."""
 
 
+class CallState(TypedDict, total=False):
+    """The tool call going through the pipeline now."""
+
+    toolCallId: str
+    tool: str
+    executionId: str
+    decision: str  # auto | ask | deny | invalid, then approved | denied after the gate
+    approvalId: str | None
+    refusal: str | None  # what the model is told when the call doesn't run
+    result: str | None  # what the model is told when it ran
+
+
 class RunState(TypedDict, total=False):
     bot_name: str
     instructions: str
     model_id: str
+    security_level: str
     tainted: bool
     member_id: str | None
     history: list[dict[str, Any]]  # {"fromThisBot": bool, "text": str}, oldest first
     memories: list[str]
     reply_message_id: str
-    reply: str
+    reply: str  # the text of every model step so far, joined
+    turns: list[dict[str, Any]]  # this run's tool round trips, as LangChain message dicts
+    pending_calls: list[dict[str, Any]]  # tool calls not handled yet: {"id", "name", "args"}
+    call: CallState
+    approval_ids: list[str]  # approvals asked for in this run (they become cards in the reply)
 
 
 @dataclass(frozen=True)
@@ -57,13 +101,21 @@ class RunDeps:
     run_id: uuid.UUID
     org_id: uuid.UUID
     bot_id: uuid.UUID
+    thread_id: uuid.UUID
     limits: RunLimits
-    started_at: float  # time.monotonic() when the run started
+    started_at: float  # time.monotonic() when this stretch of the run started
     sessionmaker: async_sessionmaker[AsyncSession]
     reporter: RunReporter
     memory: MemoryService
     model_for: Callable[[str], BaseChatModel]
     in_background: Callable[[Coroutine[Any, Any, None]], None]
+    registry: ToolRegistry
+    tool_timeout_seconds: float
+    approval_expiry: timedelta
+
+    @property
+    def run_ref(self) -> RunRef:
+        return RunRef(run_id=self.run_id, org_id=self.org_id, thread_id=self.thread_id, bot_id=self.bot_id)
 
 
 def _memory_scope(state: RunState, deps: RunDeps) -> MemoryScope:
@@ -76,6 +128,12 @@ def _last_human_text(state: RunState) -> str:
     return next((line["text"] for line in reversed(state["history"]) if not line["fromThisBot"]), "")
 
 
+def _security_level(state: RunState) -> SecurityLevel:
+    """The bot's level. Anything unexpected falls back to the strictest one (fail closed)."""
+    level = state.get("security_level", "")
+    return level if level in LEVELS else "read-only"
+
+
 async def load_context(state: RunState, runtime: Runtime[RunDeps]) -> RunState:
     async with runtime.context.sessionmaker() as db:
         context = await run_service.run_context(db, runtime.context.run_id)
@@ -83,9 +141,13 @@ async def load_context(state: RunState, runtime: Runtime[RunDeps]) -> RunState:
         "bot_name": context.bot_name,
         "instructions": context.instructions,
         "model_id": context.model_id,
+        "security_level": context.security_level,
         "tainted": context.tainted,
         "member_id": str(context.member_id) if context.member_id else None,
         "history": [{"fromThisBot": mine, "text": text} for mine, text in context.history],
+        "turns": [],
+        "pending_calls": [],
+        "approval_ids": [],
     }
 
 
@@ -116,39 +178,165 @@ async def call_model(state: RunState, runtime: Runtime[RunDeps]) -> RunState:
         memories=state.get("memories", []),
         history=[HistoryLine(from_this_bot=line["fromThisBot"], text=line["text"]) for line in state["history"]],
     )
-    # The reply's id is chosen now, so the streamed pieces and the saved message share it.
-    message_id = str(uuid.uuid4())
-    reply = await _stream_reply(deps, deps.model_for(state["model_id"]), prompt, message_id)
-    return {"reply": reply, "reply_message_id": message_id}
+    turns = state.get("turns", [])
+    # The reply's id is chosen at the first step, so every streamed piece and the saved message share it.
+    message_id = state.get("reply_message_id") or str(uuid.uuid4())
+    earlier = state.get("reply", "")
+    model = _with_tools(deps.model_for(state["model_id"]), deps.registry)
+    answer = await _stream_reply(
+        deps, model, [*prompt, *messages_from_dict(turns)], message_id, separator=STEP_SEPARATOR if earlier else ""
+    )
+    text = answer.text
+    calls = [{"id": call["id"], "name": call["name"], "args": call["args"]} for call in answer.tool_calls]
+    return {
+        "reply": earlier + STEP_SEPARATOR + text if earlier and text else earlier or text,
+        "reply_message_id": message_id,
+        "turns": [*turns, message_to_dict(answer)] if calls else turns,
+        "pending_calls": calls,
+    }
 
 
-async def _stream_reply(deps: RunDeps, model: BaseChatModel, prompt: list[Any], message_id: str) -> str:
-    """Send the reply to the chat in small batches as it arrives, and return all of it."""
+def _with_tools(model: BaseChatModel, registry: ToolRegistry) -> Runnable[Any, Any]:
+    """The model, told about the tools it may call. Models that can't call tools answer without them."""
+    tools = [tool.for_model() for tool in registry.tools()]
+    if not tools:
+        return model
+    try:
+        return model.bind_tools(tools)
+    except NotImplementedError:
+        return model
+
+
+async def _stream_reply(
+    deps: RunDeps, model: Runnable[Any, Any], prompt: list[BaseMessage], message_id: str, *, separator: str
+) -> AIMessage:
+    """Send the reply's text to the chat in small batches as it arrives, and return the whole
+    answer (text and tool calls). `separator` goes before the first piece, when there is one."""
 
     async def save_delta(text: str) -> None:
         await deps.reporter.send("message_delta", {"messageId": message_id, "botId": str(deps.bot_id), "text": text})
 
     batcher = TokenBatcher()
-    pieces: list[str] = []
+    answer: AIMessageChunk | None = None
     async with BackgroundSender(save_delta) as sender:
         try:
             async for chunk in model.astream(prompt):
+                answer = chunk if answer is None else answer + chunk
                 if token := str(chunk.text):
-                    pieces.append(token)
+                    if separator:
+                        token, separator = separator + token, ""
                     if batch := batcher.add(token, now=time.monotonic()):
                         sender.send(batch)
         except Exception as error:
             raise RunError(f"The model couldn't reply: {error}") from error
         if rest := batcher.flush():
             sender.send(rest)
-    return "".join(pieces)
+    if answer is None:
+        return AIMessage(content="")
+    return cast(AIMessage, message_chunk_to_message(answer))
+
+
+def after_model(state: RunState) -> Literal["prepare_call", "save_reply"]:
+    return "prepare_call" if state.get("pending_calls") else "save_reply"
+
+
+async def prepare_call(state: RunState, runtime: Runtime[RunDeps]) -> RunState:
+    """Validate, classify, ask the policy, and save the decision. No tool runs here."""
+    deps = runtime.context
+    first, *rest = state["pending_calls"]
+    tainted = state.get("tainted", False)
+    request = ToolCallRequest(id=first["id"], name=first["name"], args=dict(first.get("args") or {}))
+    prepared = tool_pipeline.prepare(deps.registry, request, level=_security_level(state), tainted=tainted)
+    async with deps.sessionmaker() as db:
+        recorded = await tool_pipeline.record(
+            db, deps.run_ref, prepared, tainted=tainted, approval_expiry=deps.approval_expiry
+        )
+        execution = recorded.execution
+        if recorded.created and execution.decision in ("deny", "invalid"):
+            status = "denied" if execution.decision == "deny" else "failed"
+            event = finished_event(execution.id, execution.tool_name, error=execution.error, status=status)
+            deps.reporter.add(db, "tool_finished", event)
+        await db.commit()
+    deps.reporter.announce()
+    call: CallState = {
+        "toolCallId": request.id,
+        "tool": execution.tool_name,
+        "executionId": str(execution.id),
+        "decision": execution.decision,
+        "approvalId": str(recorded.approval.id) if recorded.approval else None,
+        "refusal": execution.error,
+    }
+    return {"pending_calls": rest, "call": call}
+
+
+def after_prepare(state: RunState) -> Literal["execute_tool", "approval_gate", "finish_call"]:
+    decision = state["call"]["decision"]
+    if decision == "auto":
+        return "execute_tool"
+    if decision == "ask":
+        return "approval_gate"
+    return "finish_call"
+
+
+def approval_gate(state: RunState) -> RunState:
+    """Pause until a person decides. RULE: nothing else happens here. On resume this node runs
+    again from the top, and `interrupt` then returns the answer instead of pausing."""
+    call = state["call"]
+    answer = interrupt({"approvalId": call["approvalId"]})
+    approved = bool(answer.get("approved"))
+    return {"call": {**call, "decision": "approved" if approved else "denied", "refusal": answer.get("message")}}
+
+
+def after_gate(state: RunState) -> Literal["execute_tool", "finish_call"]:
+    return "execute_tool" if state["call"]["decision"] == "approved" else "finish_call"
+
+
+async def execute_tool(state: RunState, runtime: Runtime[RunDeps]) -> RunState:
+    """Run the tool, at most once (the `tool_executions` record makes sure)."""
+    deps = runtime.context
+    call = state["call"]
+    outcome = await tool_pipeline.execute(
+        tool_pipeline.ExecuteDeps(
+            sessionmaker=deps.sessionmaker,
+            registry=deps.registry,
+            reporter=deps.reporter,
+            run=deps.run_ref,
+            timeout_seconds=deps.tool_timeout_seconds,
+        ),
+        uuid.UUID(call["executionId"]),
+    )
+    update: RunState = {"call": {**call, "result": outcome.text}}
+    if outcome.tainted:
+        update["tainted"] = True
+    return update
+
+
+def finish_call(state: RunState) -> RunState:
+    """Give the model the tool's answer (or why it didn't run). Every call gets one: providers
+    reject a conversation where a tool call has no result."""
+    call = state["call"]
+    text = call.get("result") or call.get("refusal") or "Not done."
+    answer = ToolMessage(content=text, tool_call_id=call["toolCallId"], name=call["tool"])
+    approvals = state.get("approval_ids", [])
+    if (approval_id := call.get("approvalId")) and approval_id not in approvals:
+        approvals = [*approvals, approval_id]
+    return {"turns": [*state.get("turns", []), message_to_dict(answer)], "call": {}, "approval_ids": approvals}
+
+
+def after_call(state: RunState) -> Literal["prepare_call", "call_model"]:
+    return "prepare_call" if state.get("pending_calls") else "call_model"
 
 
 async def save_reply(state: RunState, runtime: Runtime[RunDeps]) -> RunState:
     deps = runtime.context
+    cards = [{"type": "approval", "approvalId": approval_id} for approval_id in state.get("approval_ids", [])]
     async with deps.sessionmaker() as db:
         message = await run_service.save_reply(
-            db, run_id=deps.run_id, message_id=uuid.UUID(state["reply_message_id"]), text=state["reply"]
+            db,
+            run_id=deps.run_id,
+            message_id=uuid.UUID(state["reply_message_id"]),
+            text=state.get("reply", ""),
+            extra_parts=cards,
         )
         message_json = thread_service.message_out(message).model_dump(mode="json", by_alias=True)
         deps.reporter.add(db, "message_saved", {"message": message_json})
@@ -165,23 +353,32 @@ async def remember(state: RunState, runtime: Runtime[RunDeps]) -> RunState:
         return {}
     conversation = [
         {"role": "user", "content": _last_human_text(state)},
-        {"role": "assistant", "content": state["reply"]},
+        {"role": "assistant", "content": state.get("reply", "")},
     ]
     deps.in_background(deps.memory.remember(_memory_scope(state, deps), conversation))
     return {}
 
 
 def build_graph(checkpointer: BaseCheckpointSaver[Any]) -> CompiledStateGraph[RunState, RunDeps, RunState, RunState]:
+    """Paused runs meet new code (ADR 0004 §8): add nodes, never rename or remove them."""
     graph = StateGraph(RunState, context_schema=RunDeps)
     graph.add_node("load_context", load_context)
     graph.add_node("recall", recall)
     graph.add_node("call_model", call_model)
+    graph.add_node("prepare_call", prepare_call)
+    graph.add_node("approval_gate", approval_gate)
+    graph.add_node("execute_tool", execute_tool)
+    graph.add_node("finish_call", finish_call)
     graph.add_node("save_reply", save_reply)
     graph.add_node("remember", remember)
     graph.add_edge(START, "load_context")
     graph.add_edge("load_context", "recall")
     graph.add_edge("recall", "call_model")
-    graph.add_edge("call_model", "save_reply")
+    graph.add_conditional_edges("call_model", after_model)
+    graph.add_conditional_edges("prepare_call", after_prepare)
+    graph.add_conditional_edges("approval_gate", after_gate)
+    graph.add_edge("execute_tool", "finish_call")
+    graph.add_conditional_edges("finish_call", after_call)
     graph.add_edge("save_reply", "remember")
     graph.add_edge("remember", END)
     return graph.compile(checkpointer=checkpointer)

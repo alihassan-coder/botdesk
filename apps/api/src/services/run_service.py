@@ -1,11 +1,14 @@
 """Runs: which bots should reply to a message, and the life of a run in the database.
 
-A run moves queued → running → succeeded / failed / cancelled. Every change of state is a
-single conditional UPDATE, so two API copies (or a double-clicked Stop) can't both win.
+A run moves queued → running → succeeded / failed / cancelled. While running it can pause:
+running → waiting_approval (a risky tool call waits for a person) → running again, or
+running → needs_attention (a tool may have half run; a person must look). Every change of
+state is a single conditional UPDATE, so two API copies (or a double-clicked Stop) can't both win.
 """
 
 import uuid
 from dataclasses import dataclass
+from typing import Any
 
 from sqlalchemy import exists, func, select, update
 from sqlalchemy.exc import IntegrityError
@@ -17,12 +20,21 @@ from src.core.database import utcnow
 from src.core.errors import NotFound
 from src.core.handles import mentioned_handles
 from src.models import Bot, Message, Run, Thread, ThreadParticipant
-from src.models.run import ACTIVE_STATUSES
+from src.models.run import ACTIVE_STATUSES, PAUSED_STATUSES
 from src.schemas.run import RunOut
 from src.services.thread_service import text_of, text_part
+from src.services.tool_execution_service import runs_with_a_started_call
 
 HISTORY_LENGTH = 30  # recent messages the bot sees
 RESTART_ERROR = "Interrupted by a restart. Send your message again."
+LOST_PAUSE_ERROR = "This run can't continue: its saved progress is gone (the API restarted). Send your message again."
+
+
+def half_run_tool_error(tool_name: str) -> str:
+    return (
+        f"The API restarted while {tool_name} was running, so we can't tell whether it finished. "
+        "Check before trying again."
+    )
 
 
 async def bots_to_reply(db: AsyncSession, *, thread: Thread, text: str) -> list[uuid.UUID]:
@@ -64,8 +76,9 @@ async def create_runs(
     return runs
 
 
-async def claim_run(db: AsyncSession, run_id: uuid.UUID, *, bot_cap: int) -> bool:
-    """Try to move a queued run to running. True if this caller got it.
+async def claim_run(db: AsyncSession, run_id: uuid.UUID, *, bot_cap: int, from_status: str = "queued") -> bool:
+    """Try to move a queued run (or, to resume it, a run waiting for approval) to running.
+    True if this caller got it.
 
     It only starts when it's this chat's turn: no older run in the chat is still queued, and
     the bot has fewer than `bot_cap` runs going. A partial unique index allows one running
@@ -84,8 +97,8 @@ async def claim_run(db: AsyncSession, run_id: uuid.UUID, *, bot_cap: int) -> boo
     try:
         result = await db.execute(
             update(this)
-            .where(this.id == run_id, this.status == "queued", ~older_queued, bot_running < bot_cap)
-            .values(status="running", started_at=utcnow())
+            .where(this.id == run_id, this.status == from_status, ~older_queued, bot_running < bot_cap)
+            .values(status="running", started_at=func.coalesce(this.started_at, utcnow()))
             .returning(this.id)
         )
         claimed = result.first() is not None
@@ -131,6 +144,7 @@ class RunContext:
     bot_name: str
     instructions: str
     model_id: str
+    security_level: str
     tainted: bool
     member_id: uuid.UUID | None  # in a DM, the person the bot is talking to
     history: list[tuple[bool, str]]  # (from this bot?, text), oldest first
@@ -147,6 +161,7 @@ async def run_context(db: AsyncSession, run_id: uuid.UUID) -> RunContext:
                 Bot.name,
                 Bot.instructions,
                 Bot.model_id,
+                Bot.security_level,
                 Thread.kind,
                 Thread.created_by,
             )
@@ -169,15 +184,23 @@ async def run_context(db: AsyncSession, run_id: uuid.UUID) -> RunContext:
         bot_name=row.name,
         instructions=row.instructions,
         model_id=row.model_id,
+        security_level=row.security_level,
         tainted=row.tainted,
         member_id=row.created_by if row.kind == "dm" else None,
         history=history,
     )
 
 
-async def save_reply(db: AsyncSession, *, run_id: uuid.UUID, message_id: uuid.UUID, text: str) -> Message:
-    """The bot's reply becomes a message in the chat. The caller commits.
-    Safe to call twice: a reply that's already saved is returned as it is."""
+async def save_reply(
+    db: AsyncSession,
+    *,
+    run_id: uuid.UUID,
+    message_id: uuid.UUID,
+    text: str,
+    extra_parts: list[dict[str, Any]] | None = None,
+) -> Message:
+    """The bot's reply becomes a message in the chat. `extra_parts` (approval cards) go before
+    the text. The caller commits. Safe to call twice: a saved reply is returned as it is."""
     run = (
         await db.execute(select(Run.org_id, Run.thread_id, Run.bot_id, Run.reply_message_id).where(Run.id == run_id))
     ).one()
@@ -189,7 +212,7 @@ async def save_reply(db: AsyncSession, *, run_id: uuid.UUID, message_id: uuid.UU
         thread_id=run.thread_id,
         author_type="bot",
         author_id=run.bot_id,
-        parts=[text_part(text)],
+        parts=[*(extra_parts or []), text_part(text)],
         status="complete",
         created_at=utcnow(),
     )
@@ -210,15 +233,40 @@ async def finish_run(db: AsyncSession, run_id: uuid.UUID, *, status: str, error:
     return result.first() is not None
 
 
+async def pause_run(db: AsyncSession, run_id: uuid.UUID, *, status: str, error: str | None = None) -> bool:
+    """running → waiting_approval or needs_attention. False if the run isn't running any more
+    (Stop was pressed). The caller commits."""
+    result = await db.execute(
+        update(Run)
+        .where(Run.id == run_id, Run.status == "running")
+        .values(status=status, error=error)
+        .returning(Run.id)
+    )
+    return result.first() is not None
+
+
 async def fail_interrupted_runs(db: AsyncSession) -> list[Run]:
-    """At startup: runs left queued or running by a crash or restart can't continue (yet), so they fail."""
-    result = await db.scalars(
+    """At startup: runs left queued or running by a crash or restart can't continue (yet).
+    They fail, except a run whose tool call was half done: nobody can tell whether it
+    happened, so that run waits for a person (needs_attention, ADR 0004 §2). Returns both
+    kinds. Runs waiting for approval are untouched: they resume from their checkpoint."""
+    stuck = list(await db.scalars(select(Run.id).where(Run.status.in_(ACTIVE_STATUSES))))
+    half_run = await runs_with_a_started_call(db, stuck)
+    attention: list[Run] = []
+    for run_id, tool_name in half_run.items():
+        attention += await db.scalars(
+            update(Run)
+            .where(Run.id == run_id, Run.status.in_(ACTIVE_STATUSES))
+            .values(status="needs_attention", error=half_run_tool_error(tool_name))
+            .returning(Run)
+        )
+    failed = await db.scalars(
         update(Run)
         .where(Run.status.in_(ACTIVE_STATUSES))
         .values(status="failed", error=RESTART_ERROR, finished_at=utcnow())
         .returning(Run)
     )
-    return list(result)
+    return [*attention, *failed]
 
 
 async def get_run(db: AsyncSession, *, org_id: uuid.UUID, user_id: uuid.UUID, run_id: uuid.UUID) -> Run:
@@ -239,18 +287,18 @@ async def get_run(db: AsyncSession, *, org_id: uuid.UUID, user_id: uuid.UUID, ru
 
 
 async def request_stop(db: AsyncSession, run: Run) -> bool:
-    """Stop button. A queued run is cancelled on the spot (returns True); a running one gets a
-    "stop requested" flag that it checks between steps (returns False). The caller commits."""
-    if await finish_run_if_queued(db, run.id):
+    """Stop button. A queued or paused run is cancelled on the spot (returns True); a running
+    one gets a "stop requested" flag that it checks between steps (returns False). The caller commits."""
+    if await cancel_if_not_running(db, run.id):
         return True
     await db.execute(update(Run).where(Run.id == run.id, Run.status == "running").values(stop_requested=True))
     return False
 
 
-async def finish_run_if_queued(db: AsyncSession, run_id: uuid.UUID) -> bool:
+async def cancel_if_not_running(db: AsyncSession, run_id: uuid.UUID) -> bool:
     result = await db.execute(
         update(Run)
-        .where(Run.id == run_id, Run.status == "queued")
+        .where(Run.id == run_id, Run.status.in_(("queued", *PAUSED_STATUSES)))
         .values(status="cancelled", finished_at=utcnow())
         .returning(Run.id)
     )

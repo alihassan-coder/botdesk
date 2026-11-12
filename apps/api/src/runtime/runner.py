@@ -2,8 +2,15 @@
 
 Posting a message creates queued runs; `RunManager.start` turns each into an asyncio task.
 A run waits for its chat's turn (one run at a time per chat), runs the graph, and ends as
-succeeded, failed or cancelled. Every step is saved in Postgres, so a job queue can take
-over starting runs later without changing what a run does.
+succeeded, failed or cancelled, or pauses:
+
+- **waiting_approval:** the graph called `interrupt()`. The task ends; the run is rows in
+  Postgres. When a person decides, `RunManager.resume` starts a new task that continues the
+  same checkpoint with `Command(resume=...)`.
+- **needs_attention:** a tool may have half run. A person has to look.
+
+Every step is saved in Postgres, so a job queue can take over starting and resuming runs
+later without changing what a run does.
 """
 
 import asyncio
@@ -14,6 +21,7 @@ from collections import Counter
 from collections.abc import AsyncIterator, Callable, Coroutine
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
+from datetime import timedelta
 from functools import partial
 from typing import Any
 
@@ -22,6 +30,7 @@ from langchain_core.runnables import RunnableConfig
 from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
+from langgraph.types import Command
 from psycopg import AsyncConnection
 from psycopg.rows import DictRow, dict_row
 from psycopg_pool import AsyncConnectionPool
@@ -30,13 +39,15 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from src.core.config import Settings
 from src.core.database import postgres_connect_args
 from src.models import Run
+from src.plugins.registry import ToolRegistry, build_registry
 from src.runtime.chat_model import chat_model_for
 from src.runtime.event_bus import EventBus
 from src.runtime.graph import RunDeps, RunError, RunStopped, build_graph
 from src.runtime.limits import RunLimits, time_limit_message
 from src.runtime.memory import MemoryService, NoMemory
 from src.runtime.reporter import RunReporter
-from src.services import run_service
+from src.runtime.tool_pipeline import NeedsAttention
+from src.services import approval_service, run_service
 
 logger = logging.getLogger(__name__)
 
@@ -60,6 +71,15 @@ class RunTicket:
         return cls(run.id, run.org_id, run.thread_id, run.bot_id, run.max_steps, run.max_seconds)
 
 
+@dataclass(frozen=True)
+class Outcome:
+    """How one stretch of a run ended."""
+
+    status: str  # succeeded | failed | cancelled | waiting_approval | needs_attention
+    error: str | None = None
+    approval_id: str | None = None  # when waiting_approval: the approval it waits for
+
+
 class RunManager:
     def __init__(
         self,
@@ -69,11 +89,13 @@ class RunManager:
         checkpointer: BaseCheckpointSaver[Any],
         memory: MemoryService | None = None,
         bus: EventBus | None = None,
+        registry: ToolRegistry | None = None,
     ) -> None:
         self.settings = settings
         self.sessionmaker = sessionmaker
         self.bus = bus or EventBus()
         self.memory: MemoryService = memory or NoMemory()
+        self.registry = registry or build_registry(settings.plugin_ids)
         self.model_for: Callable[[str], BaseChatModel] = self._model_for
         # Tests about chats (not replies) switch this off: runs are created but never start.
         self.enabled = True
@@ -90,13 +112,23 @@ class RunManager:
         if not self.enabled:
             return
         for run in runs:
-            ticket = RunTicket.of(run)
-            task = asyncio.create_task(self._run(ticket), name=f"run {ticket.id}")
-            self._runs[ticket.id] = task
-            task.add_done_callback(partial(self._forget_run, ticket.id))
+            self._track(RunTicket.of(run), self._run)
 
-    def _forget_run(self, run_id: uuid.UUID, _task: asyncio.Task[None]) -> None:
-        self._runs.pop(run_id, None)
+    def resume(self, run: Run, answer: dict[str, Any]) -> None:
+        """Continue a run paused on an approval, with the person's answer. Call after the
+        decision is committed. `answer` is `{"approved": bool, "message": str | None}`."""
+        if not self.enabled:
+            return
+        self._track(RunTicket.of(run), partial(self._resume, answer=answer))
+
+    def _track(self, ticket: RunTicket, work: Callable[[RunTicket], Coroutine[Any, Any, None]]) -> None:
+        task = asyncio.create_task(work(ticket), name=f"run {ticket.id}")
+        self._runs[ticket.id] = task
+        task.add_done_callback(partial(self._forget_run, ticket.id))
+
+    def _forget_run(self, run_id: uuid.UUID, task: asyncio.Task[None]) -> None:
+        if self._runs.get(run_id) is task:
+            del self._runs[run_id]
 
     def stop_now(self, run_id: uuid.UUID) -> None:
         """Stop a run running in this process straight away (its Stop flag is already saved)."""
@@ -110,17 +142,22 @@ class RunManager:
         task.add_done_callback(self._background.discard)
 
     async def wait_until_idle(self) -> None:
-        """Wait for every run and background task to finish (tests use this)."""
+        """Wait for every run and background task to finish (tests use this). A run that pauses
+        for approval counts as finished: its task has ended."""
         while self._runs or self._background:
             await asyncio.gather(*self._runs.values(), *self._background, return_exceptions=True)
 
     async def recover_after_restart(self) -> None:
-        """At startup: runs a crash or restart left half done fail with a clear message.
+        """At startup: runs a crash or restart left half done fail with a clear message, or wait
+        for a person if a tool call was half done. Runs waiting for approval stay paused.
         (With several API copies this would also fail the others' runs; the job queue fixes that.)"""
         async with self.sessionmaker() as db:
             for run in await run_service.fail_interrupted_runs(db):
                 reporter = self._reporter(RunTicket.of(run))
-                reporter.add(db, "run_failed", {"status": "failed", "error": run_service.RESTART_ERROR})
+                if run.status == "needs_attention":
+                    reporter.add(db, "run_needs_attention", {"status": run.status, "error": run.error})
+                else:
+                    reporter.add(db, "run_failed", {"status": "failed", "error": run_service.RESTART_ERROR})
             await db.commit()
 
     async def close(self) -> None:
@@ -137,25 +174,53 @@ class RunManager:
             if not await self._wait_for_turn(ticket.id):
                 return  # cancelled while it waited
             await reporter.send("run_started", {"botId": str(ticket.bot_id)})
-            status, error = await self._execute(ticket, reporter)
-            await self._finish(ticket, reporter, status, error)
+            outcome = await self._execute(ticket, reporter, {})
+            await self._finish(ticket, reporter, outcome)
 
-    async def _wait_for_turn(self, run_id: uuid.UUID) -> bool:
-        """True once this run is running; False if it was cancelled before its turn came."""
+    async def _resume(self, ticket: RunTicket, answer: dict[str, Any]) -> None:
+        reporter = self._reporter(ticket)
+        async with self._chat_lock(ticket.thread_id):
+            if not await self._wait_for_turn(ticket.id, from_status="waiting_approval"):
+                return  # stopped while it waited
+            if not await self._has_pause(ticket):
+                # The checkpoint is gone (in-memory checkpoints don't survive a restart).
+                await self._finish(ticket, reporter, Outcome("failed", run_service.LOST_PAUSE_ERROR))
+                return
+            await reporter.send("run_resumed", {"botId": str(ticket.bot_id)})
+            outcome = await self._execute(ticket, reporter, Command(resume=answer))
+            await self._finish(ticket, reporter, outcome)
+
+    async def _wait_for_turn(self, run_id: uuid.UUID, *, from_status: str = "queued") -> bool:
+        """True once this run is running; False if it ended (or was stopped) before its turn came.
+        A run being resumed may still be `running` for a moment while it finishes pausing."""
+        keep_waiting = {from_status} if from_status == "queued" else {from_status, "running"}
         while True:
             async with self.sessionmaker() as db:
-                if await run_service.claim_run(db, run_id, bot_cap=self.settings.bot_max_running_runs):
+                if await run_service.claim_run(
+                    db, run_id, bot_cap=self.settings.bot_max_running_runs, from_status=from_status
+                ):
                     return True
-                if await run_service.run_status(db, run_id) != "queued":
+                if await run_service.run_status(db, run_id) not in keep_waiting:
                     return False
             await asyncio.sleep(TURN_CHECK_SECONDS)
 
-    async def _execute(self, ticket: RunTicket, reporter: RunReporter) -> tuple[str, str | None]:
-        """Run the graph. Returns the run's final status and, if it failed, why."""
+    @staticmethod
+    def _config(ticket: RunTicket) -> RunnableConfig:
+        # Checkpoints are saved under the run id. Our step limit (checked in call_model) is the
+        # real guard; LangGraph's recursion limit only stops a graph that loops by mistake.
+        return {"configurable": {"thread_id": str(ticket.id)}, "recursion_limit": 200}
+
+    async def _has_pause(self, ticket: RunTicket) -> bool:
+        snapshot = await self._graph.aget_state(self._config(ticket))
+        return bool(snapshot.interrupts)
+
+    async def _execute(self, ticket: RunTicket, reporter: RunReporter, graph_input: Any) -> Outcome:
+        """Run the graph (from the start, or on from a pause) until it ends or pauses."""
         deps = RunDeps(
             run_id=ticket.id,
             org_id=ticket.org_id,
             bot_id=ticket.bot_id,
+            thread_id=ticket.thread_id,
             limits=RunLimits(max_steps=ticket.max_steps, max_seconds=ticket.max_seconds),
             started_at=time.monotonic(),
             sessionmaker=self.sessionmaker,
@@ -163,36 +228,53 @@ class RunManager:
             memory=self.memory,
             model_for=self.model_for,
             in_background=self.in_background,
+            registry=self.registry,
+            tool_timeout_seconds=self.settings.tool_timeout_seconds,
+            approval_expiry=timedelta(hours=self.settings.approval_expiry_hours),
         )
-        # Checkpoints are saved under the run id. Our step limit (checked in call_model) is the
-        # real guard; LangGraph's recursion limit only stops a graph that loops by mistake.
-        config: RunnableConfig = {"configurable": {"thread_id": str(ticket.id)}, "recursion_limit": 100}
         try:
+            # The time limit counts working time only: waiting for a person doesn't use it up.
             async with asyncio.timeout(ticket.max_seconds):
-                await self._graph.ainvoke({}, config, context=deps)
+                # "sync": each step is saved before the next starts, so a pause is always on disk.
+                result = await self._graph.ainvoke(
+                    graph_input, self._config(ticket), context=deps, durability="sync", version="v2"
+                )
         except RunStopped:
-            return "cancelled", None
+            return Outcome("cancelled")
         except asyncio.CancelledError:
             # Either Stop was pressed (stop_now) or the API is shutting down.
             if await self._stop_was_requested(ticket.id):
-                return "cancelled", None
-            return "failed", run_service.RESTART_ERROR
+                return Outcome("cancelled")
+            return Outcome("failed", run_service.RESTART_ERROR)
         except TimeoutError:
-            return "failed", time_limit_message(ticket.max_seconds)
+            return Outcome("failed", time_limit_message(ticket.max_seconds))
+        except NeedsAttention as error:
+            return Outcome("needs_attention", str(error))
         except RunError as error:
-            return "failed", str(error)
+            return Outcome("failed", str(error))
         except Exception:
             logger.exception("Run %s failed", ticket.id)
-            return "failed", SOMETHING_WENT_WRONG
-        return "succeeded", None
+            return Outcome("failed", SOMETHING_WENT_WRONG)
+        if result.interrupts:
+            return Outcome("waiting_approval", approval_id=str(result.interrupts[0].value["approvalId"]))
+        return Outcome("succeeded")
 
-    async def _finish(self, ticket: RunTicket, reporter: RunReporter, status: str, error: str | None) -> None:
+    async def _finish(self, ticket: RunTicket, reporter: RunReporter, outcome: Outcome) -> None:
+        """Save how this stretch ended, with its event, in one transaction."""
         async with self.sessionmaker() as db:
-            if await run_service.finish_run(db, ticket.id, status=status, error=error):
-                if status == "failed":
-                    reporter.add(db, "run_failed", {"status": status, "error": error})
+            if outcome.status == "waiting_approval" and outcome.approval_id:
+                if await run_service.pause_run(db, ticket.id, status="waiting_approval"):
+                    view = await approval_service.view_by_id(db, uuid.UUID(outcome.approval_id))
+                    approval = approval_service.approval_json(view, self.registry)
+                    reporter.add(db, "approval_requested", {"approval": approval})
+            elif outcome.status == "needs_attention":
+                if await run_service.pause_run(db, ticket.id, status="needs_attention", error=outcome.error):
+                    reporter.add(db, "run_needs_attention", {"status": "needs_attention", "error": outcome.error})
+            elif await run_service.finish_run(db, ticket.id, status=outcome.status, error=outcome.error):
+                if outcome.status == "failed":
+                    reporter.add(db, "run_failed", {"status": "failed", "error": outcome.error})
                 else:
-                    reporter.add(db, "run_finished", {"status": status})
+                    reporter.add(db, "run_finished", {"status": outcome.status})
             await db.commit()
         reporter.announce()
 

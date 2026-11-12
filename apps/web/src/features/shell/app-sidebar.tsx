@@ -28,7 +28,7 @@ const FOOTER_LINKS = [
 
 /**
  * The left column: logo, organization, search and new; approvals; your bots and groups;
- * then app pages and you. Collapses to an icon rail (⌘B); on phones it's a sheet.
+ * then app pages and you. Collapses to an icon rail (⌘B or Ctrl+B); on phones it's a sheet.
  */
 export function AppSidebar() {
   const pendingApprovals = usePendingApprovalCount();

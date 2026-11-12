@@ -100,6 +100,31 @@ test.describe("Settings", () => {
     expect(brand).toBe("#0f8f7a");
   });
 
+  test("the theme and accent pickers work with the keyboard", async ({ page }) => {
+    // Radix selects a radio when focus lands while the arrow key is still down (it moves focus
+    // a tick later). A person's key press lasts that long; Playwright's press() doesn't, so hold it.
+    const arrowRight = async () => {
+      await page.keyboard.down("ArrowRight");
+      await page.waitForTimeout(50);
+      await page.keyboard.up("ArrowRight");
+    };
+    await page.goto("/settings/appearance");
+    await page.getByRole("radio", { name: "Light" }).click();
+    await expect(page.getByRole("radio", { name: "Light" })).toBeChecked();
+    await arrowRight();
+    await expect(page.getByRole("radio", { name: "Dark" })).toBeFocused();
+    await expect(page.getByRole("radio", { name: "Dark" })).toBeChecked();
+    await expect(page.locator("html")).toHaveClass(/dark/);
+
+    // One Tab stop per group: Tab goes from the theme to the selected accent, then to the custom colour.
+    await page.keyboard.press("Tab");
+    await expect(page.getByRole("radio", { name: "Ultramarine" })).toBeFocused();
+    await arrowRight();
+    await expect(page.getByRole("radio", { name: "Teal" })).toBeChecked();
+    await page.keyboard.press("Tab");
+    await expect(page.getByLabel("Custom colour")).toBeFocused();
+  });
+
   test("a custom accent colour, with readable text on it", async ({ page }) => {
     await page.goto("/settings/appearance");
     await page.getByLabel("Custom colour").fill("#ffd60a");

@@ -14,6 +14,7 @@ import { Kbd } from "@/components/ui/kbd";
 import { SidebarInput, SidebarTrigger } from "@/components/ui/sidebar";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { useOrg } from "@/data/store";
+import { useShortcut } from "@/hooks/use-shortcut";
 import { openCommandPalette } from "@/features/command-palette/command-palette";
 import { BotdeskMark } from "./logo";
 import { OrgAvatar } from "./org-avatar";
@@ -28,6 +29,8 @@ const RAIL_ONLY = "hidden group-data-[collapsible=icon]:flex";
  * organization (switch, manage, invite); search and "new". Collapsed, each becomes one icon.
  */
 export function WorkspaceHeader({ query, onQueryChange, onNavigate }: { query: string; onQueryChange: (q: string) => void; onNavigate?: () => void }) {
+  const toggleShortcut = useShortcut("b");
+  const searchShortcut = useShortcut("k");
   return (
     <div className="flex flex-col gap-3">
       <div className="flex items-center gap-2 px-1 group-data-[collapsible=icon]:flex-col group-data-[collapsible=icon]:px-0">
@@ -39,7 +42,9 @@ export function WorkspaceHeader({ query, onQueryChange, onNavigate }: { query: s
           <TooltipTrigger asChild>
             <SidebarTrigger className="ml-auto text-muted-foreground group-data-[collapsible=icon]:ml-0" />
           </TooltipTrigger>
-          <TooltipContent side="right">Collapse or expand · ⌘B</TooltipContent>
+          <TooltipContent side="right">
+            Collapse or expand <Kbd>{toggleShortcut}</Kbd>
+          </TooltipContent>
         </Tooltip>
       </div>
 
@@ -53,11 +58,11 @@ export function WorkspaceHeader({ query, onQueryChange, onNavigate }: { query: s
             onChange={(e) => onQueryChange(e.target.value)}
             placeholder="Search"
             aria-label="Search bots and groups"
-            className="h-9 rounded-[10px] pr-11 pl-8"
+            className="h-9 rounded-[10px] pr-16 pl-8"
           />
-          <Kbd className="pointer-events-none absolute top-1/2 right-2 -translate-y-1/2">⌘K</Kbd>
+          <Kbd className="pointer-events-none absolute top-1/2 right-2 -translate-y-1/2">{searchShortcut}</Kbd>
         </div>
-        <Button variant="ghost" size="icon-sm" className={RAIL_ONLY} onClick={openCommandPalette} aria-label="Search (⌘K)">
+        <Button variant="ghost" size="icon-sm" className={RAIL_ONLY} onClick={openCommandPalette} aria-label="Search" aria-keyshortcuts="Control+K Meta+K">
           <Search />
         </Button>
         <NewMenu onNavigate={onNavigate} />

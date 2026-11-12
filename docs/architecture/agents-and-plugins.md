@@ -1,6 +1,6 @@
 # How bots think and how plugins plug in
 
-**Status:** design, revised after the [architecture review of 2026-11-12](review-2026-11-12.md). Once you agree, it becomes ADR 0004 (agent runtime) and ADR 0005 (job queue), and we build it in the order at the end.
+**Status:** decided (2026-11-12). See §15 and ADRs [0004](../adr/0004-agent-runtime-and-safety.md), [0005](../adr/0005-job-queue-and-scaling.md), [0006](../adr/0006-repo-structure-plugins-and-project.md).
 **Reading time:** about 30 minutes. Every picture has a "how to read it" note.
 **Builds on:** [high-level.md](high-level.md) (§5 runtime, §8 plugins, §9 security, §10 approvals), rewritten for the Python stack in [ADR 0003](../adr/0003-python-backend.md).
 **See also:** [repo-structure.md](repo-structure.md) for where each piece of this lives in the repo.
@@ -45,7 +45,7 @@ These are the same terms as in [GLOSSARY.md](../../GLOSSARY.md); code and UI use
 | **Run** | One piece of work by one bot: from a trigger to a final answer. Can pause for days. |
 | **Job** | A small note in the queue that says "move run X forward". One run may need several jobs (start, resume after approval, retry). |
 | **Tool** | One thing a bot can do, like Gmail's `send_email`. Comes from a plugin. |
-| **Risk class** | How dangerous a tool call is: read · write-internal · external-send · spend · destructive · credential. |
+| **Risk class** | How dangerous a tool call is: read · write-internal · write-external · external-send · spend · destructive · credential. |
 | **Security level** | The bot's setting: Read only · Ask before acting · Autonomous within limits. |
 | **Policy** | Security level × risk class → **auto**, **ask** or **deny**. |
 | **Approval** | A paused tool call waiting for a person. |
@@ -130,18 +130,20 @@ A run stops with a clear message when it reaches any of these. All are settings 
 4. **execute:** the plugin's code, with a timeout, through the "started / succeeded" record of §4.1, so a retry never silently sends an email twice.
 5. **post_execute:** check the output schema, mark outside text as **tainted**, write the audit log and usage, and show a card in chat.
 
-### The policy table (what's built in the web app today)
+### The policy table (decided in [ADR 0004](../adr/0004-agent-runtime-and-safety.md))
 
-| Security level | read | write-internal | external-send | spend | destructive | credential |
-|---|---|---|---|---|---|---|
-| **Read only** | auto | auto | deny | deny | deny | deny |
-| **Ask before acting** (default) | auto | auto | ask | ask | ask | ask |
-| **Autonomous within limits** | auto | auto | auto | ask | ask | ask |
+| Security level | read | write-internal | write-external | external-send | spend | destructive | credential |
+|---|---|---|---|---|---|---|---|
+| **Read only** | auto | auto | deny | deny | deny | deny | deny |
+| **Ask before acting** (default) | auto | auto | ask | ask | ask | ask | ask |
+| **Autonomous within limits** | auto | auto | auto | auto | ask | ask | ask |
+
+*write-external* means a reversible change in another app: a draft, a label, a calendar hold.
 
 - **Fixed rules:** `credential` (logins, keys, sharing) is never automatic, and in v1 neither is `destructive`.
 - **Effective level** = the strictest of: organization ceiling, bot level, routine level.
 
-> **Open decision:** [high-level.md §9](high-level.md) proposes 4 levels and 7 risk classes (it adds *Trusted*, and splits *external-send* into *write-external* and *send*). The web app has 3 and 6, and GLOSSARY.md still says "L1–L4". My suggestion: keep **3 levels** (easier to understand), but add **write-external** as a 7th risk class. It covers reversible changes in other apps (drafts, labels, calendar holds) that *Autonomous* can do alone, while *send* still asks under *Ask before acting*. Then fix the glossary to match.
+> **Taint still applies:** after a run reads outside text, everything above *write-internal* asks, even for *Autonomous* bots (see below).
 
 ### Prompt injection: why "taint" matters
 
@@ -494,15 +496,13 @@ Plus the tables that procrastinate and LangGraph create for themselves (created 
 8. **MCP plugins** (T3), then **HTTP plugins** (T1), then the **marketplace index**.
 9. **Bot computers** (T4). **Sandboxed plugins** (T2) only if someone needs them.
 
-## 15. Decisions for you
+## 15. Decisions (accepted 2026-11-12)
 
-The full list, with reasons, is in the [review](review-2026-11-12.md#decisions-for-the-owner). The ones this document depends on:
+The owner accepted the review's recommendations. They are recorded as:
 
-1. **Security levels:** keep 3 levels and add *write-external* as a 7th risk class (recommended), or move to the 4-level table in high-level.md?
-2. **Job queue:** procrastinate, with the worker embedded in the API at first (recommended), or another queue?
-3. **One tool call at a time** (recommended), or allow parallel calls for `read`-only tools later as an optimisation?
-4. **Third-party plugins in v1:** MCP only, no sandbox tier (recommended)?
-5. **Run-level taint** with "Autonomous still asks after reading outside text" (recommended for v1)?
+- **[ADR 0004](../adr/0004-agent-runtime-and-safety.md): agent runtime and safety.** Nodes and the `tool_executions` record, so nothing runs twice. Atomic approvals. 3 levels with 7 risk classes. Strict run-level taint. Concurrency per chat. One tool call per step.
+- **[ADR 0005](../adr/0005-job-queue-and-scaling.md): job queue and scaling.** procrastinate on Postgres. The worker sits inside `apps/api` (embedded, then separate). `LISTEN/NOTIFY` + `run_events` for live updates. A direct database URL for the queue. Postgres for runtime tests. Row-level security before hosted launch.
+- **[ADR 0006](../adr/0006-repo-structure-plugins-and-project.md): repo, plugins and project.** The repo layout. A uv workspace and a separate plugin SDK. Only allowlisted plugins load. MCP-only third-party plugins in v1. Gmail with your own Google client first. DCO sign-off. release-please.
 
 ## Sources
 

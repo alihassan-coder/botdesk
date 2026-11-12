@@ -50,6 +50,8 @@ fix(web): approval card text no longer overflows on phones
 docs: explain how plugins are discovered
 ```
 
+Sign off every commit with `git commit -s`. It adds a `Signed-off-by:` line confirming you wrote the change and can contribute it (the [Developer Certificate of Origin](https://developercertificate.org)). There's no contributor licence agreement.
+
 Types: `feat` (new feature), `fix` (bug fix), `docs`, `test`, `refactor`, `chore`. Scopes: `web`, `api`, or leave it out.
 
 ### Code style

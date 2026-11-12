@@ -31,6 +31,7 @@ BotDesk is an open-source (MIT) team of always-on AI bots that work in your apps
 
 | Doc | What it covers |
 |---|---|
+| [architecture/README.md](architecture/README.md) | **Reading guide** for the architecture: what to read, in what order |
 | [architecture/high-level.md](architecture/high-level.md) | API, agent runtime, computers, plugins, data model, security levels, approvals, open owner questions (§16) |
 | [architecture/agents-and-plugins.md](architecture/agents-and-plugins.md) | **Start here for bots and plugins:** how a run works, the tool pipeline, approvals, triggers, memory, the plugin platform and **scaling** (laptop → API + worker → many workers), with diagrams |
 | [architecture/review-2026-11-12.md](architecture/review-2026-11-12.md) | Critical review of the design: ranked findings, what's already good, decisions for the owner |
@@ -38,6 +39,9 @@ BotDesk is an open-source (MIT) team of always-on AI bots that work in your apps
 | [adr/0001-product-scope-and-deployment.md](adr/0001-product-scope-and-deployment.md) | ADR 0001: product scope and deployment |
 | [adr/0002-grok-bot-parity-and-plugin-platform.md](adr/0002-grok-bot-parity-and-plugin-platform.md) | ADR 0002: Grok Bot parity, plugin integrations, security levels, approvals |
 | [adr/0003-python-backend.md](adr/0003-python-backend.md) | ADR 0003: Python backend (FastAPI, SQLAlchemy, Alembic, LangGraph, mem0) |
+| [adr/0004-agent-runtime-and-safety.md](adr/0004-agent-runtime-and-safety.md) | ADR 0004: how runs work, approvals, security levels, taint, concurrency |
+| [adr/0005-job-queue-and-scaling.md](adr/0005-job-queue-and-scaling.md) | ADR 0005: job queue (procrastinate), worker, live updates, scaling stages |
+| [adr/0006-repo-structure-plugins-and-project.md](adr/0006-repo-structure-plugins-and-project.md) | ADR 0006: repo layout, plugin SDK, MCP-only plugins, DCO, releases |
 | [backend/README.md](backend/README.md) | Backend guide: run it, folders, request flow, routes, security |
 
 ## Building

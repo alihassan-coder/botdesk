@@ -17,8 +17,11 @@ The words BotDesk uses for its domain. Use these exact terms in code, UI copy, d
 | **Handoff** | One bot passing a task to another bot, visible in the thread. |
 | **Run** | One durable job a bot executes (a workflow). It survives restarts and can pause for an approval. |
 | **Approval** | A run paused on a risky action. A member sees the exact action and approves, denies, or edits it. |
-| **Risk class** | How dangerous a tool action is: `read`, `write-internal`, `external-send`, `spend`, `destructive`, `credential`. |
-| **Security level** | L1–L4 (read-only → autonomous within limits). Maps risk classes to `auto` / `ask` / `deny`. The strictest of org, bot and routine wins. |
+| **Risk class** | How dangerous a tool action is: `read`, `write-internal`, `write-external` (a reversible change in another app: draft, label, calendar hold), `external-send`, `spend`, `destructive`, `credential`. |
+| **Security level** | One of three: *Read only*, *Ask before acting* (default), *Autonomous within limits*. Maps each risk class to `auto` / `ask` / `deny` ([ADR 0004](docs/adr/0004-agent-runtime-and-safety.md)). The strictest of org, bot and routine wins. |
+| **Taint** | A mark on a run once it has read outside text (an email, a web page, an MCP result). After that, every action above `write-internal` asks for approval, even for Autonomous bots. |
+| **Job** | A unit of background work in the queue (procrastinate): run a bot, expire an approval, fire a routine. |
+| **Run event** | One step of a run's progress (a token, a tool call, an approval card), saved in `run_events` and streamed to the chat. |
 | **Routine** | A saved, repeatable job, either recorded by **follow along** (the bot watches a member do it) or created from chat, run on a schedule or trigger. |
 | **Trigger** | What starts a run without a message: schedule, new email, webhook, follow-up timer, stalled thread. |
 | **Plugin** | A self-contained integration described by a manifest: auth, tools (each with a risk class), triggers, settings. Gmail is the first. A remote MCP server is one kind of plugin. |

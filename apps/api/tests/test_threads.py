@@ -117,3 +117,13 @@ async def test_removing_a_bot_removes_its_chats(client: httpx.AsyncClient) -> No
     thread = (await client.post(f"{org}/threads/dm", json={"botId": bot["id"]})).json()
     await client.delete(f"{org}/bots/{bot['id']}")
     assert (await client.get(f"{org}/threads/{thread['id']}")).status_code == 404
+
+
+async def test_renaming_a_bot_renames_its_chats(client: httpx.AsyncClient) -> None:
+    org, bot = await _org_with_bot(client)
+    thread = (await client.post(f"{org}/threads/dm", json={"botId": bot["id"]})).json()
+
+    await client.patch(f"{org}/bots/{bot['id']}", json={"name": "Mail Sorter"})
+
+    assert (await client.get(f"{org}/threads/{thread['id']}")).json()["title"] == "Mail Sorter"
+    assert (await client.get(f"{org}/threads")).json()[0]["title"] == "Mail Sorter"

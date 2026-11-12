@@ -43,8 +43,9 @@ def message_out(message: Message) -> MessageOut:
 
 
 async def thread_outs(db: AsyncSession, threads: list[Thread]) -> list[ThreadOut]:
-    """Threads as the API shows them. Two queries in total, however many threads:
-    one for everyone in them, one for each thread's last message."""
+    """Threads as the API shows them. Three queries in total, however many threads: everyone
+    in them, each thread's last message, and the names of the DMs' bots. A DM is titled with
+    its bot's current name, so renaming a bot renames its chats."""
     if not threads:
         return []
     ids = [thread.id for thread in threads]
@@ -56,12 +57,18 @@ async def thread_outs(db: AsyncSession, threads: list[Thread]) -> list[ThreadOut
     ):
         participants[thread_id].append(ParticipantOut.model_validate({"type": kind, "id": participant_id}))
     previews = await _last_message_previews(db, ids)
+    dm_bots = {thread.bot_id for thread in threads if thread.kind == "dm" and thread.bot_id}
+    bot_names: dict[uuid.UUID | None, str] = {}
+    if dm_bots:
+        bot_names = {
+            bot_id: name for bot_id, name in await db.execute(select(Bot.id, Bot.name).where(Bot.id.in_(dm_bots)))
+        }
     return [
         ThreadOut.model_validate(
             {
                 "id": thread.id,
                 "kind": thread.kind,
-                "title": thread.title,
+                "title": bot_names.get(thread.bot_id, thread.title) if thread.bot_id else thread.title,
                 "bot_id": thread.bot_id,
                 "participants": participants[thread.id],
                 "last_message_at": thread.last_message_at,

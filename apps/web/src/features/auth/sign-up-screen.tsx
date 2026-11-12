@@ -2,6 +2,7 @@
 
 import { useState, useTransition } from "react";
 import Link from "next/link";
+import { ExploreDemoButton } from "./explore-demo-button";
 import { Button } from "@/components/ui/button";
 import { Field, FieldDescription, FieldGroup, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
@@ -67,6 +68,8 @@ export function SignUpScreen() {
           <p className="text-xs text-muted-foreground">By creating an account you agree to the terms and privacy policy.</p>
         </FieldGroup>
       </form>
+
+      <ExploreDemoButton />
 
       <p className="text-center text-sm text-muted-foreground">
         Already have an account?{" "}

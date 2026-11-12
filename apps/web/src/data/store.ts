@@ -8,6 +8,8 @@
  *   apps/api (see `./api`). Chats aren't on the API yet: each bot gets an empty chat,
  *   and the demo's threads, approvals, routines and memories are left out.
  * - Not set (tests, e2e, demos): everything is the in-memory mock, with fake bot replies.
+ * Guest mode ("Explore the demo") uses the mock in either case, so people can look
+ * around without an account; it never calls the API.
  * Screens can't tell the difference: they use the hooks and actions below either way.
  */
 import { useCallback, useRef, useSyncExternalStore } from "react";
@@ -35,8 +37,8 @@ export type AuthStatus = "unknown" | "signed-in" | "signed-out";
 /** What an action that can fail returns: screens show `error` as is. */
 export type ActionResult = { ok: true } | { ok: false; error: string };
 
-/** True when there's no API to talk to, so the demo accounts and mock data are in use. */
-export const isDemoMode = () => apiBaseUrl() === "";
+/** True when the mock data is in use: there's no API to talk to, or you're a guest. */
+export const isDemoMode = () => apiBaseUrl() === "" || state.guest;
 
 interface State {
   /** The current organization: everything below belongs to it. */
@@ -48,6 +50,8 @@ interface State {
   invitations: Invitation[];
   currentUserId: string;
   authStatus: AuthStatus;
+  /** Exploring the demo without an account. Nothing is saved, and the API is never called. */
+  guest: boolean;
   /** MOCK: email → password. Replaced by Better Auth on the API. */
   passwords: Record<string, string>;
   bots: Bot[];
@@ -74,6 +78,7 @@ function seed(): State {
     invitations: [],
     currentUserId: mock.currentUserId,
     authStatus: "unknown",
+    guest: false,
     passwords: mock.mockPasswords,
     bots: mock.bots,
     botsLoading: false,
@@ -265,6 +270,40 @@ async function loadOrgPeople(org: Membership) {
   });
 }
 
+/* ---------- Guest mode ----------
+ * A guest is Ali in the demo team, for this browser session only (sessionStorage), so a
+ * reload keeps you exploring but closing the tab ends it. Entering and leaving both start
+ * from fresh mock data, so a real account never sees demo data or the other way round.
+ */
+const GUEST_KEY = "botdesk.guest";
+
+function rememberGuest(isGuest: boolean) {
+  try {
+    if (isGuest) sessionStorage.setItem(GUEST_KEY, "1");
+    else sessionStorage.removeItem(GUEST_KEY);
+  } catch {}
+}
+
+function wasGuest() {
+  try {
+    return sessionStorage.getItem(GUEST_KEY) === "1";
+  } catch {
+    return false;
+  }
+}
+
+function startGuestSession() {
+  cancelMockTimers();
+  set(() => ({ ...seed(), guest: true, authStatus: "signed-in" }));
+  rememberGuest(true);
+}
+
+function leaveGuestMode() {
+  cancelMockTimers();
+  set(() => seed());
+  rememberGuest(false);
+}
+
 /* restoreSession can be asked for twice at once (auth gate + sign-in page); share one request. */
 let restoring: Promise<void> | null = null;
 
@@ -308,6 +347,7 @@ const mockAuth = {
 const authActions = {
   /** Called once when the app loads: are we already signed in on this device? */
   async restoreSession(): Promise<void> {
+    if (wasGuest()) return startGuestSession();
     if (isDemoMode()) return mockAuth.restoreSession();
     restoring ??= authApi
       .me()
@@ -316,7 +356,13 @@ const authActions = {
     return restoring;
   },
 
+  /** "Explore the demo": look around as Ali in the demo team, without an account. */
+  async enterGuestMode(): Promise<void> {
+    startGuestSession();
+  },
+
   async signIn(email: string, password: string): Promise<ActionResult> {
+    if (state.guest) leaveGuestMode();
     if (isDemoMode()) return mockAuth.signIn(email, password);
     try {
       startApiSession(await authApi.signIn(email.trim(), password));
@@ -327,6 +373,7 @@ const authActions = {
   },
 
   async signUp(input: { name: string; email: string; password: string }): Promise<ActionResult> {
+    if (state.guest) leaveGuestMode();
     if (isDemoMode()) return mockAuth.signUp(input);
     try {
       startApiSession(await authApi.signUp({ ...input, name: input.name.trim(), email: input.email.trim() }));
@@ -337,6 +384,10 @@ const authActions = {
   },
 
   async signOut(): Promise<void> {
+    if (state.guest) {
+      leaveGuestMode();
+      return set((st) => ({ ...st, authStatus: "signed-out" }));
+    }
     if (isDemoMode()) saveMockSession(null);
     // Signed out here even if the API can't be reached; the cookie expires on its own.
     else await authApi.signOut().catch(() => {});
@@ -777,6 +828,7 @@ const newestFirst = (a: Thread, b: Thread) => b.lastMessageAt.localeCompare(a.la
 export const useOrg = () => useStore(useCallback((s: State) => s.org, []));
 export const useOrgs = () => useStore(useCallback((s: State) => s.orgs, []));
 export const useAuthStatus = () => useStore(useCallback((s: State) => s.authStatus, []));
+export const useIsGuest = () => useStore(useCallback((s: State) => s.guest, []));
 export const useCurrentUser = () => useStore(useCallback((s: State) => s.users.find((u) => u.id === s.currentUserId)!, []));
 export const useUser = (id?: string) => useStore(useCallback((s: State) => s.users.find((u) => u.id === id), [id]));
 export const useBot = (id?: string) => useStore(useCallback((s: State) => s.bots.find((b) => b.id === id), [id]));

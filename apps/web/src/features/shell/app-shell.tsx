@@ -6,6 +6,7 @@ import { CommandPalette } from "@/features/command-palette/command-palette";
 import { useApplySavedAccent } from "@/features/settings/accent";
 import { AppSidebar } from "./app-sidebar";
 import { AuthGate } from "./auth-gate";
+import { GuestBanner } from "./guest-banner";
 
 /**
  * The frame around every signed-in page: the bot sidebar on the left, the page on the right.
@@ -25,7 +26,11 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         className="h-svh"
       >
         <AppSidebar />
-        <SidebarInset className="min-w-0 overflow-hidden">{children}</SidebarInset>
+        <SidebarInset className="min-w-0 overflow-hidden">
+          <GuestBanner />
+          {/* The page fills what's left under the banner. */}
+          <div className="min-h-0 flex-1">{children}</div>
+        </SidebarInset>
         <CommandPalette />
       </SidebarProvider>
     </AuthGate>

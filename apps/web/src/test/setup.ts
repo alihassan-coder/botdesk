@@ -46,5 +46,6 @@ afterEach(() => {
   cleanup();
   actions.reset();
   localStorage.clear();
+  sessionStorage.clear();
   vi.useRealTimers();
 });

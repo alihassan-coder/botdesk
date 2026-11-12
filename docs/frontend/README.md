@@ -82,6 +82,7 @@ NEXT_PUBLIC_API_URL=http://localhost:8000   # run the API with `pnpm dev:api`
 - `src/data/api/client.ts` is the fetch wrapper: sends the cookie (`credentials: "include"`) and turns `{detail}` errors (and 422 lists) into an `ApiError` whose message screens show as is.
 - `src/data/api/botdesk.ts` lists every route the web app calls; `map.ts` turns API shapes into `types.ts` shapes.
 - Store actions that can fail return `{ ok: true } | { ok: false, error }` and are async in both modes.
+- **Guest mode.** "Explore the demo, no account needed" on /sign-in and /sign-up opens the mock data as Ali in the demo team, in either mode, and never calls the API. `isDemoMode()` is true for guests. A banner on every app page says nothing is saved; "Create an account" signs the guest out and opens /sign-up. It lasts for the browser session (`sessionStorage` `botdesk.guest`), so a reload stays a guest. Entering and leaving both reset the mock store, so real and demo data never mix.
 - **Tests and e2e always run in mock mode.** Vitest doesn't load `.env.local`, and the Playwright web server sets `NEXT_PUBLIC_API_URL` to empty for its build. Don't set it there.
 - Every page under `(app)/` sits behind `AuthGate` (`features/shell/auth-gate.tsx`). If there is no session, it sends you to `/sign-in?next=<where you were>`.
 

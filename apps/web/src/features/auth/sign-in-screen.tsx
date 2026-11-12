@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Field, FieldGroup, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
 import { actions, isDemoMode } from "@/data/store";
+import { ExploreDemoButton } from "./explore-demo-button";
 import { FormError } from "./form-error";
 import { PasswordInput } from "./password-input";
 import { useSignedInRedirect } from "./use-signed-in-redirect";
@@ -63,6 +64,7 @@ export function SignInScreen() {
       <Button variant="outline" size="lg" onClick={() => toast("Google sign-in arrives with accounts on the API.")}>
         Continue with Google
       </Button>
+      <ExploreDemoButton />
 
       <p className="text-center text-sm text-muted-foreground">
         New to botdesk?{" "}

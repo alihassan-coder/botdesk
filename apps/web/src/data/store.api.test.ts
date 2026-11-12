@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { actions, getStoreSnapshot as state } from "./store";
+import { actions, getStoreSnapshot as state, isDemoMode } from "./store";
 
 /*
  * The store when NEXT_PUBLIC_API_URL is set: auth and the organization come from the API.
@@ -252,5 +252,46 @@ describe("bots on the API", () => {
     await actions.restoreSession();
     await actions.switchOrg("o2");
     await vi.waitFor(() => expect(state().bots.map((b) => b.name)).toEqual(["Globo"]));
+  });
+});
+
+describe("guest mode, even with the API set", () => {
+  it("enterGuestMode opens the demo as Ali without calling the API, for this browser session", async () => {
+    await actions.enterGuestMode();
+    expect(calls).toEqual([]);
+    expect(isDemoMode()).toBe(true);
+    expect(state()).toMatchObject({ authStatus: "signed-in", guest: true });
+    expect(currentUser()?.email).toBe("ali@acme.dev");
+    expect(state().bots.some((b) => b.name === "Chief")).toBe(true);
+    expect(sessionStorage.getItem("botdesk.guest")).toBe("1");
+  });
+
+  it("a reload stays in guest mode", async () => {
+    sessionStorage.setItem("botdesk.guest", "1");
+    await actions.restoreSession();
+    expect(calls).toEqual([]);
+    expect(state().guest).toBe(true);
+  });
+
+  it("signing out leaves guest mode and throws the demo's changes away", async () => {
+    await actions.enterGuestMode();
+    await actions.removeBot("b_chief");
+    await actions.signOut();
+    expect(state()).toMatchObject({ authStatus: "signed-out", guest: false });
+    expect(isDemoMode()).toBe(false);
+    expect(sessionStorage.getItem("botdesk.guest")).toBeNull();
+    expect(state().bots.some((b) => b.id === "b_chief")).toBe(true);
+    expect(calls).toEqual([]);
+  });
+
+  it("signing in for real after exploring never mixes in demo data", async () => {
+    routes["GET /api/v1/orgs/o1/bots"] = { status: 200, body: [] };
+    await actions.enterGuestMode();
+    await actions.signIn("zara@example.com", "long-enough");
+    expect(state().guest).toBe(false);
+    expect(state().org.id).toBe("o1");
+    expect(calls).toContain("POST /api/v1/auth/sign-in");
+    await vi.waitFor(() => expect(state().botsLoading).toBe(false));
+    expect(state().bots).toEqual([]);
   });
 });

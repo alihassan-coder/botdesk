@@ -76,3 +76,20 @@ signedInTest("signing out returns you to sign in, and the app stays locked", asy
   await page.goto("/chat/t_chief");
   await expect(page).toHaveURL(/\/sign-in\?next=/);
 });
+
+test("a guest explores the demo, stays a guest on reload, and leaves to create an account", async ({ page }) => {
+  await page.goto("/sign-in");
+  await page.getByRole("button", { name: /Explore the demo/ }).click();
+
+  const banner = page.getByRole("status").filter({ hasText: "You're exploring a demo" });
+  await expect(banner).toBeVisible();
+  await expect(page.locator("[data-sidebar=sidebar]").getByRole("link", { name: /Chief/ })).toBeVisible();
+
+  await page.reload();
+  await expect(banner).toBeVisible();
+
+  await banner.getByRole("button", { name: "Create an account" }).click();
+  await expect(page).toHaveURL(/\/sign-up$/);
+  await page.goto("/");
+  await expect(page).toHaveURL(/\/sign-in/);
+});

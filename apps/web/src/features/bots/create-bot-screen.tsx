@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
@@ -9,7 +9,7 @@ import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
-import { actions, useModels, useTemplates, type NewBotInput } from "@/data/store";
+import { actions, isDemoMode, useModels, useTemplates, type NewBotInput } from "@/data/store";
 import { PageHeader } from "@/features/shell/page-header";
 import { BotAvatar } from "./bot-avatar";
 import { BotPreview } from "./bot-preview";
@@ -28,15 +28,19 @@ export function CreateBotScreen() {
   const templates = useTemplates();
   const [bot, setBot] = useState(BLANK);
   const [showErrors, setShowErrors] = useState(false);
+  const [creating, startCreating] = useTransition();
   const update = <K extends keyof NewBotInput>(key: K, value: NewBotInput[K]) => setBot((b) => ({ ...b, [key]: value }));
 
   const missing = { name: !bot.name.trim(), role: !bot.role.trim() };
 
   function create() {
     if (missing.name || missing.role) return setShowErrors(true);
-    const threadId = actions.createBot({ ...bot, name: bot.name.trim(), role: bot.role.trim() });
-    toast.success(`${bot.name.trim()} is ready. Say hello.`);
-    router.push(`/chat/${threadId}`);
+    startCreating(async () => {
+      const result = await actions.createBot({ ...bot, name: bot.name.trim(), role: bot.role.trim() });
+      if (!result.ok) return void toast.error(result.error);
+      toast.success(`${bot.name.trim()} is ready. Say hello.`);
+      router.push(`/chat/${result.threadId}`);
+    });
   }
 
   return (
@@ -98,7 +102,8 @@ export function CreateBotScreen() {
                   </SelectContent>
                 </Select>
               </Field>
-              <Field>
+              {/* Computers aren't on the API yet, so only the demo offers one. */}
+              {isDemoMode() && <Field>
                 <FieldLabel>Computer</FieldLabel>
                 <ToggleGroup type="single" variant="outline" value={bot.computerMode} onValueChange={(v) => v && update("computerMode", v as NewBotInput["computerMode"])} className="w-full">
                   <ToggleGroupItem value="own" className="flex-1">Its own</ToggleGroupItem>
@@ -106,7 +111,7 @@ export function CreateBotScreen() {
                   <ToggleGroupItem value="none" className="flex-1">None</ToggleGroupItem>
                 </ToggleGroup>
                 <FieldDescription>A computer lets it use websites and apps that have no integration.</FieldDescription>
-              </Field>
+              </Field>}
             </Section>
 
             <Section title="What it may do">
@@ -121,7 +126,7 @@ export function CreateBotScreen() {
 
           <aside className="flex flex-col gap-3 lg:sticky lg:top-8 lg:self-start">
             <BotPreview bot={bot} />
-            <Button type="submit" size="lg">Create bot</Button>
+            <Button type="submit" size="lg" disabled={creating}>{creating ? "Creating…" : "Create bot"}</Button>
             <Button type="button" variant="ghost" onClick={() => router.back()}>Cancel</Button>
           </aside>
         </form>

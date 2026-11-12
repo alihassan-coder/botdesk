@@ -4,9 +4,11 @@ import { Progress } from "@/components/ui/progress";
 import { Switch } from "@/components/ui/switch";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { formatUsd } from "@/lib/format";
-import { actions, useBotMemories, useBotRoutines, useModel } from "@/data/store";
+import { actions, useBotMemories, useBotRoutines, useCurrentUser, useModel } from "@/data/store";
 import type { Bot } from "@/data/types";
 import { BotAvatar } from "@/features/bots/bot-avatar";
+import { EditBotDialog } from "@/features/bots/edit-bot-dialog";
+import { RemoveBotButton } from "@/features/bots/remove-bot-button";
 import { securityLabel } from "@/features/bots/security-levels";
 
 /** The details pane for a DM: who this bot is, its routines, what it remembers, its computer. */
@@ -31,7 +33,9 @@ export function BotDetails({ bot }: { bot: Bot }) {
 
 function Profile({ bot }: { bot: Bot }) {
   const model = useModel(bot.modelId);
-  const spentShare = Math.min(100, (bot.spentThisMonthUsd / bot.monthlyBudgetUsd) * 100);
+  // Any member can edit a bot; removing one takes an owner or admin.
+  const canRemove = useCurrentUser().role !== "member";
+  const spentShare = bot.monthlyBudgetUsd > 0 ? Math.min(100, (bot.spentThisMonthUsd / bot.monthlyBudgetUsd) * 100) : 0;
 
   return (
     <div className="flex flex-col gap-5">
@@ -41,11 +45,15 @@ function Profile({ bot }: { bot: Bot }) {
           <h2 className="text-lg font-semibold tracking-tight">{bot.name}</h2>
           <p className="text-sm text-muted-foreground">{bot.role} · @{bot.handle}</p>
         </div>
-        <p className="text-sm leading-relaxed">{bot.description}</p>
+        {bot.description && <p className="text-sm leading-relaxed">{bot.description}</p>}
+        <div className="flex gap-2">
+          <EditBotDialog bot={bot} />
+          {canRemove && <RemoveBotButton bot={bot} />}
+        </div>
       </div>
       <dl className="grid grid-cols-[110px_1fr] gap-x-3 gap-y-2.5 text-sm">
         <dt className="text-muted-foreground">Model</dt>
-        <dd>{model?.name ?? "Unknown"}</dd>
+        <dd>{model?.name ?? (bot.modelId || "Organization default")}</dd>
         <dt className="text-muted-foreground">Security level</dt>
         <dd>{securityLabel(bot.securityLevel)}</dd>
         <dt className="text-muted-foreground">Computer</dt>

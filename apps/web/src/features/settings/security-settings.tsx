@@ -18,6 +18,11 @@ const DECISION: Record<PolicyDecision, { label: string; className: string }> = {
   deny: { label: "Blocked", className: "bg-muted text-muted-foreground" },
 };
 
+async function changeLevel(botId: string, securityLevel: SecurityLevel) {
+  const result = await actions.editBot(botId, { securityLevel });
+  if (!result.ok) toast.error(result.error);
+}
+
 /** Settings → Security: the org default, each bot's level, and exactly what every level allows. */
 export function SecuritySettings() {
   const bots = useBots();
@@ -41,7 +46,7 @@ export function SecuritySettings() {
             <li key={bot.id} className="flex items-center gap-3 p-3">
               <BotAvatar name={bot.name} color={bot.avatarColor} size="sm" />
               <span className="min-w-0 flex-1 truncate text-sm font-medium">{bot.name}</span>
-              <Select value={bot.securityLevel} onValueChange={(v) => actions.updateBot(bot.id, { securityLevel: v as SecurityLevel })}>
+              <Select value={bot.securityLevel} onValueChange={(v) => changeLevel(bot.id, v as SecurityLevel)}>
                 <SelectTrigger className="w-40 sm:w-56" aria-label={`Security level for ${bot.name}`}><SelectValue /></SelectTrigger>
                 <SelectContent>
                   {SECURITY_LEVELS.map((l) => <SelectItem key={l.value} value={l.value}>{l.label}</SelectItem>)}

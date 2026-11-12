@@ -4,17 +4,18 @@
  * Client-side data store for the UI.
  *
  * Two modes, picked by NEXT_PUBLIC_API_URL:
- * - Set: sign-in, your organizations, their members and invitations come from apps/api
- *   (see `./api`). Bots, threads and everything else are still mock data for now.
+ * - Set: sign-in, your organizations, their members, invitations and bots come from
+ *   apps/api (see `./api`). Chats aren't on the API yet: each bot gets an empty chat,
+ *   and the demo's threads, approvals, routines and memories are left out.
  * - Not set (tests, e2e, demos): everything is the in-memory mock, with fake bot replies.
  * Screens can't tell the difference: they use the hooks and actions below either way.
  */
 import { useCallback, useRef, useSyncExternalStore } from "react";
 import { makeHandle } from "@/lib/handle";
 import { parseMentions } from "@/lib/mentions";
-import { authApi, inviteApi, orgApi } from "./api/botdesk";
+import { authApi, botApi, inviteApi, orgApi } from "./api/botdesk";
 import { ApiError, apiBaseUrl } from "./api/client";
-import { toInvitation, toOrg, toUser } from "./api/map";
+import { toApiBot, toBot, toInvitation, toOrg, toUser } from "./api/map";
 import type { ApiMe } from "./api/types";
 import * as mock from "./mock/fixtures";
 import type { Approval, ApprovalStatus, Bot, Invitation, Membership, Message, Org, Participant, ProviderCredential, Routine, Thread, User } from "./types";
@@ -50,6 +51,8 @@ interface State {
   /** MOCK: email → password. Replaced by Better Auth on the API. */
   passwords: Record<string, string>;
   bots: Bot[];
+  /** True while the current org's bots are on their way from the API. */
+  botsLoading: boolean;
   threads: Thread[];
   messages: Message[];
   approvals: Approval[];
@@ -73,6 +76,7 @@ function seed(): State {
     authStatus: "unknown",
     passwords: mock.mockPasswords,
     bots: mock.bots,
+    botsLoading: false,
     threads: mock.threads,
     messages: mock.messages,
     approvals: mock.approvals,
@@ -203,8 +207,43 @@ function enterOrg(org: Membership) {
     org: toOrg(org),
     users: st.users.filter((u) => u.id === st.currentUserId).map((u) => ({ ...u, role: org.role })),
     invitations: [],
+    // The demo's chats, approvals, routines and memories belong to the demo bots, not to this org.
+    ...withBots(st, []),
+    messages: [],
+    approvals: [],
+    routines: [],
+    memories: [],
+    botsLoading: true,
   }));
   void loadOrgPeople(org);
+  void loadBots(org);
+}
+
+async function loadBots(org: Membership) {
+  const bots = await botApi.list(org.id).catch(() => null);
+  set((st) => {
+    if (st.org.id !== org.id) return st; // switched org while loading
+    return { ...st, ...withBots(st, bots?.map(toBot) ?? []), botsLoading: false };
+  });
+}
+
+/*
+ * Chats aren't on the API yet. So every real bot gets an empty DM here, which
+ * keeps it in the sidebar and gives its details a page; the chat says "coming soon".
+ */
+const dmId = (botId: string) => `dm-${botId}`;
+
+function dmFor(bot: Bot, userId: string): Thread {
+  return {
+    id: dmId(bot.id), kind: "dm", title: bot.name, botId: bot.id,
+    participants: [{ type: "user", id: userId }, { type: "bot", id: bot.id }],
+    lastMessageAt: bot.createdAt, lastMessagePreview: bot.role || "Just hired", unread: 0,
+  };
+}
+
+/** API mode: the bots, and one empty chat for each. */
+function withBots(st: State, bots: Bot[]): Pick<State, "bots" | "threads"> {
+  return { bots, threads: bots.map((b) => dmFor(b, st.currentUserId)) };
 }
 
 /** Members, plus pending invites for admins. */
@@ -503,43 +542,70 @@ export const actions = {
   },
 
   /**
-   * Creates a bot and its DM. The bot speaks first, so the chat never opens empty.
-   * Returns the new thread's id so the screen can open it.
+   * Creates a bot and its DM, and returns the DM's id so the screen can open it.
+   * MOCK: the bot speaks first, so the chat never opens empty.
    */
-  createBot(input: NewBotInput) {
-    const botId = `b_${id()}`;
-    const threadId = `t_${id()}`;
-    const handle = makeHandle(input.name, [...state.bots.map((b) => b.handle), ...state.users.map((u) => u.handle)]);
-    const hello = `Hi! I'm ${input.name}. ${input.description || input.role} What should I work on first?`;
-
-    set((st) => ({
-      ...st,
-      bots: [
-        ...st.bots,
-        { ...input, id: botId, handle, status: "idle", statusText: "Just hired", connectionIds: [], createdAt: now(), spentThisMonthUsd: 0 },
-      ],
-      threads: [
-        {
-          id: threadId, kind: "dm", title: input.name, botId,
-          participants: [{ type: "user", id: st.currentUserId }, { type: "bot", id: botId }],
-          lastMessageAt: now(), lastMessagePreview: hello, unread: 0,
-        },
-        ...st.threads,
-      ],
-      messages: [...st.messages, { id: id(), threadId, author: { type: "bot", id: botId }, createdAt: now(), parts: [{ type: "text", text: hello }] }],
-    }));
-    return threadId;
+  async createBot(input: NewBotInput): Promise<ActionResult & { threadId?: string }> {
+    if (isDemoMode()) return { ok: true, threadId: createMockBot(input) };
+    try {
+      const bot = toBot(await botApi.create(state.org.id, toApiBot(input)));
+      set((st) => ({ ...st, ...withBots(st, [...st.bots, bot]) }));
+      return { ok: true, threadId: dmId(bot.id) };
+    } catch (error) {
+      return failure(error);
+    }
   },
 
   /** Hire a ready-made bot from the marketplace, with safe defaults. */
-  createBotFromTemplate(templateId: string) {
+  async createBotFromTemplate(templateId: string): Promise<ActionResult & { threadId?: string }> {
     const t = state.templates.find((x) => x.id === templateId);
-    if (!t) return null;
+    if (!t) return { ok: false, error: "That bot isn't in the marketplace any more." };
     return actions.createBot({
       name: t.name, role: t.role, description: t.description, avatarColor: t.avatarColor,
       modelId: "m_claude", securityLevel: "ask-before-acting", computerMode: "own",
       instructions: "", monthlyBudgetUsd: 20,
     });
+  },
+
+  /** Change a bot's profile, model, limits or instructions. */
+  async editBot(botId: string, patch: Partial<NewBotInput>): Promise<ActionResult> {
+    if (isDemoMode()) {
+      actions.updateBot(botId, patch);
+      return { ok: true };
+    }
+    try {
+      const saved = toBot(await botApi.update(state.org.id, botId, toApiBot(patch)));
+      set((st) => ({ ...st, ...withBots(st, st.bots.map((b) => (b.id === botId ? saved : b))) }));
+      return { ok: true };
+    } catch (error) {
+      return failure(error);
+    }
+  },
+
+  /** Remove a bot (owners and admins), with its DM and anything waiting on it. */
+  async removeBot(botId: string): Promise<ActionResult> {
+    try {
+      if (!isDemoMode()) await botApi.remove(state.org.id, botId);
+    } catch (error) {
+      return failure(error);
+    }
+    set((st) => {
+      // It leaves its groups too; a group with no bots left has no one to talk to, so it goes.
+      const threads = st.threads
+        .filter((t) => !(t.kind === "dm" && t.botId === botId))
+        .map((t) => ({ ...t, participants: t.participants.filter((p) => !(p.type === "bot" && p.id === botId)) }))
+        .filter((t) => t.participants.some((p) => p.type === "bot"));
+      const kept = new Set(threads.map((t) => t.id));
+      return {
+        ...st,
+        bots: st.bots.filter((b) => b.id !== botId),
+        threads,
+        messages: st.messages.filter((m) => kept.has(m.threadId)),
+        approvals: st.approvals.filter((a) => a.botId !== botId),
+        routines: st.routines.filter((r) => r.botId !== botId),
+      };
+    });
+    return { ok: true };
   },
 
   /** Saves a routine and has its bot confirm in their chat, the way it would after "do this every week". */
@@ -589,6 +655,32 @@ export const actions = {
     set(() => seed());
   },
 };
+
+/** MOCK: a new bot and its DM, where it says hello first. Returns the DM's id. */
+function createMockBot(input: NewBotInput) {
+  const botId = `b_${id()}`;
+  const threadId = `t_${id()}`;
+  const handle = makeHandle(input.name, [...state.bots.map((b) => b.handle), ...state.users.map((u) => u.handle)]);
+  const hello = `Hi! I'm ${input.name}. ${input.description || input.role} What should I work on first?`;
+
+  set((st) => ({
+    ...st,
+    bots: [
+      ...st.bots,
+      { ...input, id: botId, handle, status: "idle", statusText: "Just hired", connectionIds: [], createdAt: now(), spentThisMonthUsd: 0 },
+    ],
+    threads: [
+      {
+        id: threadId, kind: "dm", title: input.name, botId,
+        participants: [{ type: "user", id: st.currentUserId }, { type: "bot", id: botId }],
+        lastMessageAt: now(), lastMessagePreview: hello, unread: 0,
+      },
+      ...st.threads,
+    ],
+    messages: [...st.messages, { id: id(), threadId, author: { type: "bot", id: botId }, createdAt: now(), parts: [{ type: "text", text: hello }] }],
+  }));
+  return threadId;
+}
 
 /* ---------- Mock timers ---------- */
 // Fake bot replies arrive on timers. They're tracked so reset() can cancel them;
@@ -712,6 +804,7 @@ export const useBotMemories = (botId?: string) =>
 
 /* Whole-collection hooks for the app pages (marketplace, settings, approvals…). */
 export const useBots = () => useStore(useCallback((s: State) => s.bots, []));
+export const useBotsLoading = () => useStore(useCallback((s: State) => s.botsLoading, []));
 export const useUsers = () => useStore(useCallback((s: State) => s.users, []));
 export const useInvitations = () => useStore(useCallback((s: State) => s.invitations, []));
 export const useModels = () => useStore(useCallback((s: State) => s.models, []));

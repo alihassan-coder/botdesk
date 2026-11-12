@@ -1,6 +1,7 @@
 import { Suspense } from "react";
 import { Skeleton } from "@/components/ui/skeleton";
-import { useThreads } from "@/data/store";
+import Link from "next/link";
+import { useBotsLoading, useThreads } from "@/data/store";
 import type { Thread } from "@/data/types";
 import { ThreadRow } from "./thread-row";
 
@@ -22,8 +23,11 @@ export function ThreadList({ query = "", onNavigate }: { query?: string; onNavig
 
 function ThreadSections({ query, onNavigate }: { query: string; onNavigate?: () => void }) {
   const threads = useThreads();
+  const loading = useBotsLoading();
   const matches = threads.filter((t) => t.title.toLowerCase().includes(query.trim().toLowerCase()));
 
+  if (loading && threads.length === 0) return <ThreadListSkeleton />;
+  if (threads.length === 0) return <NoBotsYet onNavigate={onNavigate} />;
   if (matches.length === 0) {
     return <p className="px-3 py-6 text-center text-sm text-muted-foreground">No bots or groups match “{query}”.</p>;
   }
@@ -50,6 +54,21 @@ function Section({ title, threads, onNavigate }: { title: string; threads: Threa
         ))}
       </ul>
     </section>
+  );
+}
+
+/** A new organization starts with no bots: say how to get one. */
+function NoBotsYet({ onNavigate }: { onNavigate?: () => void }) {
+  return (
+    <div className="flex flex-col gap-1 px-3 py-6 text-center text-sm group-data-[collapsible=icon]:hidden">
+      <p className="font-medium">No bots yet</p>
+      <p className="text-muted-foreground">
+        <Link href="/bots/new" onClick={onNavigate} className="font-medium text-brand hover:underline">Create a bot</Link>
+        {" or "}
+        <Link href="/marketplace" onClick={onNavigate} className="font-medium text-brand hover:underline">hire one</Link>
+        {" to get started."}
+      </p>
+    </div>
   );
 }
 

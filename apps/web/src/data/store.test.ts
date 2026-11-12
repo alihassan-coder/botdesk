@@ -114,8 +114,8 @@ describe("smaller actions", () => {
     expect(state().memories.some((m) => m.id === "mem_1")).toBe(false);
   });
 
-  it("createBotFromTemplate hires the bot and opens a chat where it speaks first", () => {
-    const threadId = actions.createBotFromTemplate("tpl_inbox");
+  it("createBotFromTemplate hires the bot and opens a chat where it speaks first", async () => {
+    const { threadId } = (await actions.createBotFromTemplate("tpl_inbox")) as { threadId: string };
     const thread = state().threads.find((t) => t.id === threadId);
 
     expect(thread?.kind).toBe("dm");
@@ -123,15 +123,25 @@ describe("smaller actions", () => {
     expect(messagesIn(threadId!)[0].author.type).toBe("bot");
   });
 
-  it("createBot builds a bot from your choices, with a unique handle", () => {
-    const threadId = actions.createBot({
+  it("createBot builds a bot from your choices, with a unique handle", async () => {
+    const { threadId } = (await actions.createBot({
       name: "Chief", role: "Second chief", description: "", avatarColor: "rose", instructions: "Be brief.",
       modelId: "m_gpt", securityLevel: "read-only", computerMode: "none", monthlyBudgetUsd: 10,
-    });
+    })) as { threadId: string };
     const bot = state().bots.find((b) => b.id === state().threads.find((t) => t.id === threadId)?.botId);
 
     expect(bot).toMatchObject({ handle: "chief-2", modelId: "m_gpt", securityLevel: "read-only", spentThisMonthUsd: 0, status: "idle" });
     expect(messagesIn(threadId)[0].parts[0]).toMatchObject({ type: "text", text: expect.stringContaining("Second chief") });
+  });
+
+  it("editBot changes a bot; removeBot takes it, its chat and its approvals away", async () => {
+    await expect(actions.editBot("b_inbox", { name: "Inbox Pro" })).resolves.toEqual({ ok: true });
+    expect(state().bots.find((b) => b.id === "b_inbox")?.name).toBe("Inbox Pro");
+
+    await expect(actions.removeBot("b_inbox")).resolves.toEqual({ ok: true });
+    expect(state().bots.some((b) => b.id === "b_inbox")).toBe(false);
+    expect(state().threads.some((t) => t.botId === "b_inbox")).toBe(false);
+    expect(state().approvals.some((a) => a.botId === "b_inbox")).toBe(false);
   });
 
   it("createRoutine saves it and the bot confirms in its chat", () => {

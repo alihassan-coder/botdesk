@@ -5,7 +5,8 @@ import Link from "next/link";
 import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { useStoredState } from "@/hooks/use-stored-state";
-import { actions, useThread } from "@/data/store";
+import { actions, isDemoMode, useThread } from "@/data/store";
+import { ChatComingSoon } from "./chat-coming-soon";
 import { Composer } from "./composer";
 import { DetailsContent, DetailsPane } from "./details-pane";
 import { MessageList } from "./message-list";
@@ -38,8 +39,15 @@ export function ThreadScreen({ threadId }: { threadId: string }) {
     <div className="flex h-full min-h-0">
       <div className="flex min-w-0 flex-1 flex-col">
         <ThreadHeader thread={thread} onToggleDetails={toggleDetails} />
-        <MessageList thread={thread} />
-        <Composer thread={thread} />
+        {/* Chats aren't on the API yet; only the demo can talk. */}
+        {isDemoMode() ? (
+          <>
+            <MessageList thread={thread} />
+            <Composer thread={thread} />
+          </>
+        ) : (
+          <ChatComingSoon thread={thread} />
+        )}
       </div>
 
       {paneOpen && <DetailsPane thread={thread} width={paneWidth} onResize={setPaneWidth} />}

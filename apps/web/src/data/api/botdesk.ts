@@ -1,5 +1,5 @@
 import { apiFetch } from "./client";
-import type { ApiInvitation, ApiMe, ApiMember, ApiNewInvitation, ApiOrg, ApiRole } from "./types";
+import type { ApiBot, ApiBotInput, ApiInvitation, ApiMe, ApiMember, ApiNewInvitation, ApiOrg, ApiRole } from "./types";
 
 /** Every API route the web app uses, one plain function each. Only store.ts calls these. */
 
@@ -33,4 +33,15 @@ export const inviteApi = {
     apiFetch<void>(`/api/v1/orgs/${orgId}/invitations/${invitationId}`, { method: "DELETE" }),
   /** Join the org the invite is for; must be signed in with the invited email. */
   accept: (token: string) => apiFetch<ApiOrg>("/api/v1/invitations/accept", { method: "POST", body: { token } }),
+};
+
+export const botApi = {
+  list: (orgId: string) => apiFetch<ApiBot[]>(`/api/v1/orgs/${orgId}/bots`),
+  /** Only the name is required; the API has defaults for the rest. */
+  create: (orgId: string, bot: Partial<ApiBotInput>) => apiFetch<ApiBot>(`/api/v1/orgs/${orgId}/bots`, { method: "POST", body: bot }),
+  /** Only the fields you send change. A new name gets a matching @handle. */
+  update: (orgId: string, botId: string, patch: Partial<ApiBotInput>) =>
+    apiFetch<ApiBot>(`/api/v1/orgs/${orgId}/bots/${botId}`, { method: "PATCH", body: patch }),
+  /** Owners and admins only. */
+  remove: (orgId: string, botId: string) => apiFetch<void>(`/api/v1/orgs/${orgId}/bots/${botId}`, { method: "DELETE" }),
 };

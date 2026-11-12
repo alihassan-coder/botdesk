@@ -190,3 +190,67 @@ describe("switching organizations on the API", () => {
     expect(localStorage.getItem("botdesk.org")).toBe("o3");
   });
 });
+
+describe("bots on the API", () => {
+  const scout = {
+    id: "b1", name: "Scout", handle: "scout", role: "Research", description: "", instructions: "", avatarColor: "sky",
+    modelId: "", securityLevel: "ask-before-acting", monthlyBudgetUsd: 50, status: "idle", createdAt: "2026-11-12T08:00:00Z",
+  };
+  const newBot = {
+    name: "Writer", role: "Docs", description: "", avatarColor: "rose", instructions: "", modelId: "m_claude",
+    securityLevel: "read-only", computerMode: "own", monthlyBudgetUsd: 20,
+  } as const;
+
+  beforeEach(async () => {
+    routes["GET /api/v1/orgs/o1/bots"] = { status: 200, body: [scout] };
+    await actions.signIn("zara@example.com", "long-enough");
+    await vi.waitFor(() => expect(state().bots.map((b) => b.name)).toEqual(["Scout"]));
+  });
+
+  it("the org's bots replace the demo bots, each with an empty chat of its own", () => {
+    expect(state().threads).toEqual([expect.objectContaining({ kind: "dm", botId: "b1", title: "Scout" })]);
+    expect(state().messages).toEqual([]);
+    expect(state().approvals).toEqual([]);
+  });
+
+  it("createBot hires on the API and returns the new bot's chat", async () => {
+    routes["POST /api/v1/orgs/o1/bots"] = { status: 201, body: { ...scout, id: "b2", name: "Writer", handle: "writer" } };
+    const result = await actions.createBot(newBot);
+    expect(result).toEqual({ ok: true, threadId: "dm-b2" });
+    expect(state().bots.map((b) => b.name)).toEqual(["Scout", "Writer"]);
+    expect(state().threads.map((t) => t.id)).toContain("dm-b2");
+  });
+
+  it("createBot explains a refusal and adds nothing", async () => {
+    routes["POST /api/v1/orgs/o1/bots"] = { status: 422, body: { detail: "Give the bot a name." } };
+    await expect(actions.createBot(newBot)).resolves.toEqual({ ok: false, error: "Give the bot a name." });
+    expect(state().bots).toHaveLength(1);
+  });
+
+  it("editBot saves on the API and renames its chat", async () => {
+    routes["PATCH /api/v1/orgs/o1/bots/b1"] = { status: 200, body: { ...scout, name: "Scout Pro", handle: "scout-pro" } };
+    await expect(actions.editBot("b1", { name: "Scout Pro" })).resolves.toEqual({ ok: true });
+    expect(state().bots[0]).toMatchObject({ name: "Scout Pro", handle: "scout-pro" });
+    expect(state().threads[0].title).toBe("Scout Pro");
+  });
+
+  it("removeBot deletes it and its chat; a refusal keeps it", async () => {
+    routes["DELETE /api/v1/orgs/o1/bots/b1"] = { status: 403, body: { detail: "Only owners and admins can do that." } };
+    await expect(actions.removeBot("b1")).resolves.toEqual({ ok: false, error: "Only owners and admins can do that." });
+    expect(state().bots).toHaveLength(1);
+
+    routes["DELETE /api/v1/orgs/o1/bots/b1"] = { status: 204 };
+    await expect(actions.removeBot("b1")).resolves.toEqual({ ok: true });
+    expect(state().bots).toEqual([]);
+    expect(state().threads).toEqual([]);
+  });
+
+  it("switching org loads that org's bots instead", async () => {
+    const globex = { id: "o2", name: "Globex", slug: "globex", plan: "team", role: "member" };
+    routes["GET /api/v1/auth/me"] = { status: 200, body: { ...me, organizations: [org, globex] } };
+    routes["GET /api/v1/orgs/o2/bots"] = { status: 200, body: [{ ...scout, id: "b9", name: "Globo" }] };
+    await actions.restoreSession();
+    await actions.switchOrg("o2");
+    await vi.waitFor(() => expect(state().bots.map((b) => b.name)).toEqual(["Globo"]));
+  });
+});

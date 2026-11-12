@@ -5,8 +5,9 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Inbox } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { Empty, EmptyContent, EmptyDescription, EmptyHeader, EmptyTitle } from "@/components/ui/empty";
 import { SidebarTrigger } from "@/components/ui/sidebar";
-import { useLatestThreadId, usePendingApprovalCount } from "@/data/store";
+import { useBotsLoading, useLatestThreadId, usePendingApprovalCount } from "@/data/store";
 import { BotdeskLockup } from "./logo";
 import { ThreadList } from "./thread-list";
 
@@ -20,6 +21,7 @@ export function HomeScreen() {
   const router = useRouter();
   const latestThreadId = useLatestThreadId();
   const pendingApprovals = usePendingApprovalCount();
+  const loading = useBotsLoading();
 
   useEffect(() => {
     // Read the screen size directly: it's correct on the very first effect, unlike the first render.
@@ -49,8 +51,24 @@ export function HomeScreen() {
         </div>
       </div>
       <div className="hidden h-full items-center justify-center text-sm text-muted-foreground md:flex">
-        Opening your latest chat…
+        {latestThreadId || loading ? "Opening your latest chat…" : <NoChatsYet />}
       </div>
     </>
+  );
+}
+
+/** Bigger screens, before your organization has any bots. */
+function NoChatsYet() {
+  return (
+    <Empty className="text-foreground">
+      <EmptyHeader>
+        <EmptyTitle>Your team has no bots yet</EmptyTitle>
+        <EmptyDescription>Create one with its own job and limits, or hire a ready-made one from the marketplace.</EmptyDescription>
+      </EmptyHeader>
+      <EmptyContent className="flex-row justify-center">
+        <Button asChild><Link href="/bots/new">Create a bot</Link></Button>
+        <Button asChild variant="outline"><Link href="/marketplace">Browse marketplace</Link></Button>
+      </EmptyContent>
+    </Empty>
   );
 }

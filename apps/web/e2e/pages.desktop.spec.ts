@@ -19,6 +19,21 @@ test.describe("Marketplace", () => {
   });
 });
 
+test("editing a bot from its details, then removing it", async ({ page }) => {
+  await page.goto("/chat/t_talent");
+  const details = page.getByRole("complementary", { name: "Details" });
+  await details.getByRole("button", { name: "Edit" }).click();
+  const dialog = page.getByRole("dialog");
+  await dialog.getByLabel("Name").fill("Talent Finder");
+  await dialog.getByRole("button", { name: "Save changes" }).click();
+  await expect(details.getByRole("heading", { name: "Talent Finder" })).toBeVisible();
+
+  await details.getByRole("button", { name: "Remove" }).click();
+  await page.getByRole("alertdialog").getByRole("button", { name: "Remove" }).click();
+  await expect(page).not.toHaveURL(/t_talent/);
+  await expect(page.locator("[data-sidebar=sidebar]").getByRole("link", { name: /Talent/ })).toHaveCount(0);
+});
+
 test("creating a bot from scratch", async ({ page }) => {
   await page.goto("/bots/new");
   await page.getByLabel("Name").fill("Release Notes");

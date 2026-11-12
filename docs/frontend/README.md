@@ -75,7 +75,9 @@ NEXT_PUBLIC_API_URL=http://localhost:8000   # run the API with `pnpm dev:api`
 | Organizations (name, address, plan) | Real. The sidebar switcher lists every org you belong to; the one you pick is remembered in this browser (`botdesk.org`), else your first. Switching reloads members, invites and bots and goes home. Accepting an invite switches to that org. | Mock "Acme" only. |
 | Members, roles, remove | Real. Like GitHub and Slack, only owners see "Owner" in the role picker (with a confirm) and can change or remove owners; admins give admin or member. The API's refusals show as toasts. | Mock people. |
 | Invites | Real: creates a one-time link to copy (no emails yet); pending invites can be revoked. | The person joins at once. |
-| Bots, threads, messages, approvals, routines, apps, keys, usage, memory | **Still mock**, even for real accounts. | Mock. |
+| Bots: list, create (`/bots/new` and marketplace hire), edit and remove (details pane) | Real. Fields the API doesn't have yet get defaults: no computer, no connections, $0 spent. Model ids are translated in `api/map.ts` while the model list is mock. | Mock bots. |
+| Chats | Not on the API yet. Each real bot gets an empty DM (`dm-<botId>`) so it shows in the sidebar; opening it says "Chat with {name} is coming soon". The demo's threads, approvals, routines and memories are left out, since they belong to the demo bots. | Mock threads with fake bot replies. |
+| Approvals, routines, apps, keys, usage, memory | **Still mock.** | Mock. |
 
 - `src/data/api/client.ts` is the fetch wrapper: sends the cookie (`credentials: "include"`) and turns `{detail}` errors (and 422 lists) into an `ApiError` whose message screens show as is.
 - `src/data/api/botdesk.ts` lists every route the web app calls; `map.ts` turns API shapes into `types.ts` shapes.
@@ -140,7 +142,7 @@ Inside `apps/web`, `pnpm test:watch` re-runs Vitest as you edit.
 1. **Slice 1 (done):** app shell, DM thread with all message cards and a working composer, inline approval card (Approve / Deny / Edit).
 2. **App pages (done):** create bot, marketplace, approvals inbox, routines, connect apps, settings, ⌘K palette, workspace header.
 3. **Accounts and polish (done):** mock sign in / sign up / forgot password with an auth gate, create routine, manage organization, collapsible sidebar, custom accent.
-4. **Wire to the API (in progress):** auth, organization, members and invites are on the API. Next: bots, threads and streaming bot replies, then an org switcher.
+4. **Wire to the API (in progress):** auth, organizations (with a switcher), members, invites and bots are on the API. Next: threads and streaming bot replies.
 5. **Later:** group chats with an @mention picker; then computer view (live screen, take over) and routine recording.
 
 Each slice is shown to the owner before the next starts.

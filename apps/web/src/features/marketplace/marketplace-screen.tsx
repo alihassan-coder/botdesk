@@ -25,11 +25,11 @@ export function MarketplaceScreen() {
     .filter((t) => !q || `${t.name} ${t.role} ${t.description}`.toLowerCase().includes(q))
     .sort((a, b) => b.installs - a.installs);
 
-  function hire(templateId: string, name: string) {
-    const threadId = actions.createBotFromTemplate(templateId);
-    if (!threadId) return;
+  async function hire(templateId: string, name: string) {
+    const result = await actions.createBotFromTemplate(templateId);
+    if (!result.ok) return void toast.error(result.error);
     toast.success(`${name} joined your team.`);
-    router.push(`/chat/${threadId}`);
+    router.push(`/chat/${result.threadId}`);
   }
 
   return (

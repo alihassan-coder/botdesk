@@ -40,3 +40,27 @@ export interface ApiInvitation {
 export interface ApiNewInvitation extends ApiInvitation {
   inviteUrl: string;
 }
+
+export type ApiSecurityLevel = "read-only" | "ask-before-acting" | "autonomous";
+
+export interface ApiBot {
+  id: string;
+  name: string;
+  handle: string;
+  role: string;
+  description: string;
+  instructions: string;
+  avatarColor: "indigo" | "violet" | "sky" | "emerald" | "amber" | "rose" | "orange" | "slate";
+  /** "provider:model", or "" for the organization's default model. */
+  modelId: string;
+  securityLevel: ApiSecurityLevel;
+  monthlyBudgetUsd: number;
+  status: "idle" | "working" | "waiting-approval" | "sleeping" | "error";
+  createdAt: string;
+}
+
+/** What you send to hire or edit a bot; the API fills in id, handle, status and createdAt. */
+export type ApiBotInput = Pick<
+  ApiBot,
+  "name" | "role" | "description" | "instructions" | "avatarColor" | "modelId" | "securityLevel" | "monthlyBudgetUsd"
+>;

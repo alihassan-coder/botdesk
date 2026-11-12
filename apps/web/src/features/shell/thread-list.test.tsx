@@ -1,5 +1,6 @@
 import { screen, within } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
+import { actions, getStoreSnapshot } from "@/data/store";
 import { renderUI } from "@/test/render";
 import { ThreadList } from "./thread-list";
 
@@ -36,5 +37,14 @@ describe("ThreadList", () => {
 
     rerender(<ThreadList query="zzz" />);
     expect(screen.getByText("No bots or groups match “zzz”.")).toBeInTheDocument();
+  });
+});
+
+describe("ThreadList with no bots", () => {
+  it("points you to creating or hiring one", async () => {
+    for (const bot of getStoreSnapshot().bots) await actions.removeBot(bot.id);
+    renderUI(<ThreadList />);
+    expect(await screen.findByText("No bots yet")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Create a bot" })).toHaveAttribute("href", "/bots/new");
   });
 });

@@ -1,5 +1,6 @@
-import { CalendarClock, ChevronRight, MessageSquare, MousePointerClick } from "lucide-react";
+import { CalendarClock, ChevronRight, MessageSquare, MousePointerClick, PenLine } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { pluralize } from "@/lib/format";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { Switch } from "@/components/ui/switch";
 import { TimeAgo } from "@/components/time-ago";
@@ -10,7 +11,7 @@ import { BotAvatar } from "@/features/bots/bot-avatar";
 const SOURCE = {
   recording: { label: "Recorded by watching you", icon: MousePointerClick },
   chat: { label: "Made from a chat", icon: MessageSquare },
-  edit: { label: "Written by hand", icon: MessageSquare },
+  edit: { label: "Written by hand", icon: PenLine },
 };
 
 const OUTCOME = {
@@ -48,12 +49,12 @@ export function RoutineCard({ routine }: { routine: Routine }) {
 
       <Collapsible className="group/steps mt-3">
         <CollapsibleTrigger className="flex items-center gap-1 rounded-md text-xs font-medium text-muted-foreground hover:text-foreground">
-          <ChevronRight className="size-3.5 transition-transform group-data-[state=open]/steps:rotate-90" /> {routine.steps.length} steps
+          <ChevronRight className="size-3.5 transition-transform group-data-[state=open]/steps:rotate-90" /> {pluralize(routine.steps.length, "step")}
         </CollapsibleTrigger>
         <CollapsibleContent>
           <ol className="mt-2 flex flex-col gap-1.5 border-l pl-4 text-sm">
             {routine.steps.map((step, i) => (
-              <li key={step} className="flex gap-2">
+              <li key={i} className="flex gap-2">
                 <span className="w-4 shrink-0 text-muted-foreground">{i + 1}.</span> {step}
               </li>
             ))}

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { formatBytes, formatCount, formatShortAgo, formatUsd, initialOf } from "./format";
+import { formatBytes, formatCount, formatShortAgo, formatUsd, initialOf, pluralize } from "./format";
 
 const NOW = new Date("2026-11-12T12:00:00Z").getTime();
 const minutesAgo = (m: number) => new Date(NOW - m * 60_000).toISOString();
@@ -54,5 +54,14 @@ describe("initialOf", () => {
   it("returns the first letter, uppercased", () => {
     expect(initialOf("inbox Manager")).toBe("I");
     expect(initialOf("  ")).toBe("?");
+  });
+});
+
+describe("pluralize", () => {
+  it("uses the singular for exactly one", () => {
+    expect(pluralize(1, "bot")).toBe("1 bot");
+    expect(pluralize(0, "bot")).toBe("0 bots");
+    expect(pluralize(1, "person", "people")).toBe("1 person");
+    expect(pluralize(4, "person", "people")).toBe("4 people");
   });
 });

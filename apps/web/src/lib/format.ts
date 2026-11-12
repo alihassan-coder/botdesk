@@ -43,6 +43,11 @@ export function formatCount(n: number): string {
   return new Intl.NumberFormat("en-US", { notation: "compact", maximumFractionDigits: 1 }).format(n).toLowerCase().replace("m", "M");
 }
 
+/** A count with its noun: 1 → "1 bot", 3 → "3 bots", and irregular ones like "1 person", "2 people". */
+export function pluralize(n: number, one: string, many = `${one}s`): string {
+  return `${n} ${n === 1 ? one : many}`;
+}
+
 /** The letter shown in a letter avatar: first letter of the first word. */
 export function initialOf(name: string): string {
   return name.trim().charAt(0).toUpperCase() || "?";

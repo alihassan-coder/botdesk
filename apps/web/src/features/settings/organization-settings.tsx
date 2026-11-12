@@ -17,6 +17,7 @@ import {
 } from "@/components/ui/alert-dialog";
 import { Field, FieldDescription, FieldGroup, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
+import { pluralize } from "@/lib/format";
 import { finishSlug, slugWhileTyping } from "@/lib/handle";
 import { actions, useBots, useOrg, useUsers } from "@/data/store";
 import { OrgAvatar } from "@/features/shell/org-avatar";
@@ -43,7 +44,7 @@ export function OrganizationSettings() {
           <div>
             <p className="font-medium">{org.name}</p>
             <p className="text-sm text-muted-foreground">
-              {PLAN_LABEL[org.plan]} plan · {users.length} people · {bots.length} bots
+              {PLAN_LABEL[org.plan]} plan · {pluralize(users.length, "person", "people")} · {pluralize(bots.length, "bot")}
             </p>
           </div>
         </div>
@@ -86,7 +87,7 @@ export function OrganizationSettings() {
             <AlertDialogHeader>
               <AlertDialogTitle>Delete {org.name}?</AlertDialogTitle>
               <AlertDialogDescription>
-                All {bots.length} bots stop, and every chat, routine, connection and key is deleted for all {users.length} people. This can&apos;t be undone.
+                Every bot stops, and every chat, routine, connection and key is deleted for {pluralize(users.length, "person", "people")}. This can&apos;t be undone.
               </AlertDialogDescription>
             </AlertDialogHeader>
             <AlertDialogFooter>

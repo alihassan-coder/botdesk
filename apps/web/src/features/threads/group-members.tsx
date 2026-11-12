@@ -1,3 +1,4 @@
+import { pluralize } from "@/lib/format";
 import { useBot, useUser } from "@/data/store";
 import type { Participant, Thread } from "@/data/types";
 import { BotAvatar, MemberAvatar } from "@/features/bots/bot-avatar";
@@ -13,7 +14,7 @@ export function GroupMembers({ thread }: { thread: Thread }) {
       <div>
         <h2 className="text-lg font-semibold tracking-tight">{thread.title}</h2>
         <p className="text-sm text-muted-foreground">
-          {people.length} people · {bots.length} bots
+          {pluralize(people.length, "person", "people")} · {pluralize(bots.length, "bot")}
         </p>
       </div>
       <MemberSection title="People" members={people} />

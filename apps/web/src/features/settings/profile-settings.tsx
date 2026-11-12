@@ -3,9 +3,9 @@
 import { useState } from "react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
-import { Field, FieldDescription, FieldGroup, FieldLabel } from "@/components/ui/field";
+import { Field, FieldDescription, FieldError, FieldGroup, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
-import { actions, useCurrentUser } from "@/data/store";
+import { actions, useBots, useCurrentUser, useUsers } from "@/data/store";
 import { MemberAvatar } from "@/features/bots/bot-avatar";
 import { SettingsSection } from "./settings-shell";
 
@@ -14,8 +14,9 @@ export function ProfileSettings() {
   const user = useCurrentUser();
   const [name, setName] = useState(user.name);
   const [handle, setHandle] = useState(user.handle);
+  const handleTaken = useHandleTakenByOthers(handle, user.id);
   const changed = name !== user.name || handle !== user.handle;
-  const valid = name.trim().length > 0 && /^[a-z0-9_-]+$/.test(handle);
+  const valid = name.trim().length > 0 && /^[a-z0-9_-]+$/.test(handle) && !handleTaken;
 
   return (
     <SettingsSection title="Profile" description="How you appear to your team and your bots.">
@@ -39,9 +40,10 @@ export function ProfileSettings() {
             <FieldLabel htmlFor="profile-name">Name</FieldLabel>
             <Input id="profile-name" value={name} onChange={(e) => setName(e.target.value)} />
           </Field>
-          <Field>
+          <Field data-invalid={handleTaken}>
             <FieldLabel htmlFor="profile-handle">Handle</FieldLabel>
-            <Input id="profile-handle" value={handle} onChange={(e) => setHandle(e.target.value.toLowerCase())} />
+            <Input id="profile-handle" value={handle} onChange={(e) => setHandle(e.target.value.toLowerCase())} aria-invalid={handleTaken} />
+            {handleTaken && <FieldError>@{handle} is already someone else&apos;s. Mentions need to reach one person or bot.</FieldError>}
             <FieldDescription>Bots and teammates mention you as @{handle || "…"}. Letters, numbers, - and _.</FieldDescription>
           </Field>
           <Field>
@@ -55,4 +57,11 @@ export function ProfileSettings() {
       </form>
     </SettingsSection>
   );
+}
+
+/** True when a teammate or a bot already answers to this @handle. */
+function useHandleTakenByOthers(handle: string, myId: string) {
+  const users = useUsers();
+  const bots = useBots();
+  return users.some((u) => u.id !== myId && u.handle === handle) || bots.some((b) => b.handle === handle);
 }

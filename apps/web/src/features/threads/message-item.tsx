@@ -23,6 +23,9 @@ export function MessageItem({ message, isGroup }: { message: Message; isGroup: b
         {showAuthor && <AuthorLine message={message} />}
         <MessageParts message={message} isOwn={isOwn} />
         {isThinking && <TypingDots />}
+        {message.status === "error" && (
+          <p className="text-xs text-destructive">{message.error ?? "This reply didn't finish."}</p>
+        )}
         {message.reactions?.length ? (
           <div className="flex gap-1">
             {message.reactions.map((r) => (

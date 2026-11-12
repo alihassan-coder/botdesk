@@ -184,6 +184,8 @@ export interface Message {
   createdAt: ISODate;
   mentions?: Participant[];
   status?: "streaming" | "complete" | "error";
+  /** Why it failed, when `status` is "error": a reply that broke off, or a message that wasn't sent. */
+  error?: string;
   reactions?: { emoji: string; count: number }[];
 }
 

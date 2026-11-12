@@ -64,3 +64,52 @@ export type ApiBotInput = Pick<
   ApiBot,
   "name" | "role" | "description" | "instructions" | "avatarColor" | "modelId" | "securityLevel" | "monthlyBudgetUsd"
 >;
+
+/* ---------- Chats ---------- */
+
+export interface ApiThread {
+  id: string;
+  kind: "dm" | "group";
+  title: string;
+  /** For DMs, the bot the chat is with. */
+  botId: string | null;
+  participants: { type: "user" | "bot"; id: string }[];
+  lastMessageAt: string;
+  /** "" until the chat has a message. */
+  lastMessagePreview: string;
+}
+
+export interface ApiMessage {
+  id: string;
+  threadId: string;
+  /** `id` is null for system messages. */
+  author: { type: "user" | "bot" | "system"; id: string | null };
+  /** Message parts as stored; only some types are known to the web app. */
+  parts: Record<string, unknown>[];
+  status: "streaming" | "complete" | "error";
+  createdAt: string;
+}
+
+/** The message you sent, plus one run per bot that will reply. */
+export interface ApiSentMessage extends ApiMessage {
+  runIds: string[];
+}
+
+/**
+ * One live update from `GET /threads/{id}/events` (the SSE `data:` line).
+ * The SSE `event:` name is the same as `kind`, and the SSE `id:` the same as `id`.
+ */
+export type ApiRunEvent = {
+  id: number;
+  runId: string | null;
+  threadId: string;
+  createdAt: string;
+} & (
+  | { kind: "message_saved"; data: { message: ApiMessage } }
+  | { kind: "run_started"; data: { botId: string } }
+  | { kind: "message_delta"; data: { messageId: string; botId: string; text: string } }
+  | { kind: "run_finished"; data: { status: "succeeded" | "cancelled" } }
+  | { kind: "run_failed"; data: { status: "failed"; error: string } }
+);
+
+export const RUN_EVENT_KINDS = ["message_saved", "run_started", "message_delta", "run_finished", "run_failed"] as const;

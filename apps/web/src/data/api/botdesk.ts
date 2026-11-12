@@ -1,5 +1,19 @@
-import { apiFetch } from "./client";
-import type { ApiBot, ApiBotInput, ApiInvitation, ApiMe, ApiMember, ApiNewInvitation, ApiOrg, ApiRole } from "./types";
+import { apiBaseUrl, apiFetch } from "./client";
+import {
+  RUN_EVENT_KINDS,
+  type ApiBot,
+  type ApiBotInput,
+  type ApiInvitation,
+  type ApiMe,
+  type ApiMember,
+  type ApiMessage,
+  type ApiNewInvitation,
+  type ApiOrg,
+  type ApiRole,
+  type ApiRunEvent,
+  type ApiSentMessage,
+  type ApiThread,
+} from "./types";
 
 /** Every API route the web app uses, one plain function each. Only store.ts calls these. */
 
@@ -15,6 +29,11 @@ export const authApi = {
   /** Set a new password from an emailed reset link. Works once; signs out every device. */
   resetPassword: (token: string, password: string) =>
     apiFetch<{ message: string }>("/api/v1/auth/reset-password", { method: "POST", body: { token, password } }),
+  /** Change your name or @handle. */
+  updateProfile: (patch: { name?: string; handle?: string }) => apiFetch<ApiMe>("/api/v1/auth/me", { method: "PATCH", body: patch }),
+  /** Keeps you signed in here and signs out your other devices. */
+  changePassword: (currentPassword: string, newPassword: string) =>
+    apiFetch<{ message: string }>("/api/v1/auth/change-password", { method: "POST", body: { currentPassword, newPassword } }),
 };
 
 export const orgApi = {
@@ -47,4 +66,42 @@ export const botApi = {
     apiFetch<ApiBot>(`/api/v1/orgs/${orgId}/bots/${botId}`, { method: "PATCH", body: patch }),
   /** Owners and admins only. */
   remove: (orgId: string, botId: string) => apiFetch<void>(`/api/v1/orgs/${orgId}/bots/${botId}`, { method: "DELETE" }),
+};
+
+export const threadApi = {
+  /** Your chats in this organization, most recent first. */
+  list: (orgId: string) => apiFetch<ApiThread[]>(`/api/v1/orgs/${orgId}/threads`),
+  /** Your chat with a bot: the existing one, or a new one. */
+  openDm: (orgId: string, botId: string) => apiFetch<ApiThread>(`/api/v1/orgs/${orgId}/threads/dm`, { method: "POST", body: { botId } }),
+  /** Oldest first. For older ones, pass the first message's createdAt as `before`. */
+  messages: (orgId: string, threadId: string, { limit, before }: { limit: number; before?: string }) => {
+    const query = new URLSearchParams({ limit: String(limit), ...(before ? { before } : {}) });
+    return apiFetch<ApiMessage[]>(`/api/v1/orgs/${orgId}/threads/${threadId}/messages?${query}`);
+  },
+  /** In a DM the bot replies; in a group, the bots you @mention do. Replies arrive on the event stream. */
+  send: (orgId: string, threadId: string, text: string) =>
+    apiFetch<ApiSentMessage>(`/api/v1/orgs/${orgId}/threads/${threadId}/messages`, { method: "POST", body: { text } }),
+
+  /**
+   * Live updates for one chat (Server-Sent Events), from now on. If the connection drops,
+   * the browser reconnects by itself and the API resumes after the last event it saw
+   * (the Last-Event-ID header). Returns a function that closes the stream.
+   */
+  follow(orgId: string, threadId: string, onEvent: (event: ApiRunEvent) => void): () => void {
+    const source = new EventSource(`${apiBaseUrl()}/api/v1/orgs/${orgId}/threads/${threadId}/events`, { withCredentials: true });
+    const handle = (message: MessageEvent<string>) => {
+      try {
+        onEvent(JSON.parse(message.data) as ApiRunEvent);
+      } catch {
+        // A line we can't read: skip it rather than break the chat.
+      }
+    };
+    for (const kind of RUN_EVENT_KINDS) source.addEventListener(kind, handle);
+    return () => source.close();
+  },
+};
+
+export const runApi = {
+  /** The Stop button: a queued run stops at once, a running one within moments. */
+  cancel: (orgId: string, runId: string) => apiFetch<unknown>(`/api/v1/orgs/${orgId}/runs/${runId}/cancel`, { method: "POST" }),
 };

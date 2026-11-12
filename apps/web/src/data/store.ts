@@ -4,9 +4,11 @@
  * Client-side data store for the UI.
  *
  * Two modes, picked by NEXT_PUBLIC_API_URL:
- * - Set: sign-in, your organizations, their members, invitations and bots come from
- *   apps/api (see `./api`). Chats aren't on the API yet: each bot gets an empty chat,
- *   and the demo's threads, approvals, routines and memories are left out.
+ * - Set: apps/api (see `./api`) holds accounts (sign-in, profile, password), your
+ *   organizations, their members, invitations and bots, and your chats: the chat list,
+ *   each bot's DM, message history, sending, and bot replies streamed live over the
+ *   chat's event stream (with a Stop button). Approvals, routines, memories, apps,
+ *   models and usage aren't on the API yet, so they start empty or stay mock.
  * - Not set (tests, e2e, demos): everything is the in-memory mock, with fake bot replies.
  * Guest mode ("Explore the demo") uses the mock in either case, so people can look
  * around without an account; it never calls the API.
@@ -15,10 +17,11 @@
 import { useCallback, useRef, useSyncExternalStore } from "react";
 import { makeHandle } from "@/lib/handle";
 import { parseMentions } from "@/lib/mentions";
-import { authApi, botApi, inviteApi, orgApi } from "./api/botdesk";
+import { authApi, botApi, inviteApi, orgApi, runApi, threadApi } from "./api/botdesk";
 import { ApiError, apiBaseUrl } from "./api/client";
-import { toApiBot, toBot, toInvitation, toOrg, toUser } from "./api/map";
-import type { ApiMe } from "./api/types";
+import { toApiBot, toBot, toInvitation, toMessage, toOrg, toThread, toUser } from "./api/map";
+import { applyRunEvent, withPreview, type ActiveRun } from "./api/run-events";
+import type { ApiMe, ApiRunEvent, ApiThread } from "./api/types";
 import * as mock from "./mock/fixtures";
 import type { Approval, ApprovalStatus, Bot, Invitation, Membership, Message, Org, Participant, ProviderCredential, Routine, Thread, User } from "./types";
 
@@ -33,6 +36,12 @@ export type NewRoutineInput = Pick<Routine, "botId" | "name" | "description" | "
 
 /** "unknown" until the browser has checked for a saved session (first render, server). */
 export type AuthStatus = "unknown" | "signed-in" | "signed-out";
+
+/** Whether a chat's messages have arrived from the API, and whether there are older ones to load. */
+export interface ThreadLoad {
+  status: "loading" | "ready" | "error";
+  hasOlder: boolean;
+}
 
 /** What an action that can fail returns: screens show `error` as is. */
 export type ActionResult = { ok: true } | { ok: false; error: string };
@@ -55,10 +64,14 @@ interface State {
   /** MOCK: email → password. Replaced by Better Auth on the API. */
   passwords: Record<string, string>;
   bots: Bot[];
-  /** True while the current org's bots are on their way from the API. */
+  /** True while the current org's bots and chats are on their way from the API. */
   botsLoading: boolean;
   threads: Thread[];
   messages: Message[];
+  /** API only: which chats' messages have been loaded. The mock has them all from the start. */
+  threadLoads: Record<string, ThreadLoad>;
+  /** API only: bot replies in progress. The mock fakes its replies without these. */
+  runs: ActiveRun[];
   approvals: Approval[];
   connectors: typeof mock.connectors;
   connections: typeof mock.connections;
@@ -84,6 +97,8 @@ function seed(): State {
     botsLoading: false,
     threads: mock.threads,
     messages: mock.messages,
+    threadLoads: {},
+    runs: [],
     approvals: mock.approvals,
     connectors: mock.connectors,
     connections: mock.connections,
@@ -207,48 +222,55 @@ function startApiSession(me: ApiMe) {
  */
 function enterOrg(org: Membership) {
   rememberOrg(org.id);
+  closeChatStreams();
   set((st) => ({
     ...st,
     org: toOrg(org),
     users: st.users.filter((u) => u.id === st.currentUserId).map((u) => ({ ...u, role: org.role })),
     invitations: [],
+    bots: [],
+    threads: [],
     // The demo's chats, approvals, routines and memories belong to the demo bots, not to this org.
-    ...withBots(st, []),
     messages: [],
+    threadLoads: {},
+    runs: [],
     approvals: [],
     routines: [],
     memories: [],
     botsLoading: true,
   }));
   void loadOrgPeople(org);
-  void loadBots(org);
+  void loadBotsAndChats(org);
 }
 
-async function loadBots(org: Membership) {
-  const bots = await botApi.list(org.id).catch(() => null);
+/**
+ * The org's bots and your chats. Every bot has a DM in the sidebar, so a bot you haven't
+ * talked to yet (say, a teammate just hired it) gets its DM opened here, once.
+ */
+async function loadBotsAndChats(org: Membership) {
+  const [apiBots, apiThreads] = await Promise.all([
+    botApi.list(org.id).catch(() => null),
+    threadApi.list(org.id).catch(() => null),
+  ]);
+  const bots = apiBots?.map(toBot) ?? [];
+  const threads = apiThreads ?? [];
+  const withoutDm = bots.filter((b) => !threads.some((t) => t.kind === "dm" && t.botId === b.id));
+  const opened = await Promise.all(withoutDm.map((b) => threadApi.openDm(org.id, b.id).catch(() => null)));
+
   set((st) => {
     if (st.org.id !== org.id) return st; // switched org while loading
-    return { ...st, ...withBots(st, bots?.map(toBot) ?? []), botsLoading: false };
+    const all = [...threads, ...opened.filter((t): t is ApiThread => t !== null)];
+    return { ...st, bots, threads: all.map((t) => withBotName(toThread(t), bots)), botsLoading: false };
   });
 }
 
 /*
- * Chats aren't on the API yet. So every real bot gets an empty DM here, which
- * keeps it in the sidebar and gives its details a page; the chat says "coming soon".
+ * A DM is named after its bot. The API names it once, when the chat starts, and keeps
+ * that title when the bot is renamed, so the bot's current name is used instead.
  */
-const dmId = (botId: string) => `dm-${botId}`;
-
-function dmFor(bot: Bot, userId: string): Thread {
-  return {
-    id: dmId(bot.id), kind: "dm", title: bot.name, botId: bot.id,
-    participants: [{ type: "user", id: userId }, { type: "bot", id: bot.id }],
-    lastMessageAt: bot.createdAt, lastMessagePreview: bot.role || "Just hired", unread: 0,
-  };
-}
-
-/** API mode: the bots, and one empty chat for each. */
-function withBots(st: State, bots: Bot[]): Pick<State, "bots" | "threads"> {
-  return { bots, threads: bots.map((b) => dmFor(b, st.currentUserId)) };
+function withBotName(thread: Thread, bots: Bot[]): Thread {
+  const bot = thread.kind === "dm" ? bots.find((b) => b.id === thread.botId) : undefined;
+  return bot ? { ...thread, title: bot.name } : thread;
 }
 
 /** Members, plus pending invites for admins. */
@@ -388,6 +410,7 @@ const authActions = {
       leaveGuestMode();
       return set((st) => ({ ...st, authStatus: "signed-out" }));
     }
+    closeChatStreams();
     if (isDemoMode()) saveMockSession(null);
     // Signed out here even if the API can't be reached; the cookie expires on its own.
     else await authApi.signOut().catch(() => {});
@@ -507,13 +530,166 @@ const orgActions = {
   },
 };
 
+/* ---------- Chats on the API ----------
+ * Opening a chat loads its newest messages and follows its event stream, where your
+ * messages and the bots' replies arrive (see api/run-events.ts). Closing it stops following.
+ */
+const PAGE_SIZE = 50;
+
+/** Close functions for the event streams of the chats that are open, by thread id. */
+const chatStreams = new Map<string, () => void>();
+
+function closeChatStreams() {
+  chatStreams.forEach((close) => close());
+  chatStreams.clear();
+}
+
+function followChat(orgId: string, threadId: string): () => void {
+  chatStreams.get(threadId)?.();
+  const close = threadApi.follow(orgId, threadId, (event) => onRunEvent(orgId, event));
+  chatStreams.set(threadId, close);
+  return () => {
+    close();
+    if (chatStreams.get(threadId) === close) chatStreams.delete(threadId);
+  };
+}
+
+function onRunEvent(orgId: string, event: ApiRunEvent) {
+  set((st) => (st.org.id === orgId ? withRunStatus({ ...st, ...applyRunEvent(st, event) }) : st));
+}
+
+/** A bot with a reply in progress shows as working; when it's done, back to idle. */
+function withRunStatus(st: State): State {
+  let changed = false;
+  const bots = st.bots.map((bot) => {
+    const run = st.runs.find((r) => r.botId === bot.id);
+    const statusText = run?.messageId ? "Replying…" : "Thinking…";
+    if (run && (bot.status !== "working" || bot.statusText !== statusText)) {
+      changed = true;
+      return { ...bot, status: "working" as const, statusText };
+    }
+    if (!run && bot.status === "working") {
+      changed = true;
+      return { ...bot, status: "idle" as const, statusText: undefined };
+    }
+    return bot;
+  });
+  return changed ? { ...st, bots } : st;
+}
+
+const setThreadLoad = (threadId: string, load: ThreadLoad) =>
+  set((st) => ({ ...st, threadLoads: { ...st.threadLoads, [threadId]: load } }));
+
+/** The newest page of messages. Ones that arrived on the stream meanwhile are kept. */
+async function loadMessages(orgId: string, threadId: string) {
+  setThreadLoad(threadId, { status: "loading", hasOlder: state.threadLoads[threadId]?.hasOlder ?? false });
+  try {
+    const page = (await threadApi.messages(orgId, threadId, { limit: PAGE_SIZE })).map(toMessage);
+    set((st) => {
+      if (st.org.id !== orgId) return st;
+      const inPage = new Set(page.map((m) => m.id));
+      const newest = page.at(-1)?.createdAt ?? "";
+      const others = st.messages.filter((m) => m.threadId !== threadId);
+      const newer = st.messages.filter((m) => m.threadId === threadId && !inPage.has(m.id) && Date.parse(m.createdAt) >= Date.parse(newest || "1970-01-01"));
+      return {
+        ...st,
+        messages: [...others, ...page, ...newer],
+        threadLoads: { ...st.threadLoads, [threadId]: { status: "ready", hasOlder: page.length === PAGE_SIZE } },
+      };
+    });
+  } catch {
+    if (state.org.id === orgId) setThreadLoad(threadId, { status: "error", hasOlder: false });
+  }
+}
+
+const chatActions = {
+  /**
+   * Call when a chat opens; call what it returns when it closes. On the API this loads the
+   * chat's messages and follows its live updates. The mock has everything already.
+   */
+  openThread(threadId: string): () => void {
+    if (isDemoMode() || !state.threads.some((t) => t.id === threadId)) return () => {};
+    const orgId = state.org.id;
+    void loadMessages(orgId, threadId);
+    return followChat(orgId, threadId);
+  },
+
+  /** The page of messages before the oldest one shown. API only. */
+  async loadOlderMessages(threadId: string): Promise<ActionResult> {
+    const oldest = state.messages.find((m) => m.threadId === threadId);
+    if (isDemoMode() || !oldest) return { ok: true };
+    const orgId = state.org.id;
+    try {
+      const page = (await threadApi.messages(orgId, threadId, { limit: PAGE_SIZE, before: oldest.createdAt })).map(toMessage);
+      set((st) => {
+        if (st.org.id !== orgId) return st;
+        const known = new Set(st.messages.map((m) => m.id));
+        const older = page.filter((m) => !known.has(m.id));
+        const at = st.messages.findIndex((m) => m.threadId === threadId);
+        const messages = at === -1 ? [...st.messages, ...older] : [...st.messages.slice(0, at), ...older, ...st.messages.slice(at)];
+        return { ...st, messages, threadLoads: { ...st.threadLoads, [threadId]: { status: "ready", hasOlder: page.length === PAGE_SIZE } } };
+      });
+      return { ok: true };
+    } catch (error) {
+      return failure(error);
+    }
+  },
+
+  /** Stop the bot replies in progress in this chat. API only: mock replies finish on their own. */
+  async stopReplies(threadId: string): Promise<ActionResult> {
+    const runs = state.runs.filter((r) => r.threadId === threadId);
+    const orgId = state.org.id;
+    try {
+      await Promise.all(runs.map((r) => runApi.cancel(orgId, r.id)));
+      return { ok: true };
+    } catch (error) {
+      return failure(error);
+    }
+  },
+};
+
+/**
+ * Shows your message at once, then sends it. The API answers with the saved message and the
+ * runs it started; the replies themselves arrive on the chat's event stream.
+ */
+async function sendApiMessage(threadId: string, text: string, mentions: Participant[]) {
+  const orgId = state.org.id;
+  const local: Message = {
+    id: `local-${id()}`, threadId, author: { type: "user", id: state.currentUserId },
+    parts: [{ type: "text", text }], createdAt: now(), mentions,
+  };
+  set((st) => ({ ...st, messages: [...st.messages, local], threads: withPreview(st.threads, local) }));
+
+  try {
+    const sent = await threadApi.send(orgId, threadId, text);
+    const saved = { ...toMessage(sent), mentions };
+    set((st) => {
+      if (st.org.id !== orgId) return st;
+      // The stream may have delivered the saved message first; then just drop the local copy.
+      const arrived = st.messages.some((m) => m.id === saved.id);
+      const messages = arrived ? st.messages.filter((m) => m.id !== local.id) : st.messages.map((m) => (m.id === local.id ? saved : m));
+      const newRuns = sent.runIds.filter((runId) => !st.runs.some((r) => r.id === runId)).map((runId) => ({ id: runId, threadId }));
+      return { ...st, messages, runs: [...st.runs, ...newRuns] };
+    });
+  } catch (error) {
+    const reason = failure(error).error;
+    set((st) => ({
+      ...st,
+      messages: st.messages.map((m) => (m.id === local.id ? { ...m, status: "error" as const, error: `Not sent. ${reason}` } : m)),
+    }));
+  }
+}
+
 export const actions = {
   ...authActions,
   ...orgActions,
+  ...chatActions,
 
+  /** Sends your message. Bots reply in a moment: in a DM that bot, in a group the ones you @mention. */
   sendMessage(threadId: string, text: string) {
     const s = state;
     const mentions = parseMentions(text, s.bots, s.users);
+    if (!isDemoMode()) return void sendApiMessage(threadId, text, mentions);
 
     const msg: Message = {
       id: id(),
@@ -610,12 +786,20 @@ export const actions = {
    */
   async createBot(input: NewBotInput): Promise<ActionResult & { threadId?: string }> {
     if (isDemoMode()) return { ok: true, threadId: createMockBot(input) };
+    const orgId = state.org.id;
+    let bot: Bot;
     try {
-      const bot = toBot(await botApi.create(state.org.id, toApiBot(input)));
-      set((st) => ({ ...st, ...withBots(st, [...st.bots, bot]) }));
-      return { ok: true, threadId: dmId(bot.id) };
+      bot = toBot(await botApi.create(orgId, toApiBot(input)));
     } catch (error) {
       return failure(error);
+    }
+    set((st) => ({ ...st, bots: [...st.bots, bot] }));
+    try {
+      const dm = toThread(await threadApi.openDm(orgId, bot.id));
+      set((st) => ({ ...st, threads: [...st.threads.filter((t) => t.id !== dm.id), dm] }));
+      return { ok: true, threadId: dm.id };
+    } catch {
+      return { ok: false, error: `${bot.name} is on your team, but their chat didn't open. Reload the page to try again.` };
     }
   },
 
@@ -638,7 +822,10 @@ export const actions = {
     }
     try {
       const saved = toBot(await botApi.update(state.org.id, botId, toApiBot(patch)));
-      set((st) => ({ ...st, ...withBots(st, st.bots.map((b) => (b.id === botId ? saved : b))) }));
+      set((st) => {
+        const bots = st.bots.map((b) => (b.id === botId ? { ...saved, status: b.status, statusText: b.statusText } : b));
+        return { ...st, bots, threads: st.threads.map((t) => withBotName(t, bots)) };
+      });
       return { ok: true };
     } catch (error) {
       return failure(error);
@@ -664,6 +851,7 @@ export const actions = {
         bots: st.bots.filter((b) => b.id !== botId),
         threads,
         messages: st.messages.filter((m) => kept.has(m.threadId)),
+        runs: st.runs.filter((r) => kept.has(r.threadId) && r.botId !== botId),
         approvals: st.approvals.filter((a) => a.botId !== botId),
         routines: st.routines.filter((r) => r.botId !== botId),
       };
@@ -714,6 +902,7 @@ export const actions = {
   /** Back to the original mock data. Also cancels bot replies still in progress, so none land afterwards. */
   reset() {
     cancelMockTimers();
+    closeChatStreams();
     restoring = null;
     set(() => seed());
   },
@@ -852,6 +1041,13 @@ export const useThreads = () => useStore(useCallback((s: State) => [...s.threads
 
 /** The thread with the most recent activity: where "/" takes you on bigger screens. */
 export const useLatestThreadId = () => useStore(useCallback((s: State) => [...s.threads].sort(newestFirst)[0]?.id, []));
+
+/** API only: whether this chat's messages have arrived. Undefined in the mock, which has them all. */
+export const useThreadLoad = (threadId: string) => useStore(useCallback((s: State) => s.threadLoads[threadId], [threadId]));
+
+/** True while a bot is replying in this chat, so the composer can offer Stop. */
+export const useIsReplying = (threadId: string) =>
+  useStore(useCallback((s: State) => s.runs.some((r) => r.threadId === threadId), [threadId]));
 
 export const useThreadMessages = (threadId: string) =>
   useStore(useCallback((s: State) => s.messages.filter((m) => m.threadId === threadId), [threadId]));

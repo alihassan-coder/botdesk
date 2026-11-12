@@ -201,24 +201,31 @@ describe("bots on the API", () => {
     securityLevel: "read-only", computerMode: "own", monthlyBudgetUsd: 20,
   } as const;
 
+  const dm = (id: string, botId: string, title: string) => ({
+    id, kind: "dm", title, botId, participants: [{ type: "user", id: "u1" }, { type: "bot", id: botId }],
+    lastMessageAt: "2026-11-12T08:00:00Z", lastMessagePreview: "",
+  });
+
   beforeEach(async () => {
     routes["GET /api/v1/orgs/o1/bots"] = { status: 200, body: [scout] };
+    routes["GET /api/v1/orgs/o1/threads"] = { status: 200, body: [dm("t1", "b1", "Scout")] };
     await actions.signIn("zara@example.com", "long-enough");
     await vi.waitFor(() => expect(state().bots.map((b) => b.name)).toEqual(["Scout"]));
   });
 
-  it("the org's bots replace the demo bots, each with an empty chat of its own", () => {
-    expect(state().threads).toEqual([expect.objectContaining({ kind: "dm", botId: "b1", title: "Scout" })]);
+  it("the org's bots and your chats replace the demo's", () => {
+    expect(state().threads).toEqual([expect.objectContaining({ id: "t1", kind: "dm", botId: "b1", title: "Scout" })]);
     expect(state().messages).toEqual([]);
     expect(state().approvals).toEqual([]);
   });
 
   it("createBot hires on the API and returns the new bot's chat", async () => {
     routes["POST /api/v1/orgs/o1/bots"] = { status: 201, body: { ...scout, id: "b2", name: "Writer", handle: "writer" } };
+    routes["POST /api/v1/orgs/o1/threads/dm"] = { status: 200, body: dm("t2", "b2", "Writer") };
     const result = await actions.createBot(newBot);
-    expect(result).toEqual({ ok: true, threadId: "dm-b2" });
+    expect(result).toEqual({ ok: true, threadId: "t2" });
     expect(state().bots.map((b) => b.name)).toEqual(["Scout", "Writer"]);
-    expect(state().threads.map((t) => t.id)).toContain("dm-b2");
+    expect(state().threads.map((t) => t.id)).toEqual(["t1", "t2"]);
   });
 
   it("createBot explains a refusal and adds nothing", async () => {
@@ -227,7 +234,7 @@ describe("bots on the API", () => {
     expect(state().bots).toHaveLength(1);
   });
 
-  it("editBot saves on the API and renames its chat", async () => {
+  it("editBot saves on the API and renames its chat, which the API doesn't do yet", async () => {
     routes["PATCH /api/v1/orgs/o1/bots/b1"] = { status: 200, body: { ...scout, name: "Scout Pro", handle: "scout-pro" } };
     await expect(actions.editBot("b1", { name: "Scout Pro" })).resolves.toEqual({ ok: true });
     expect(state().bots[0]).toMatchObject({ name: "Scout Pro", handle: "scout-pro" });
@@ -293,5 +300,137 @@ describe("guest mode, even with the API set", () => {
     expect(calls).toContain("POST /api/v1/auth/sign-in");
     await vi.waitFor(() => expect(state().botsLoading).toBe(false));
     expect(state().bots).toEqual([]);
+  });
+});
+
+/** Stands in for the browser's EventSource, so tests can play a chat's live updates. */
+class FakeEventSource {
+  static last: FakeEventSource | null = null;
+  readonly listeners = new Map<string, (event: MessageEvent<string>) => void>();
+  closed = false;
+  constructor(
+    readonly url: string,
+    readonly init?: EventSourceInit,
+  ) {
+    FakeEventSource.last = this;
+  }
+  addEventListener(kind: string, listener: (event: MessageEvent<string>) => void) {
+    this.listeners.set(kind, listener);
+  }
+  close() {
+    this.closed = true;
+  }
+  emit(kind: string, event: Record<string, unknown>) {
+    const data = JSON.stringify({ id: 1, threadId: "t1", createdAt: "2026-11-12T09:00:01Z", runId: null, kind, ...event });
+    this.listeners.get(kind)?.(new MessageEvent(kind, { data }));
+  }
+}
+
+describe("chats on the API", () => {
+  const scout = {
+    id: "b1", name: "Scout", handle: "scout", role: "Research", description: "", instructions: "", avatarColor: "sky",
+    modelId: "", securityLevel: "ask-before-acting", monthlyBudgetUsd: 50, status: "idle", createdAt: "2026-11-12T08:00:00Z",
+  };
+  const thread = (id: string, botId: string | null, kind = "dm") => ({
+    id, kind, title: kind === "dm" ? "Old name" : "Launch", botId,
+    participants: [{ type: "user", id: "u1" }, ...(botId ? [{ type: "bot", id: botId }] : [])],
+    lastMessageAt: "2026-11-12T08:00:00Z", lastMessagePreview: "",
+  });
+  const message = (id: string, text: string, author = { type: "user", id: "u1" }, createdAt = "2026-11-12T09:00:00Z") => ({
+    id, threadId: "t1", author, parts: [{ type: "text", text }], status: "complete", createdAt,
+  });
+  const scoutSays = { type: "bot", id: "b1" };
+  const texts = () =>
+    state()
+      .messages.filter((m) => m.threadId === "t1")
+      .map((m) => (m.parts[0]?.type === "text" ? m.parts[0].text : m.parts[0]?.type));
+
+  beforeEach(async () => {
+    vi.stubGlobal("EventSource", FakeEventSource);
+    FakeEventSource.last = null;
+    routes["GET /api/v1/orgs/o1/bots"] = { status: 200, body: [scout, { ...scout, id: "b2", name: "Writer" }] };
+    routes["GET /api/v1/orgs/o1/threads"] = { status: 200, body: [thread("t1", "b1"), thread("g1", null, "group")] };
+    routes["POST /api/v1/orgs/o1/threads/dm"] = { status: 200, body: thread("t2", "b2") };
+    routes["GET /api/v1/orgs/o1/threads/t1/messages?limit=50"] = { status: 200, body: [message("m1", "Hi Scout"), message("m2", "Hello!", scoutSays)] };
+    await actions.signIn("zara@example.com", "long-enough");
+    await vi.waitFor(() => expect(state().botsLoading).toBe(false));
+  });
+
+  it("lists your chats, opens a DM for a bot you haven't talked to yet, and names DMs after their bot", () => {
+    expect(calls).toContain("POST /api/v1/orgs/o1/threads/dm");
+    expect(state().threads.map((t) => [t.id, t.title])).toEqual([["t1", "Scout"], ["g1", "Launch"], ["t2", "Writer"]]);
+  });
+
+  it("opening a chat loads its messages and follows its live updates; closing stops following", async () => {
+    const close = actions.openThread("t1");
+    expect(state().threadLoads.t1?.status).toBe("loading");
+    await vi.waitFor(() => expect(state().threadLoads.t1).toEqual({ status: "ready", hasOlder: false }));
+    expect(texts()).toEqual(["Hi Scout", "Hello!"]);
+    expect(FakeEventSource.last?.url).toBe("http://api.test/api/v1/orgs/o1/threads/t1/events");
+    expect(FakeEventSource.last?.init).toEqual({ withCredentials: true });
+    close();
+    expect(FakeEventSource.last?.closed).toBe(true);
+  });
+
+  it("sendMessage shows your message at once, then the saved one, and knows a bot is replying", async () => {
+    actions.openThread("t1");
+    await vi.waitFor(() => expect(state().threadLoads.t1?.status).toBe("ready"));
+    routes["POST /api/v1/orgs/o1/threads/t1/messages"] = { status: 201, body: { ...message("m3", "Find me leads"), runIds: ["r1"] } };
+
+    actions.sendMessage("t1", "Find me leads");
+    expect(texts()).toEqual(["Hi Scout", "Hello!", "Find me leads"]);
+    expect(state().threads.find((t) => t.id === "t1")?.lastMessagePreview).toBe("Find me leads");
+    await vi.waitFor(() => expect(state().messages.some((m) => m.id === "m3")).toBe(true));
+    expect(texts()).toEqual(["Hi Scout", "Hello!", "Find me leads"]);
+    expect(state().runs).toEqual([{ id: "r1", threadId: "t1" }]);
+  });
+
+  it("a reply streams in: thinking, words, the saved message, done", async () => {
+    actions.openThread("t1");
+    await vi.waitFor(() => expect(state().threadLoads.t1?.status).toBe("ready"));
+    const stream = FakeEventSource.last!;
+
+    stream.emit("run_started", { runId: "r1", data: { botId: "b1" } });
+    expect(state().bots.find((b) => b.id === "b1")).toMatchObject({ status: "working", statusText: "Thinking…" });
+    expect(state().messages.at(-1)).toMatchObject({ id: "typing-r1", status: "streaming" });
+
+    stream.emit("message_delta", { runId: "r1", data: { messageId: "m9", botId: "b1", text: "On " } });
+    stream.emit("message_delta", { runId: "r1", data: { messageId: "m9", botId: "b1", text: "it." } });
+    expect(texts()).toEqual(["Hi Scout", "Hello!", "On it."]);
+    expect(state().bots.find((b) => b.id === "b1")?.statusText).toBe("Replying…");
+
+    stream.emit("message_saved", { runId: "r1", data: { message: message("m9", "On it.", scoutSays, "2026-11-12T09:00:02Z") } });
+    stream.emit("run_finished", { runId: "r1", data: { status: "succeeded" } });
+    expect(state().messages.at(-1)).toMatchObject({ id: "m9", status: "complete" });
+    expect(state().runs).toEqual([]);
+    expect(state().bots.find((b) => b.id === "b1")?.status).toBe("idle");
+    expect(state().threads.find((t) => t.id === "t1")?.lastMessagePreview).toBe("On it.");
+  });
+
+  it("a message that can't be sent stays, marked with why", async () => {
+    routes["POST /api/v1/orgs/o1/threads/t1/messages"] = { status: 404, body: { detail: "Chat not found." } };
+    actions.sendMessage("t1", "Anyone there?");
+    await vi.waitFor(() => expect(state().messages.at(-1)).toMatchObject({ status: "error", error: "Not sent. Chat not found." }));
+  });
+
+  it("stopReplies cancels the runs in progress in that chat", async () => {
+    actions.openThread("t1");
+    await vi.waitFor(() => expect(state().threadLoads.t1?.status).toBe("ready"));
+    FakeEventSource.last!.emit("run_started", { runId: "r1", data: { botId: "b1" } });
+    routes["POST /api/v1/orgs/o1/runs/r1/cancel"] = { status: 200, body: {} };
+    await expect(actions.stopReplies("t1")).resolves.toEqual({ ok: true });
+    expect(calls).toContain("POST /api/v1/orgs/o1/runs/r1/cancel");
+  });
+
+  it("loadOlderMessages puts the page before the oldest message at the top", async () => {
+    const newest = Array.from({ length: 50 }, (_, i) => message(`n${i}`, `New ${i}`, undefined, `2026-11-12T10:${String(i).padStart(2, "0")}:00Z`));
+    routes["GET /api/v1/orgs/o1/threads/t1/messages?limit=50"] = { status: 200, body: newest };
+    actions.openThread("t1");
+    await vi.waitFor(() => expect(state().threadLoads.t1).toEqual({ status: "ready", hasOlder: true }));
+
+    routes["GET /api/v1/orgs/o1/threads/t1/messages?limit=50&before=2026-11-12T10%3A00%3A00Z"] = { status: 200, body: [message("o1", "Old")] };
+    await expect(actions.loadOlderMessages("t1")).resolves.toEqual({ ok: true });
+    expect(texts().slice(0, 2)).toEqual(["Old", "New 0"]);
+    expect(state().threadLoads.t1).toEqual({ status: "ready", hasOlder: false });
   });
 });

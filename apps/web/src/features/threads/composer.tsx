@@ -1,17 +1,19 @@
 import { useState } from "react";
-import { ArrowUp, Paperclip } from "lucide-react";
+import { ArrowUp, Paperclip, Square } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
-import { actions } from "@/data/store";
+import { actions, useIsReplying } from "@/data/store";
 import type { Thread } from "@/data/types";
 
 /**
  * Where you type. Enter sends, Shift+Enter adds a new line, and the box grows with
  * your text up to a limit. @mentions are recognised when the message is sent.
+ * While a bot is replying, Send becomes Stop (until you start typing again).
  */
 export function Composer({ thread }: { thread: Thread }) {
   const [text, setText] = useState("");
   const canSend = text.trim().length > 0;
+  const isReplying = useIsReplying(thread.id);
 
   function send() {
     if (!canSend) return;
@@ -52,10 +54,21 @@ export function Composer({ thread }: { thread: Thread }) {
           aria-label={`Message ${thread.title}`}
           className="field-sizing-content max-h-44 min-h-9 flex-1 resize-none bg-transparent px-1 py-2 text-[15px] outline-none placeholder:text-muted-foreground"
         />
-        <Button type="submit" size="icon" className="shrink-0 rounded-full" disabled={!canSend} aria-label="Send">
-          <ArrowUp />
-        </Button>
+        {isReplying && !canSend ? (
+          <Button type="button" size="icon" className="shrink-0 rounded-full" onClick={() => stop(thread.id)} aria-label="Stop replying">
+            <Square className="fill-current" />
+          </Button>
+        ) : (
+          <Button type="submit" size="icon" className="shrink-0 rounded-full" disabled={!canSend} aria-label="Send">
+            <ArrowUp />
+          </Button>
+        )}
       </div>
     </form>
   );
+}
+
+async function stop(threadId: string) {
+  const result = await actions.stopReplies(threadId);
+  if (!result.ok) toast.error(result.error);
 }

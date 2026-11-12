@@ -5,8 +5,8 @@ import Link from "next/link";
 import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { useStoredState } from "@/hooks/use-stored-state";
-import { actions, isDemoMode, useThread } from "@/data/store";
-import { ChatComingSoon } from "./chat-coming-soon";
+import { Spinner } from "@/components/ui/spinner";
+import { actions, useBotsLoading, useThread } from "@/data/store";
 import { Composer } from "./composer";
 import { DetailsContent, DetailsPane } from "./details-pane";
 import { MessageList } from "./message-list";
@@ -20,6 +20,7 @@ const DESKTOP = "(min-width: 1280px)";
  */
 export function ThreadScreen({ threadId }: { threadId: string }) {
   const thread = useThread(threadId);
+  const chatsLoading = useBotsLoading();
   const isPhone = useIsMobile();
   const [paneOpen, setPaneOpen] = useStoredState("botdesk.detailsPane.open", true);
   const [paneWidth, setPaneWidth] = useStoredState("botdesk.detailsPane.width", 340);
@@ -28,6 +29,12 @@ export function ThreadScreen({ threadId }: { threadId: string }) {
   // Opening a chat means you've seen it.
   useEffect(() => actions.markRead(threadId), [threadId]);
 
+  // Load its messages and follow new ones while it's open (on the API; the mock has them already).
+  // Waits for the chat list, so a reload straight into a chat works too.
+  const found = thread !== undefined;
+  useEffect(() => (found ? actions.openThread(threadId) : undefined), [threadId, found]);
+
+  if (!thread && chatsLoading) return <ThreadLoading />;
   if (!thread) return <ThreadNotFound />;
 
   function toggleDetails() {
@@ -39,15 +46,8 @@ export function ThreadScreen({ threadId }: { threadId: string }) {
     <div className="flex h-full min-h-0">
       <div className="flex min-w-0 flex-1 flex-col">
         <ThreadHeader thread={thread} onToggleDetails={toggleDetails} />
-        {/* Chats aren't on the API yet; only the demo can talk. */}
-        {isDemoMode() ? (
-          <>
-            <MessageList thread={thread} />
-            <Composer thread={thread} />
-          </>
-        ) : (
-          <ChatComingSoon thread={thread} />
-        )}
+        <MessageList thread={thread} />
+        <Composer thread={thread} />
       </div>
 
       {paneOpen && <DetailsPane thread={thread} width={paneWidth} onResize={setPaneWidth} />}
@@ -62,6 +62,15 @@ export function ThreadScreen({ threadId }: { threadId: string }) {
           <DetailsContent thread={thread} />
         </SheetContent>
       </Sheet>
+    </div>
+  );
+}
+
+function ThreadLoading() {
+  return (
+    <div className="grid h-full place-items-center" aria-busy="true">
+      <Spinner className="size-5 text-muted-foreground" />
+      <span className="sr-only">Opening the chat…</span>
     </div>
   );
 }

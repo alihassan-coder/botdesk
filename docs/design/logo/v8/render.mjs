@@ -13,8 +13,8 @@ const { chromium } = require("@playwright/test");
 
 const browser = await chromium.launch({ channel: "chrome" });
 const page = await browser.newPage({ deviceScaleFactor: 2, viewport: { width: 1600, height: 1200 } });
-await page.goto(pathToFileURL(join(here, "explore.html")).href, { waitUntil: "networkidle" });
+await page.goto(pathToFileURL(join(here, process.argv[2] ?? "explore.html")).href, { waitUntil: "networkidle" });
 await page.evaluate(() => document.fonts.ready);
-await page.screenshot({ path: join(here, "explore.png"), fullPage: true });
+await page.screenshot({ path: join(here, (process.argv[2] ?? "explore.html").replace(".html", ".png")), fullPage: true });
 await browser.close();
-console.log("✓ explore.png");
+console.log("✓ rendered");

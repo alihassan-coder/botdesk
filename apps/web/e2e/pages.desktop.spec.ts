@@ -199,6 +199,10 @@ test("the sidebar collapses to an icon rail and stays that way", async ({ page }
 
   await page.reload();
   await expect(sidebar).toHaveAttribute("data-state", "collapsed");
+
+  // Collapsed, the logo is the expand button.
+  await page.getByRole("button", { name: "Expand sidebar" }).click();
+  await expect(sidebar).toHaveAttribute("data-state", "expanded");
 });
 
 test("creating a routine; its bot confirms in chat", async ({ page }) => {

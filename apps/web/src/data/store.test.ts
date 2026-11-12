@@ -123,6 +123,51 @@ describe("smaller actions", () => {
     expect(messagesIn(threadId!)[0].author.type).toBe("bot");
   });
 
+  it("createBot builds a bot from your choices, with a unique handle", () => {
+    const threadId = actions.createBot({
+      name: "Chief", role: "Second chief", description: "", avatarColor: "rose", instructions: "Be brief.",
+      modelId: "m_gpt", securityLevel: "read-only", computerMode: "none", monthlyBudgetUsd: 10,
+    });
+    const bot = state().bots.find((b) => b.id === state().threads.find((t) => t.id === threadId)?.botId);
+
+    expect(bot).toMatchObject({ handle: "chief-2", modelId: "m_gpt", securityLevel: "read-only", spentThisMonthUsd: 0, status: "idle" });
+    expect(messagesIn(threadId)[0].parts[0]).toMatchObject({ type: "text", text: expect.stringContaining("Second chief") });
+  });
+
+  it("updateCurrentUser renames you", () => {
+    actions.updateCurrentUser({ name: "Ali H.", handle: "alih" });
+    expect(state().users.find((u) => u.id === "u_me")).toMatchObject({ name: "Ali H.", handle: "alih" });
+  });
+
+  it("inviteMember adds a person with a name from their email", () => {
+    actions.inviteMember("zara.ahmed@acme.dev", "admin");
+    expect(state().users.at(-1)).toMatchObject({ name: "Zara Ahmed", handle: "zara-ahmed", role: "admin" });
+  });
+
+  it("changeMemberRole updates a member's role", () => {
+    actions.changeMemberRole("u_omar", "admin");
+    expect(state().users.find((u) => u.id === "u_omar")?.role).toBe("admin");
+  });
+
+  it("addCredential stores only a masked key; removeCredential deletes it", () => {
+    actions.addCredential({ provider: "Mistral", label: "My key", owner: "user", key: "mst-1234567890abcd" });
+    const key = state().credentials.at(-1)!;
+    expect(key.maskedKey).toBe("mst-…abcd");
+    expect(JSON.stringify(key)).not.toContain("1234567890");
+
+    actions.removeCredential(key.id);
+    expect(state().credentials.some((k) => k.id === key.id)).toBe(false);
+  });
+
+  it("connectApp and disconnectApp manage connections", () => {
+    actions.connectApp("mcp", "https://mcp.acme.dev/sse");
+    const connection = state().connections.at(-1)!;
+    expect(connection).toMatchObject({ connectorId: "mcp", account: "https://mcp.acme.dev/sse", status: "connected" });
+
+    actions.disconnectApp(connection.id);
+    expect(state().connections.some((c) => c.id === connection.id)).toBe(false);
+  });
+
   it("reset cancels a bot reply that's still on its way", () => {
     vi.useFakeTimers();
     actions.sendMessage("t_sales", "Hi");

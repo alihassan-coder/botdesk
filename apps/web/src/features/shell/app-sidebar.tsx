@@ -1,15 +1,7 @@
 import { useState } from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
-import { toast } from "sonner";
-import { Inbox, Plug, Plus, Repeat, Search, Settings, Store, Users } from "lucide-react";
-import { Button } from "@/components/ui/button";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
+import { Inbox, Plug, Repeat, Search, Settings, Store } from "lucide-react";
+import { Kbd } from "@/components/ui/kbd";
 import {
   Sidebar,
   SidebarContent,
@@ -22,10 +14,10 @@ import {
   SidebarMenuItem,
   useSidebar,
 } from "@/components/ui/sidebar";
-import { useOrg, usePendingApprovalCount } from "@/data/store";
-import { BotdeskLockup } from "./logo";
+import { usePendingApprovalCount } from "@/data/store";
 import { ThreadList } from "./thread-list";
 import { UserMenu } from "./user-menu";
+import { WorkspaceHeader } from "./workspace-header";
 
 /** Pages reached from the bottom of the sidebar. */
 const FOOTER_LINKS = [
@@ -35,9 +27,8 @@ const FOOTER_LINKS = [
   { href: "/settings", label: "Settings", icon: Settings },
 ];
 
-/** The left column: logo, new + search, approvals, your bots and groups, then app pages and you. */
+/** The left column: brand and "+", search, approvals, your bots and groups, then app pages and you. */
 export function AppSidebar() {
-  const org = useOrg();
   const pendingApprovals = usePendingApprovalCount();
   const [query, setQuery] = useState("");
   const { isMobile, setOpenMobile } = useSidebar();
@@ -47,12 +38,8 @@ export function AppSidebar() {
 
   return (
     <Sidebar collapsible="offcanvas">
-      <SidebarHeader className="gap-3 px-3 pt-4">
-        <div className="flex items-center gap-2 px-1">
-          <BotdeskLockup />
-          <span className="truncate text-xs text-muted-foreground">{org.name}</span>
-          <NewMenu />
-        </div>
+      <SidebarHeader className="gap-3 px-3 pt-3">
+        <WorkspaceHeader onNavigate={closeOnPhone} />
         <div className="relative">
           <Search className="pointer-events-none absolute top-1/2 left-2.5 size-4 -translate-y-1/2 text-muted-foreground" />
           <SidebarInput
@@ -60,8 +47,11 @@ export function AppSidebar() {
             onChange={(e) => setQuery(e.target.value)}
             placeholder="Search bots and groups"
             aria-label="Search bots and groups"
-            className="h-9 rounded-[10px] pl-8"
+            className="h-9 rounded-[10px] pr-12 pl-8"
           />
+          <Kbd className="pointer-events-none absolute top-1/2 right-2 -translate-y-1/2" title="Open the command palette">
+            ⌘K
+          </Kbd>
         </div>
         <SidebarMenu>
           <SidebarMenuItem>
@@ -99,27 +89,5 @@ export function AppSidebar() {
         <UserMenu />
       </SidebarFooter>
     </Sidebar>
-  );
-}
-
-/** "+": hire a new bot or start a group chat. */
-function NewMenu() {
-  const router = useRouter();
-  return (
-    <DropdownMenu>
-      <DropdownMenuTrigger asChild>
-        <Button variant="ghost" size="icon-sm" className="ml-auto" aria-label="New bot or group">
-          <Plus />
-        </Button>
-      </DropdownMenuTrigger>
-      <DropdownMenuContent align="end" className="w-48">
-        <DropdownMenuItem onSelect={() => router.push("/marketplace")}>
-          <Plus /> New bot
-        </DropdownMenuItem>
-        <DropdownMenuItem onSelect={() => toast("Group chats arrive in the next slice.")}>
-          <Users /> New group
-        </DropdownMenuItem>
-      </DropdownMenuContent>
-    </DropdownMenu>
   );
 }

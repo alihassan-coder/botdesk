@@ -87,9 +87,13 @@ test("switching to dark mode from the user menu", async ({ page }) => {
   await expect(page.locator("html")).toHaveClass(/dark/);
 });
 
-test("pages from later slices show a clear placeholder", async ({ page }) => {
-  await page.goto("/approvals");
-  await expect(page.getByRole("heading", { name: "Approvals is on its way" })).toBeVisible();
+test("⌘K opens the command palette and jumps to a bot", async ({ page }) => {
+  await page.goto("/chat/t_chief");
+  await expect(page.getByRole("heading", { name: "Chief", level: 1 })).toBeVisible();
+  await page.keyboard.press("ControlOrMeta+k");
+  await page.getByPlaceholder("Search bots, groups and pages…").fill("Bug Fixer");
+  await page.keyboard.press("Enter");
+  await expect(page).toHaveURL(/\/chat\/t_bugs$/);
 });
 
 test("an unknown chat says so and links home", async ({ page }) => {

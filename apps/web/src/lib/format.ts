@@ -38,6 +38,11 @@ export function formatUsd(amount: number): string {
   return amount.toLocaleString("en-US", { style: "currency", currency: "USD" });
 }
 
+/** Compact counts: 980 → "980", 12_400 → "12.4k", 2_000_000 → "2M". */
+export function formatCount(n: number): string {
+  return new Intl.NumberFormat("en-US", { notation: "compact", maximumFractionDigits: 1 }).format(n).toLowerCase().replace("m", "M");
+}
+
 /** The letter shown in a letter avatar: first letter of the first word. */
 export function initialOf(name: string): string {
   return name.trim().charAt(0).toUpperCase() || "?";

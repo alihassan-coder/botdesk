@@ -8,7 +8,8 @@ import { BOT_STATUS } from "./bot-status";
  * a rounded square in the bot's colour with its first letter. No faces, no blobs.
  */
 
-const COLOR_CLASS: Record<BotAvatarColor, string> = {
+/** Exported so pickers can show every colour. */
+export const COLOR_CLASS: Record<BotAvatarColor, string> = {
   indigo: "bg-indigo-600",
   violet: "bg-violet-600",
   sky: "bg-sky-600",

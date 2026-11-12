@@ -5,14 +5,9 @@ import { Switch } from "@/components/ui/switch";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { formatUsd } from "@/lib/format";
 import { actions, useBotMemories, useBotRoutines, useModel } from "@/data/store";
-import type { Bot, SecurityLevel } from "@/data/types";
+import type { Bot } from "@/data/types";
 import { BotAvatar } from "@/features/bots/bot-avatar";
-
-const SECURITY_LABEL: Record<SecurityLevel, string> = {
-  "read-only": "Read only",
-  "ask-before-acting": "Ask before acting",
-  autonomous: "Autonomous within limits",
-};
+import { securityLabel } from "@/features/bots/security-levels";
 
 /** The details pane for a DM: who this bot is, its routines, what it remembers, its computer. */
 export function BotDetails({ bot }: { bot: Bot }) {
@@ -52,7 +47,7 @@ function Profile({ bot }: { bot: Bot }) {
         <dt className="text-muted-foreground">Model</dt>
         <dd>{model?.name ?? "Unknown"}</dd>
         <dt className="text-muted-foreground">Security level</dt>
-        <dd>{SECURITY_LABEL[bot.securityLevel]}</dd>
+        <dd>{securityLabel(bot.securityLevel)}</dd>
         <dt className="text-muted-foreground">Computer</dt>
         <dd>{bot.computerMode === "own" ? "Its own" : bot.computerMode === "shared" ? "Shared" : "None"}</dd>
       </dl>

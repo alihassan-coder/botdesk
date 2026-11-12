@@ -266,8 +266,8 @@ export const memories: MemoryItem[] = [
 ];
 
 export const usage: UsageDay[] = Array.from({ length: 14 }, (_, i) => {
-  const d = new Date();
-  d.setDate(d.getDate() - (13 - i));
+  const d = new Date(MOCK_NOW);
+  d.setUTCDate(d.getUTCDate() - (13 - i));
   return {
     date: d.toISOString().slice(0, 10),
     tokensUsd: Math.round((3 + Math.sin(i / 2) * 2 + i * 0.3) * 100) / 100,

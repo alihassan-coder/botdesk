@@ -25,11 +25,16 @@ When the API exists, only `store.ts` changes. No screen changes.
 | Folder | What goes there |
 |---|---|
 | `src/app/` | Routes. Thin: a page imports a screen from `features/` and renders it. |
-| `src/features/shell/` | The frame of the app: sidebar, user menu, logo, placeholder screens. |
+| `src/features/shell/` | The frame of the app: sidebar, workspace header (logo tile, org switcher, "+"), user menu, logo. |
 | `src/features/threads/` | A conversation: header, message list, composer, details pane. |
 | `src/features/messages/` | The cards inside a message (text, reasoning, work log, computer task, question, routine created, file, handoff). |
-| `src/features/approvals/` | The approval card (and later the approvals inbox). |
-| `src/features/bots/` | Bot avatar and status. |
+| `src/features/approvals/` | The approval card, the approvals inbox, risk labels. |
+| `src/features/bots/` | Bot avatar and status, security levels and what each allows, the create-bot screen. |
+| `src/features/marketplace/` | Templates you can hire. |
+| `src/features/routines/` | The routines page. |
+| `src/features/apps/` | Connect apps: connections, catalog, connect dialog. |
+| `src/features/settings/` | Settings shell and its sections: profile, appearance (theme, accent), models & keys, security, members, usage & budgets, memory. |
+| `src/features/command-palette/` | ⌘K / Ctrl+K: jump to a bot, group or page. |
 | `src/components/ui/` | shadcn components. Add with `pnpm dlx shadcn@latest add <name>`; don't edit by hand. |
 | `src/components/` | App-wide providers (theme, tooltips, toasts). |
 | `src/lib/` | Small pure helpers (formatting, @mention parsing), each with a test. |
@@ -42,7 +47,12 @@ When the API exists, only `store.ts` changes. No screen changes.
 |---|---|
 | `/` | Phone: the bot list. Tablet/desktop: opens your most recent chat. |
 | `/chat/[threadId]` | A conversation, DM or group. The details pane opens beside it. |
-| `/approvals`, `/routines`, `/apps`, `/marketplace`, `/settings` | Coming in later slices (placeholder for now). |
+| `/bots/new` | Create a bot: from scratch or a template, with a live preview. |
+| `/marketplace` | Hire a ready-made bot. |
+| `/approvals` | Every request waiting for a yes, and past decisions. |
+| `/routines` | Repeating jobs: schedule, last run, steps, on/off. |
+| `/apps` | Connected accounts, apps to connect, what each lets bots do and its risk. |
+| `/settings/<section>` | `profile`, `appearance`, `models`, `security`, `members`, `usage`, `memory`. `/settings` opens Profile. |
 
 ## Layout by screen size
 
@@ -83,9 +93,7 @@ Three layers, cheapest first. Add to each when you add a feature.
 ## Build order
 
 1. **Slice 1 (done):** app shell, DM thread with all message cards and a working composer, inline approval card (Approve / Deny / Edit).
-2. Group chats with @mentions.
-3. Approvals inbox.
-4. Details pane tabs in depth (routines, memory, computer).
-5. Routines, Connect apps, Marketplace, Settings, ⌘K command palette, one at a time.
+2. **App pages (done):** create bot, marketplace, approvals inbox, routines, connect apps, settings (7 sections), ⌘K palette, workspace header.
+3. **Next:** group chats with an @mention picker; then computer view (live screen, take over) and routine recording.
 
 Each slice is shown to the owner before the next starts.

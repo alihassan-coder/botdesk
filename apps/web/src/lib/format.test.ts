@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { formatBytes, formatShortAgo, formatUsd, initialOf } from "./format";
+import { formatBytes, formatCount, formatShortAgo, formatUsd, initialOf } from "./format";
 
 const NOW = new Date("2026-11-12T12:00:00Z").getTime();
 const minutesAgo = (m: number) => new Date(NOW - m * 60_000).toISOString();
@@ -39,6 +39,14 @@ describe("formatBytes", () => {
 describe("formatUsd", () => {
   it("shows dollars with cents", () => {
     expect(formatUsd(31.4)).toBe("$31.40");
+  });
+});
+
+describe("formatCount", () => {
+  it("keeps small numbers and shortens big ones", () => {
+    expect(formatCount(980)).toBe("980");
+    expect(formatCount(12_400)).toBe("12.4k");
+    expect(formatCount(2_000_000)).toBe("2M");
   });
 });
 

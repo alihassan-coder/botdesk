@@ -9,9 +9,16 @@
  * screens stay the same.
  */
 import { useCallback, useRef, useSyncExternalStore } from "react";
+import { makeHandle } from "@/lib/handle";
 import { parseMentions } from "@/lib/mentions";
 import * as mock from "./mock/fixtures";
-import type { Approval, ApprovalStatus, Bot, Message, Participant, Thread } from "./types";
+import type { Approval, ApprovalStatus, Bot, Message, Participant, ProviderCredential, Thread, User } from "./types";
+
+/** What you fill in to create a bot; the rest (id, handle, status…) is filled in for you. */
+export type NewBotInput = Pick<
+  Bot,
+  "name" | "role" | "description" | "avatarColor" | "modelId" | "securityLevel" | "computerMode" | "instructions" | "monthlyBudgetUsd"
+>;
 
 interface State {
   org: typeof mock.org;
@@ -195,36 +202,81 @@ export const actions = {
     set((st) => ({ ...st, memories: st.memories.filter((m) => m.id !== memoryId) }));
   },
 
-  createBotFromTemplate(templateId: string) {
-    const t = state.templates.find((x) => x.id === templateId);
-    if (!t) return null;
+  /**
+   * Creates a bot and its DM. The bot speaks first, so the chat never opens empty.
+   * Returns the new thread's id so the screen can open it.
+   */
+  createBot(input: NewBotInput) {
     const botId = `b_${id()}`;
     const threadId = `t_${id()}`;
-    const handle = t.name.toLowerCase().replace(/[^a-z0-9]+/g, "-");
+    const handle = makeHandle(input.name, [...state.bots.map((b) => b.handle), ...state.users.map((u) => u.handle)]);
+    const hello = `Hi! I'm ${input.name}. ${input.description || input.role} What should I work on first?`;
+
     set((st) => ({
       ...st,
       bots: [
         ...st.bots,
-        {
-          id: botId, name: t.name, handle, role: t.role, description: t.description, avatarColor: t.avatarColor,
-          status: "idle", statusText: "Just hired", modelId: "m_claude", securityLevel: "ask-before-acting",
-          computerMode: "own", connectionIds: [], instructions: "", createdAt: now(), monthlyBudgetUsd: 20, spentThisMonthUsd: 0,
-        },
+        { ...input, id: botId, handle, status: "idle", statusText: "Just hired", connectionIds: [], createdAt: now(), spentThisMonthUsd: 0 },
       ],
       threads: [
         {
-          id: threadId, kind: "dm", title: t.name, botId,
+          id: threadId, kind: "dm", title: input.name, botId,
           participants: [{ type: "user", id: st.currentUserId }, { type: "bot", id: botId }],
-          lastMessageAt: now(), lastMessagePreview: "Hi! What should I work on first?", unread: 1,
+          lastMessageAt: now(), lastMessagePreview: hello, unread: 0,
         },
         ...st.threads,
       ],
-      messages: [
-        ...st.messages,
-        { id: id(), threadId, author: { type: "bot", id: botId }, createdAt: now(), parts: [{ type: "text", text: `Hi! I'm ${t.name}. ${t.description} What should I work on first?` }] },
-      ],
+      messages: [...st.messages, { id: id(), threadId, author: { type: "bot", id: botId }, createdAt: now(), parts: [{ type: "text", text: hello }] }],
     }));
     return threadId;
+  },
+
+  /** Hire a ready-made bot from the marketplace, with safe defaults. */
+  createBotFromTemplate(templateId: string) {
+    const t = state.templates.find((x) => x.id === templateId);
+    if (!t) return null;
+    return actions.createBot({
+      name: t.name, role: t.role, description: t.description, avatarColor: t.avatarColor,
+      modelId: "m_claude", securityLevel: "ask-before-acting", computerMode: "own",
+      instructions: "", monthlyBudgetUsd: 20,
+    });
+  },
+
+  updateCurrentUser(patch: Partial<Pick<User, "name" | "handle">>) {
+    set((st) => ({ ...st, users: st.users.map((u) => (u.id === st.currentUserId ? { ...u, ...patch } : u)) }));
+  },
+
+  /** MOCK: adds the invited person straight away. The real API sends an email invite. */
+  inviteMember(email: string, role: User["role"]) {
+    const name = email.split("@")[0].replace(/[._-]+/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
+    const handle = makeHandle(name, state.users.map((u) => u.handle));
+    set((st) => ({ ...st, users: [...st.users, { id: `u_${id()}`, name, email, handle, role, presence: "offline" }] }));
+  },
+
+  changeMemberRole(userId: string, role: User["role"]) {
+    set((st) => ({ ...st, users: st.users.map((u) => (u.id === userId ? { ...u, role } : u)) }));
+  },
+
+  addCredential(input: Pick<ProviderCredential, "provider" | "label" | "owner" | "baseUrl"> & { key: string }) {
+    const { key, ...rest } = input;
+    const maskedKey = key.length > 8 ? `${key.slice(0, 4)}…${key.slice(-4)}` : "••••";
+    set((st) => ({ ...st, credentials: [...st.credentials, { ...rest, id: `k_${id()}`, maskedKey }] }));
+  },
+
+  removeCredential(credentialId: string) {
+    set((st) => ({ ...st, credentials: st.credentials.filter((k) => k.id !== credentialId) }));
+  },
+
+  /** MOCK: connecting an app (OAuth for Gmail, a URL for MCP) succeeds at once. */
+  connectApp(connectorId: string, account: string) {
+    set((st) => ({
+      ...st,
+      connections: [...st.connections, { id: `c_${id()}`, connectorId, account, owner: "user", status: "connected", connectedAt: now() }],
+    }));
+  },
+
+  disconnectApp(connectionId: string) {
+    set((st) => ({ ...st, connections: st.connections.filter((c) => c.id !== connectionId) }));
   },
 
   /** Back to the original mock data. Also cancels bot replies still in progress, so none land afterwards. */
@@ -351,6 +403,30 @@ export const useBotRoutines = (botId?: string) =>
 /** Memories this bot can use: its own plus the ones shared with every bot. */
 export const useBotMemories = (botId?: string) =>
   useStore(useCallback((s: State) => s.memories.filter((m) => !m.botId || m.botId === botId), [botId]));
+
+/* Whole-collection hooks for the app pages (marketplace, settings, approvals…). */
+export const useBots = () => useStore(useCallback((s: State) => s.bots, []));
+export const useUsers = () => useStore(useCallback((s: State) => s.users, []));
+export const useModels = () => useStore(useCallback((s: State) => s.models, []));
+export const useCredentials = () => useStore(useCallback((s: State) => s.credentials, []));
+export const useTemplates = () => useStore(useCallback((s: State) => s.templates, []));
+export const useRoutines = () => useStore(useCallback((s: State) => s.routines, []));
+export const useMemories = () => useStore(useCallback((s: State) => s.memories, []));
+export const useUsage = () => useStore(useCallback((s: State) => s.usage, []));
+export const useConnectors = () => useStore(useCallback((s: State) => s.connectors, []));
+export const useConnections = () => useStore(useCallback((s: State) => s.connections, []));
+
+/** Every approval, waiting ones first, then newest first. */
+export const useApprovals = () =>
+  useStore(
+    useCallback(
+      (s: State) =>
+        [...s.approvals].sort(
+          (a, b) => Number(b.status === "pending") - Number(a.status === "pending") || b.requestedAt.localeCompare(a.requestedAt),
+        ),
+      [],
+    ),
+  );
 
 /** Display name for whoever wrote a message or is in a thread. */
 export const useParticipantName = (p?: Participant | { type: "system"; id: "system" }) =>

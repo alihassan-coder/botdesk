@@ -23,7 +23,7 @@ export function MembersSettings() {
       >
         <ul className="flex flex-col divide-y rounded-2xl border">
           {users.map((u) => (
-            <MemberRow key={u.id} member={u} isMe={u.id === me.id} canManage={canManage} />
+            <MemberRow key={u.id} member={u} isMe={u.id === me.id} yourRole={me.role} />
           ))}
         </ul>
       </SettingsSection>

@@ -11,7 +11,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { actions, isDemoMode, useUsers } from "@/data/store";
 import type { User } from "@/data/types";
 import { looksLikeEmail } from "@/lib/email";
-import { ROLES } from "./roles";
+import { INVITE_ROLES } from "./roles";
 
 /**
  * Invite someone by email. With the API there's no email sending yet, so the dialog
@@ -86,7 +86,7 @@ function InviteForm({ onInvited, onCancel }: { onInvited: (inviteUrl?: string) =
             <FieldLabel htmlFor="invite-role">Role</FieldLabel>
             <Select value={role} onValueChange={(r) => setRole(r as User["role"])}>
               <SelectTrigger id="invite-role" className="w-full"><SelectValue /></SelectTrigger>
-              <SelectContent>{ROLES.map((r) => <SelectItem key={r.value} value={r.value}>{r.label}</SelectItem>)}</SelectContent>
+              <SelectContent>{INVITE_ROLES.map((r) => <SelectItem key={r.value} value={r.value}>{r.label}</SelectItem>)}</SelectContent>
             </Select>
           </Field>
         </FieldGroup>

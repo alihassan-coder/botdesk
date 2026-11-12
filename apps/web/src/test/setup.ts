@@ -36,6 +36,10 @@ globalThis.ResizeObserver ??= class {
   disconnect() {}
 };
 Element.prototype.scrollIntoView ??= vi.fn();
+// Radix Select asks about pointer capture when it opens.
+Element.prototype.hasPointerCapture ??= () => false;
+Element.prototype.setPointerCapture ??= vi.fn();
+Element.prototype.releasePointerCapture ??= vi.fn();
 
 // Each test starts with fresh mock data, an empty page and nothing saved (no session, no preferences).
 afterEach(() => {

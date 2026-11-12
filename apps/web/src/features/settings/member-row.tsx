@@ -1,4 +1,4 @@
-import { useTransition } from "react";
+import { useState, useTransition } from "react";
 import { toast } from "sonner";
 import { UserMinus } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -17,18 +17,24 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { actions } from "@/data/store";
 import type { User } from "@/data/types";
 import { MemberAvatar } from "@/features/bots/bot-avatar";
-import { ROLES } from "./roles";
+import { canChangeRole, rolesYouCanGive } from "./roles";
 
-/** One person in Settings → Members. Owners are shown, not edited, here. */
-export function MemberRow({ member, isMe, canManage }: { member: User; isMe: boolean; canManage: boolean }) {
+type Role = User["role"];
+
+/** One person in Settings → Members, with their role and (if you may) a way to change or remove them. */
+export function MemberRow({ member, isMe, yourRole }: { member: User; isMe: boolean; yourRole: Role }) {
   const [saving, startSaving] = useTransition();
-  const editable = canManage && member.role !== "owner";
+  const [confirmingOwner, setConfirmingOwner] = useState(false);
+  const editable = canChangeRole(yourRole, member.role);
 
-  const changeRole = (role: User["role"]) =>
+  const changeRole = (role: Role) =>
     startSaving(async () => {
       const result = await actions.changeMemberRole(member.id, role);
       if (!result.ok) toast.error(result.error);
     });
+
+  // Making an owner can't be undone by an admin, so ask first. Other changes save at once.
+  const pickRole = (role: Role) => (role === "owner" ? setConfirmingOwner(true) : changeRole(role));
 
   return (
     <li className="flex items-center gap-3 p-3">
@@ -40,15 +46,35 @@ export function MemberRow({ member, isMe, canManage }: { member: User; isMe: boo
         <p className="truncate text-xs text-muted-foreground">{member.email}</p>
       </div>
       {editable ? (
-        <Select value={member.role} onValueChange={(role) => changeRole(role as User["role"])} disabled={saving}>
+        <Select value={member.role} onValueChange={(role) => pickRole(role as Role)} disabled={saving}>
           <SelectTrigger className="w-32" aria-label={`Role for ${member.name}`}><SelectValue /></SelectTrigger>
-          <SelectContent>{ROLES.map((r) => <SelectItem key={r.value} value={r.value}>{r.label}</SelectItem>)}</SelectContent>
+          <SelectContent>{rolesYouCanGive(yourRole).map((r) => <SelectItem key={r.value} value={r.value}>{r.label}</SelectItem>)}</SelectContent>
         </Select>
       ) : (
         <span className="shrink-0 px-3 text-sm text-muted-foreground capitalize sm:w-32">{member.role}</span>
       )}
       {editable && !isMe ? <RemoveMember member={member} /> : <span className="hidden size-9 sm:block" aria-hidden />}
+      <ConfirmOwner member={member} open={confirmingOwner} onOpenChange={setConfirmingOwner} onConfirm={() => changeRole("owner")} />
     </li>
+  );
+}
+
+function ConfirmOwner({ member, open, onOpenChange, onConfirm }: { member: User; open: boolean; onOpenChange: (open: boolean) => void; onConfirm: () => void }) {
+  return (
+    <AlertDialog open={open} onOpenChange={onOpenChange}>
+      <AlertDialogContent>
+        <AlertDialogHeader>
+          <AlertDialogTitle>Make {member.name} an owner?</AlertDialogTitle>
+          <AlertDialogDescription>
+            Owners can do everything you can, including changing who else is an owner and removing you. Only another owner can undo this.
+          </AlertDialogDescription>
+        </AlertDialogHeader>
+        <AlertDialogFooter>
+          <AlertDialogCancel>Cancel</AlertDialogCancel>
+          <AlertDialogAction onClick={onConfirm}>Make owner</AlertDialogAction>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
   );
 }
 

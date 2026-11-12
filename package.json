@@ -1,7 +1,7 @@
 {
   "name": "botdesk",
   "private": true,
-  "description": "BotDesk — open-source AI assistant for teams. Any model, shared memory, agents you can @mention.",
+  "description": "BotDesk \u00e2\u20ac\u201d open-source AI assistant for teams. Any model, shared memory, agents you can @mention.",
   "license": "MIT",
   "packageManager": "pnpm@12.14.0",
   "engines": {
@@ -10,15 +10,19 @@
   "scripts": {
     "dev": "turbo run dev",
     "dev:web": "pnpm --filter @botdesk/web dev",
+    "dev:api": "pnpm --filter @botdesk/api dev",
     "build": "turbo run build",
     "build:web": "pnpm --filter @botdesk/web build",
     "start:web": "pnpm --filter @botdesk/web start",
+    "start:api": "pnpm --filter @botdesk/api start",
     "lint": "turbo run lint",
     "typecheck": "turbo run typecheck",
     "test": "turbo run test",
     "test:web": "pnpm --filter @botdesk/web test",
+    "test:api": "pnpm --filter @botdesk/api test",
     "test:e2e": "pnpm --filter @botdesk/web test:e2e",
-    "check": "turbo run typecheck lint test"
+    "check": "turbo run typecheck lint test",
+    "db:migrate": "pnpm --filter @botdesk/api db:migrate"
   },
   "devDependencies": {
     "turbo": "^2.5.8",

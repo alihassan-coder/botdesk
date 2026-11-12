@@ -18,7 +18,8 @@ BotDesk is an open-source (MIT) version of [Grok Bot](https://x.ai/news/introduc
 | [architecture/high-level.md](architecture/high-level.md) | API, agent runtime, computers, plugins, data model, security levels, approvals, open owner questions (§16) |
 | [adr/0001-product-scope-and-deployment.md](adr/0001-product-scope-and-deployment.md) | ADR 0001: product scope and deployment |
 | [adr/0002-grok-bot-parity-and-plugin-platform.md](adr/0002-grok-bot-parity-and-plugin-platform.md) | ADR 0002: Grok Bot parity, plugin integrations, security levels, approvals |
-| `adr/0003-python-backend.md` | ADR 0003: Python backend (FastAPI, SQLAlchemy, LangGraph, mem0). Coming soon |
+| [adr/0003-python-backend.md](adr/0003-python-backend.md) | ADR 0003: Python backend (FastAPI, SQLAlchemy, Alembic, LangGraph, mem0) |
+| [backend/README.md](backend/README.md) | Backend guide: run it, folders, request flow, routes, security |
 
 ## Building
 

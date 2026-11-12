@@ -1,12 +1,10 @@
-# @botdesk/api — coming soon
+# @botdesk/api
 
-The BotDesk backend: one API for web, desktop and mobile.
+The BotDesk backend: one API for web, desktop and mobile. Python 3.13, FastAPI, SQLAlchemy 2 (async), Alembic, PostgreSQL (Neon).
 
-**Planned stack** (see [architecture](../../docs/architecture/high-level.md)):
-- Node.js + [Hono](https://hono.dev), typed client via oRPC contract (`packages/contract`, `packages/sdk`)
-- PostgreSQL + pgvector, Drizzle ORM + Drizzle Kit migrations
-- Better Auth (orgs, teams, roles), envelope-encrypted model keys
-- Durable bot runs, approvals and routines (DBOS, in `apps/worker`)
-- Plugin-based integrations (Gmail first), mem0 memory, WebSocket realtime
+```bash
+uv sync && cp .env.example .env   # once
+pnpm dev:api                      # from the repo root → http://localhost:8000/api/docs
+```
 
-Until this lands, `apps/web` runs on mock data in `apps/web/src/data/mock/`.
+Everything else (folders, how a request flows, routes, security, what's next): [docs/backend/README.md](../../docs/backend/README.md). Why Python: [ADR 0003](../../docs/adr/0003-python-backend.md).

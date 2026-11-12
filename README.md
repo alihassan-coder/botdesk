@@ -9,7 +9,7 @@ Open-source (MIT) Grok Bot: your team of always-on AI bots. Any model, self-host
 | Path | What |
 |---|---|
 | `apps/web` | Next.js web app (first client), on mock data for now |
-| `apps/api` | Python API (in progress) |
+| `apps/api` | Python API: FastAPI, SQLAlchemy, Alembic (sign-in and organizations so far) |
 | `apps/desktop`, `apps/mobile` | Electron and Expo clients (coming soon) |
 | `packages/*` | Shared code: UI, database, core logic, API client (planned) |
 
@@ -38,9 +38,16 @@ Inside `apps/web` you can also run `pnpm test:watch` to re-run tests as you edit
 
 ### Backend
 
-<!-- BACKEND COMMANDS: to be filled in with apps/api (pnpm dev:api, setup, migrations, tests). -->
+Python 3.13 + FastAPI, run with [uv](https://docs.astral.sh/uv/). First time: `cd apps/api && uv sync && cp .env.example .env` (set `DATABASE_URL` to your Neon URL, or leave it for local SQLite).
 
-_Coming soon: commands for `apps/api` (Python)._
+| Command | What it does |
+|---|---|
+| `pnpm dev:api` | Apply migrations, then run the API on http://localhost:8000 (docs at `/api/docs`) |
+| `pnpm start:api` | Same, without auto-reload |
+| `pnpm test:api` | pytest on in-memory SQLite, no network (~5s) |
+| `pnpm db:migrate` | Apply Alembic migrations to `DATABASE_URL` |
+
+`pnpm check` covers the API too (mypy, ruff, pytest). More: [docs/backend/README.md](docs/backend/README.md).
 
 ## License
 

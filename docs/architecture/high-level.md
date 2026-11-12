@@ -1,5 +1,7 @@
 # BotDesk — High-Level Architecture (proposal)
 
+> **Backend stack changed (2026-11-12):** the API is Python (FastAPI, SQLAlchemy, Alembic, LangGraph, mem0), not Node/Hono/Drizzle/Better Auth/DBOS. See [ADR 0003](../adr/0003-python-backend.md). Plugins, security levels, approvals and the data model below still apply.
+
 > Status: **proposal for discussion**, 2026-11-11 (second pass). Nothing is built yet. Library versions and licenses were checked on npm/GitHub on 2026-11-11.
 > Product: an open-source (MIT) **Grok Bot**, a team of always-on AI agents ("bots") with their own cloud computers, approvals, group chats, routines and memory. See [vision](../product/vision.md), [ADR 0001](../adr/0001-product-scope-and-deployment.md) and [ADR 0002](../adr/0002-grok-bot-parity-and-plugin-platform.md).
 
@@ -194,7 +196,7 @@ flowchart LR
 | (b) Copy its plugin model on DBOS + AI SDK | **Yes — this is the core of the recommendation.** Copy: capability seams; reversible registrations; tool pipeline waterfalls; mandatory output schemas + presenters; "model-visible ⟺ logged"; fail-closed approval answerers; permission presets → security levels; plan-approval; presets → bot templates; index-based plugin market |
 | (c) Hybrid | **Later, optional:** add a `subagent` provider that runs `dsh --profile sdk` (or Claude Code/Codex) **inside a bot's own computer**, where single-user is exactly right — e.g. a "coding" bot. Revisit when dsh is ≥ 1.0 |
 
-**Recommendation: (b) now, (c) as an opt-in plugin later.** Record this in ADR 0003.
+**Recommendation: (b) now, (c) as an opt-in plugin later.** Record this in a later ADR.
 
 ### 5.2 Durable workflows
 
@@ -600,7 +602,7 @@ Answered and removed since the first pass: v1 scope (= full Grok Bot parity), fi
 
 | # | Question | Recommended default |
 |---|---|---|
-| 1 | **dsh: adopt, copy or hybrid?** (for ADR 0003) | Copy its plugin model on DBOS + AI SDK now; dsh / Claude Code / Codex as optional sub-agents inside bot computers later |
+| 1 | **dsh: adopt, copy or hybrid?** (for a later ADR) | Copy its plugin model on DBOS + AI SDK now; dsh / Claude Code / Codex as optional sub-agents inside bot computers later |
 | 2 | **Computer hosting for SaaS:** E2B (pay per use) or our own Firecracker/gVisor fleet? | E2B for SaaS launch, Docker + gVisor for self-host |
 | 3 | **Computer per bot or shared per user (like Grok)?** | Per bot by default, shared as an opt-in |
 | 4 | **Google verification for SaaS Gmail:** budget the restricted-scope review + yearly CASA assessment, or launch SaaS Gmail via "bring your own Google OAuth client" first? | Start BYO-client (and self-host) while verification runs in parallel |

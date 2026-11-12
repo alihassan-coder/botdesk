@@ -19,6 +19,7 @@ Open-source (MIT) Grok Bot: a team of always-on AI bots that work in your apps, 
 - **No Grok/xAI assets.** Match Grok Bot's flows and layout; use BotDesk's own name, colours and icons.
 - **Network is slow** on the owner's machine: batch installs, avoid cloning large repos (read them on GitHub instead).
 - `apps/web/AGENTS.md` has Next.js 16 rules: read it before writing Next code.
+- `apps/api/AGENTS.md` has the Python backend rules (layers, `/api/v1`, migrations): read it before touching `apps/api`. Backend stack: [ADR 0003](docs/adr/0003-python-backend.md).
 
 ## Skills
 
@@ -30,7 +31,7 @@ Load the matching skill before starting the task:
 - **System design:** `mattpocock-skills:to-spec`, then `to-tickets`; architecture health with `mattpocock-skills:improve-codebase-architecture`. Record decisions as ADRs in `docs/adr/`.
 - **GLOSSARY.md, ADRs, naming:** `mattpocock-skills:domain-modeling`.
 - **Module boundaries** (store/mock seam, `packages/*`): `mattpocock-skills:codebase-design`.
-- **Auth, orgs, roles** (`apps/api`): `better-auth-best-practices`, `organization-best-practices`.
+- **Auth, orgs, roles** (`apps/api`): own email/password auth per ADR 0003 (Better Auth is no longer used).
 - **Bugs:** `mattpocock-skills:diagnosing-bugs`. **Logic with tests:** `mattpocock-skills:tdd`. **Reviews:** `mattpocock-skills:code-review`.
 
 Adding skills: Claude Code plugins go in `enabledPlugins` in [.claude/settings.json](.claude/settings.json); standalone skills go in with `npx skills add <owner/repo>`, which writes `.claude/skills/` and `skills-lock.json`.

@@ -1,0 +1,28 @@
+name: Feature request
+description: Suggest an idea or an improvement
+title: "feat: "
+labels: ["enhancement", "triage"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem would this solve?
+      description: Describe the situation and why it's frustrating today. The problem matters more than the solution.
+      placeholder: I want my Inbox bot to stop asking me to approve replies to my own team.
+    validations:
+      required: true
+  - type: textarea
+    id: idea
+    attributes:
+      label: Your idea
+      description: How would you like it to work? Rough sketches are welcome.
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Other options you considered
+  - type: checkboxes
+    id: help
+    attributes:
+      label: Want to help build it?
+      options:
+        - label: I'd like to work on this (we'll help you get started)

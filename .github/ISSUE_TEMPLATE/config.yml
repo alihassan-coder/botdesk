@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Report a security problem
+    url: https://github.com/alihassan-coder/botdesk/security/advisories/new
+    about: Please report security issues privately (or email alihassan.coder@gmail.com), never in a public issue.
+  - name: Getting started guide
+    url: https://github.com/alihassan-coder/botdesk/blob/main/docs/getting-started.md
+    about: Setup help and fixes for common problems.

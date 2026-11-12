@@ -1,6 +1,22 @@
 # BotDesk Docs
 
-BotDesk is an open-source (MIT) version of [Grok Bot](https://x.ai/news/introducing-grok-bot): your team of always-on AI bots.
+BotDesk is an open-source (MIT) team of always-on AI bots that work in your apps, talk with you in chat, and ask before anything risky. Its flows are inspired by [Grok Bot](https://x.ai/news/introducing-grok-bot).
+
+**New here?** Read in this order:
+
+1. [getting-started.md](getting-started.md): run it on your machine
+2. [product/spec.md](product/spec.md): what we're building and why
+3. [architecture/agents-and-plugins.md](architecture/agents-and-plugins.md): how it works, with diagrams
+4. [../CONTRIBUTING.md](../CONTRIBUTING.md): how to send your first change
+
+## For contributors
+
+| Doc | What it covers |
+|---|---|
+| [getting-started.md](getting-started.md) | Install the tools, run the web app and API, fix common problems |
+| [../CONTRIBUTING.md](../CONTRIBUTING.md) | Ways to help, branches, commit messages, code style, tests |
+| [../SECURITY.md](../SECURITY.md) | How to report a security problem privately |
+| [../CODE_OF_CONDUCT.md](../CODE_OF_CONDUCT.md) | How we treat each other |
 
 ## Product
 

@@ -7,7 +7,7 @@ import { Inbox } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Empty, EmptyContent, EmptyDescription, EmptyHeader, EmptyTitle } from "@/components/ui/empty";
 import { SidebarTrigger } from "@/components/ui/sidebar";
-import { useBotsLoading, useLatestThreadId, usePendingApprovalCount } from "@/data/store";
+import { useAuthStatus, useBotsLoading, useLatestThreadId, usePendingApprovalCount } from "@/data/store";
 import { BotdeskLockup } from "./logo";
 import { ThreadList } from "./thread-list";
 
@@ -22,11 +22,13 @@ export function HomeScreen() {
   const latestThreadId = useLatestThreadId();
   const pendingApprovals = usePendingApprovalCount();
   const loading = useBotsLoading();
+  // The auth gate renders this screen (hidden) before it knows who you are: wait for that.
+  const signedIn = useAuthStatus() === "signed-in";
 
   useEffect(() => {
     // Read the screen size directly: it's correct on the very first effect, unlike the first render.
-    if (latestThreadId && !window.matchMedia(PHONE).matches) router.replace(`/chat/${latestThreadId}`);
-  }, [latestThreadId, router]);
+    if (signedIn && latestThreadId && !window.matchMedia(PHONE).matches) router.replace(`/chat/${latestThreadId}`);
+  }, [signedIn, latestThreadId, router]);
 
   return (
     <>

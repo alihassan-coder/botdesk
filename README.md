@@ -70,7 +70,7 @@ BotDesk is in **early development**. Here's what works today:
 | Tools and approvals (risky actions wait for Approve / Edit / Deny) | ✅ API done · 🚧 web next |
 | Plugin SDK, Gmail, routines, MCP | 📋 Planned |
 
-The full history is in [docs/PROGRESS.md](docs/PROGRESS.md), and the plan is in [docs/product/spec.md](docs/product/spec.md).
+What is done and what comes next, as one checklist: [docs/ROADMAP.md](docs/ROADMAP.md). The dated history is in [docs/PROGRESS.md](docs/PROGRESS.md).
 
 ## Try it in two minutes (no backend needed)
 

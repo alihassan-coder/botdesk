@@ -24,6 +24,7 @@ BotDesk is an open-source (MIT) team of always-on AI bots that work in your apps
 |---|---|
 | [product/spec.md](product/spec.md) | **Start here.** v1 scope, screens, build order, current status |
 | [product/vision.md](product/vision.md) | Why BotDesk exists and how it wins |
+| [ROADMAP.md](ROADMAP.md) | One checklist: what is done and what is next |
 | [PROGRESS.md](PROGRESS.md) | What has been built so far, newest first |
 | [../GLOSSARY.md](../GLOSSARY.md) | Domain terms. Use these words in code and UI |
 

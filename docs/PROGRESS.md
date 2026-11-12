@@ -1,6 +1,6 @@
 # Progress
 
-A short history of BotDesk, newest first. For what is planned next, see the status section in [product/spec.md](product/spec.md#status-2026-11-12).
+A short history of BotDesk, newest first. For one checklist of what is done and what is next, see [ROADMAP.md](ROADMAP.md).
 
 ## 2026-11-12: chats on the API, and the web checked end to end
 

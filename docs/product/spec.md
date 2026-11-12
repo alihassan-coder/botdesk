@@ -81,9 +81,6 @@ History: [PROGRESS.md](../PROGRESS.md).
 - Wiring the web app to the API in `store.ts` (bots are done).
 - Next backend step: bots reply (job queue, worker, streaming). Build order: [agents-and-plugins.md §14](../architecture/agents-and-plugins.md#14-build-order-each-step-small-tested-and-usable).
 
-**Next**
-
-- Web: group chats with an @mention picker, the computer view (live screen, take over) and routine recording.
-- Design: brand tokens (colour, type, radius, motion), then the bot avatar system.
+**Next:** see the checklist in [ROADMAP.md](../ROADMAP.md).
 
 **Open:** the remaining owner questions in [high-level.md §16](../architecture/high-level.md#16-questions-for-the-owner) (computers, approvers, pricing, retention, marketplace).

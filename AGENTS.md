@@ -4,7 +4,7 @@ Open-source (MIT) Grok Bot: a team of always-on AI bots that work in your apps, 
 
 ## Read before working
 
-- **Product scope, screens, build order, current status** → [docs/product/spec.md](docs/product/spec.md)
+- **Product scope, screens, build order** → [docs/product/spec.md](docs/product/spec.md); **what is done and what is next** → [docs/ROADMAP.md](docs/ROADMAP.md) (tick items when you finish them)
 - **Domain terms** (Bot, Run, Approval, Routine, Plugin, Security level…) → [GLOSSARY.md](GLOSSARY.md). Use these words exactly in code and UI.
 - **Architecture** (API, agent runtime, tools and approvals, plugins, scaling) → [docs/architecture/README.md](docs/architecture/README.md) (reading guide); what the API does today → [docs/backend/README.md](docs/backend/README.md)
 - **Decisions already made** → [docs/adr/](docs/adr/). Treat accepted ADRs as fixed; propose changes as a new ADR.

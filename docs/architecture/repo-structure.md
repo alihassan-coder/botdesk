@@ -58,12 +58,11 @@ botdesk/
 │     └─ pyproject.toml          depends only on botdesk-plugin-sdk (+ its own HTTP libs)
 │
 ├─ deploy/                       how to RUN it yourself
-│  └─ docker/
-│     ├─ docker-compose.yml      (step 4) postgres, migrate, api, worker, web
-│     ├─ docker-compose.dev.yml  (step 0) just Postgres + pgvector, for local development
-│     ├─ .env.example            every setting, with comments
-│     ├─ api.Dockerfile          one image for api, worker and migrate (different command)
-│     └─ web.Dockerfile
+│  ├─ docker-compose.yml         (step 4) postgres, migrate, api, worker, web
+│  ├─ docker-compose.dev.yml     (step 0) just Postgres + pgvector, for local development
+│  ├─ .env.example               every setting, with comments
+│  ├─ api.Dockerfile             one image for api, worker and migrate (different command)
+│  └─ web.Dockerfile
 │
 ├─ .github/                      (exists) CI, issue and PR templates; the rest of §6 soon
 ├─ docs/                         (exists) product, architecture, adr, backend, frontend, design, research
@@ -243,7 +242,7 @@ Two promises that make upgrades safe for self-hosters:
 
 ### Self-hosting: one compose file
 
-`deploy/docker/docker-compose.yml`, five services, one of which exits after doing its job:
+`deploy/docker-compose.yml`, five services, one of which exits after doing its job:
 
 | Service | Image | Notes |
 |---|---|---|
@@ -281,10 +280,10 @@ Nothing here needs a big-bang change. Fold it into the build order:
 | When | Do |
 |---|---|
 | Done | ADR 0006; the root README's `packages/*` row; CI (`pnpm check`), CONTRIBUTING, SECURITY, CODE_OF_CONDUCT, issue and PR templates. |
-| Step 0 | `deploy/docker/docker-compose.dev.yml` (Postgres + pgvector). Postgres in CI. `CODEOWNERS`, `dependabot.yml`. |
+| Step 0 | `deploy/docker-compose.dev.yml` (Postgres + pgvector). Postgres in CI. `CODEOWNERS`, `dependabot.yml`. |
 | Step 1 | `src/jobs/`, `src/agents/`, `src/events/`, `src/worker.py`. |
 | Step 3 | Root uv workspace. `packages/plugin-sdk`, `plugins/_template`, `plugins/demo-echo`. Import rules in CI. `docs/plugins/`. |
-| Step 4 | `deploy/docker/docker-compose.yml`, the two Dockerfiles, `.env.example`, `docs/self-hosting/`, the compose smoke test, `release.yml` and the first tagged release. |
+| Step 4 | `deploy/docker-compose.yml`, the two Dockerfiles, `.env.example`, `docs/self-hosting/`, the compose smoke test, `release.yml` and the first tagged release. |
 | Step 5 | `plugins/gmail`. |
 | When a layer passes ~12 files | Group by area (§5.2), in one commit. |
 | When a second client app starts | `packages/api-client`. |

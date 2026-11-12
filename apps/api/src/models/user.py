@@ -24,3 +24,15 @@ class Session(IdMixin, CreatedAtMixin, Base):
     token_hash: Mapped[str] = mapped_column(String(64), unique=True, index=True)
     user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
     expires_at: Mapped[datetime]
+
+
+class PasswordResetToken(IdMixin, CreatedAtMixin, Base):
+    """A password reset link. Like sessions, only the SHA-256 hash of the token is stored.
+    Works once (`used_at`) and only until `expires_at`."""
+
+    __tablename__ = "password_reset_tokens"
+
+    user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    token_hash: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    expires_at: Mapped[datetime]
+    used_at: Mapped[datetime | None]

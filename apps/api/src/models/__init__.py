@@ -6,7 +6,7 @@ from src.models.invitation import Invitation
 from src.models.organization import Membership, Organization
 from src.models.run import Run, RunEvent, ToolExecution
 from src.models.thread import Message, Thread, ThreadParticipant
-from src.models.user import Session, User
+from src.models.user import PasswordResetToken, Session, User
 
 __all__ = [
     "Bot",
@@ -14,6 +14,7 @@ __all__ = [
     "Membership",
     "Message",
     "Organization",
+    "PasswordResetToken",
     "Run",
     "RunEvent",
     "Session",

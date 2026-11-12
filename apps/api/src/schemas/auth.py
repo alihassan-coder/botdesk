@@ -30,6 +30,13 @@ class ForgotPasswordIn(ApiModel):
     email: EmailStr
 
 
+class ResetPasswordIn(ApiModel):
+    """The token from the reset link, and the new password (the same rules as sign-up)."""
+
+    token: str = Field(min_length=1, max_length=256)
+    password: str = Field(min_length=MIN_PASSWORD_LENGTH, max_length=128)
+
+
 class UserOut(ApiModel):
     id: uuid.UUID
     name: str

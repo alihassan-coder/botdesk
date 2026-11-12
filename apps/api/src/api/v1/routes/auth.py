@@ -1,6 +1,6 @@
-from fastapi import APIRouter, Request, Response, status
+from fastapi import APIRouter, BackgroundTasks, Request, Response, status
 
-from src.api.deps import AppSettings, CurrentUser, Db, session_token
+from src.api.deps import AppSettings, CurrentUser, Db, Emails, session_token
 from src.controllers import auth_controller
 from src.schemas.auth import (
     ChangePasswordIn,
@@ -8,6 +8,7 @@ from src.schemas.auth import (
     MeOut,
     MessageOut,
     ProfileUpdate,
+    ResetPasswordIn,
     SignInIn,
     SignUpIn,
 )
@@ -38,8 +39,17 @@ async def me(user: CurrentUser, db: Db) -> MeOut:
 
 
 @router.post("/forgot-password", status_code=status.HTTP_202_ACCEPTED)
-async def forgot_password(body: ForgotPasswordIn) -> MessageOut:
-    return await auth_controller.forgot_password()
+async def forgot_password(
+    body: ForgotPasswordIn, db: Db, settings: AppSettings, emails: Emails, background: BackgroundTasks
+) -> MessageOut:
+    """Emails a reset link if the account exists. Always the same answer, so it doesn't reveal accounts."""
+    return await auth_controller.forgot_password(db, settings, emails, background, body)
+
+
+@router.post("/reset-password")
+async def reset_password(body: ResetPasswordIn, db: Db) -> MessageOut:
+    """Set a new password from a reset link (works once, until it expires). Signs out every device."""
+    return await auth_controller.reset_password(db, body)
 
 
 @router.patch("/me")

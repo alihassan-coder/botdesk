@@ -21,6 +21,7 @@ from src.core.config import Settings
 from src.core.database import Base, create_engine
 from src.main import create_app
 from src.runtime.runner import RunManager
+from src.services.email_service import EmailMessage
 
 TEST_SETTINGS = Settings(environment="test", database_url="sqlite+aiosqlite://", _env_file=None)
 
@@ -42,11 +43,28 @@ async def _client_for(app: FastAPI) -> httpx.AsyncClient:
     return httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test")
 
 
+class FakeEmailSender:
+    """Records emails instead of sending them."""
+
+    def __init__(self) -> None:
+        self.sent: list[EmailMessage] = []
+
+    async def send(self, message: EmailMessage) -> None:
+        self.sent.append(message)
+
+
 @pytest.fixture
-async def client() -> AsyncIterator[httpx.AsyncClient]:
+def outbox() -> FakeEmailSender:
+    """The emails the `client` app sent (background tasks finish before the response returns)."""
+    return FakeEmailSender()
+
+
+@pytest.fixture
+async def client(outbox: FakeEmailSender) -> AsyncIterator[httpx.AsyncClient]:
     app = create_app(TEST_SETTINGS)
     async with app.router.lifespan_context(app):
         app.state.runs.enabled = False
+        app.state.email = outbox
         async with await _client_for(app) as http:
             yield http
 

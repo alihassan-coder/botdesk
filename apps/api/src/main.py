@@ -1,8 +1,10 @@
 """The FastAPI app. Run it with `pnpm dev:api` (from the repo root)."""
 
+import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
+import httpx
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
@@ -13,10 +15,25 @@ from src.core.database import Base, create_engine, create_sessionmaker, is_in_me
 from src.core.errors import AppError
 from src.runtime.memory import build_memory
 from src.runtime.runner import run_manager
+from src.services.email_service import build_email_sender
+
+# Calls to outside services (email) give up quickly; they run in the background anyway.
+OUTBOUND_TIMEOUT = httpx.Timeout(10.0, connect=5.0)
+
+
+def _show_app_logs() -> None:
+    """uvicorn sets up only its own loggers; show the app's INFO lines (e.g. "Email sent") too."""
+    app_logger = logging.getLogger("src")
+    if not app_logger.handlers:
+        handler = logging.StreamHandler()
+        handler.setFormatter(logging.Formatter("%(levelname)s:     %(name)s: %(message)s"))
+        app_logger.addHandler(handler)
+        app_logger.setLevel(logging.INFO)
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:
     settings = settings or get_settings()
+    _show_app_logs()
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
@@ -27,7 +44,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 await connection.run_sync(Base.metadata.create_all)
         app.state.engine = engine
         app.state.sessionmaker = create_sessionmaker(engine)
-        async with run_manager(settings, app.state.sessionmaker, build_memory(settings)) as runs:
+        async with (
+            httpx.AsyncClient(timeout=OUTBOUND_TIMEOUT) as http,
+            run_manager(settings, app.state.sessionmaker, build_memory(settings)) as runs,
+        ):
+            app.state.email = build_email_sender(settings, http)
             app.state.runs = runs
             yield
         await engine.dispose()

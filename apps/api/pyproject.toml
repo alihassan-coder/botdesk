@@ -11,6 +11,7 @@ dependencies = [
     "argon2-cffi>=25.1.0",
     "email-validator>=2.3.0",
     "fastapi>=0.162.5",
+    "httpx>=0.28.1",
     "langchain>=1.5.0",
     "langchain-anthropic>=1.7.10",
     "langchain-core>=1.8.0",
@@ -54,6 +55,7 @@ ignore = ["S101"]  # assert is how pytest checks things
 [tool.ruff.lint.per-file-ignores]
 "tests/**" = ["S105", "S106"]  # test passwords are fine
 "migrations/**" = ["E501"]
+"src/emails/templates.py" = ["E501"]  # email HTML: inline styles make long lines
 
 [tool.mypy]
 python_version = "3.13"

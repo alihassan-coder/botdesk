@@ -7,6 +7,7 @@ Every setting has a safe local default, so `pnpm dev:api` starts before you fill
 from functools import lru_cache
 from typing import Literal
 
+from pydantic import SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -50,9 +51,19 @@ class Settings(BaseSettings):
     session_days: int = 30
     invitation_days: int = 7
 
+    # Email through Brevo's transactional API. Without a key, emails are only logged (dev, tests).
+    brevo_api_key: SecretStr | None = None
+    email_from_address: str = ""  # a sender verified in Brevo
+    email_from_name: str = "BotDesk"
+    password_reset_minutes: int = 60
+
     @property
     def is_production(self) -> bool:
         return self.environment == "production"
+
+    @property
+    def sends_real_email(self) -> bool:
+        return bool(self.brevo_api_key and self.brevo_api_key.get_secret_value() and self.email_from_address)
 
     @property
     def sqlalchemy_url(self) -> str:

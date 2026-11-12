@@ -1,8 +1,8 @@
 import uuid
 
-from fastapi import APIRouter, status
+from fastapi import APIRouter, BackgroundTasks, status
 
-from src.api.deps import AppSettings, CurrentUser, Db, OrgAccess
+from src.api.deps import AppSettings, CurrentUser, Db, Emails, OrgAccess
 from src.controllers import invitation_controller
 from src.schemas.invitation import AcceptInvitationIn, CreatedInvitationOut, InvitationIn, InvitationOut
 from src.schemas.organization import OrgOut
@@ -11,9 +11,11 @@ router = APIRouter(tags=["invitations"])
 
 
 @router.post("/orgs/{org_id}/invitations", status_code=status.HTTP_201_CREATED)
-async def invite(body: InvitationIn, access: OrgAccess, db: Db, settings: AppSettings) -> CreatedInvitationOut:
-    """Invite an email address. Returns the invite link once; share it with them."""
-    return await invitation_controller.create(db, settings, access, body)
+async def invite(
+    body: InvitationIn, access: OrgAccess, db: Db, settings: AppSettings, emails: Emails, background: BackgroundTasks
+) -> CreatedInvitationOut:
+    """Invite an email address. Emails them the link, and returns it once so you can share it too."""
+    return await invitation_controller.create(db, settings, emails, background, access, body)
 
 
 @router.get("/orgs/{org_id}/invitations")

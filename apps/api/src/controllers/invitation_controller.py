@@ -2,21 +2,31 @@
 
 import uuid
 
+from fastapi import BackgroundTasks
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.api.deps import Access
 from src.core.config import Settings
+from src.emails import invitation_email
 from src.models import Invitation, User
 from src.schemas.invitation import CreatedInvitationOut, InvitationIn, InvitationOut
 from src.schemas.organization import OrgOut
-from src.services import invitation_service, organization_service
+from src.services import email_service, invitation_service, organization_service
+from src.services.email_service import EmailMessage, EmailSender
 
 
 def _out(invitation: Invitation) -> InvitationOut:
     return InvitationOut.model_validate(invitation)
 
 
-async def create(db: AsyncSession, settings: Settings, access: Access, body: InvitationIn) -> CreatedInvitationOut:
+async def create(
+    db: AsyncSession,
+    settings: Settings,
+    emails: EmailSender,
+    background: BackgroundTasks,
+    access: Access,
+    body: InvitationIn,
+) -> CreatedInvitationOut:
     access.require_admin()
     invitation, token = await invitation_service.invite(
         db,
@@ -27,8 +37,14 @@ async def create(db: AsyncSession, settings: Settings, access: Access, body: Inv
         days=settings.invitation_days,
     )
     await db.commit()
-    # Emailing the link comes with the email provider; for now the admin copies and shares it.
     invite_url = f"{settings.web_app_url.rstrip('/')}/invite/{token}"
+    # Emailed after the response. The link is also returned once, so the admin can share it by hand.
+    message = EmailMessage.build(
+        invitation_email(inviter_name=access.user.name, org_name=access.org.name, url=invite_url),
+        to_email=invitation.email,
+        link=invite_url,
+    )
+    background.add_task(email_service.send_quietly, emails, message)
     return CreatedInvitationOut(**_out(invitation).model_dump(), invite_url=invite_url)
 
 

@@ -13,6 +13,7 @@ from src.core.errors import Forbidden, NotFound, Unauthorized
 from src.models import Organization, User
 from src.runtime.runner import RunManager
 from src.services import auth_service, organization_service
+from src.services.email_service import EmailSender
 
 Db = Annotated[AsyncSession, Depends(get_session)]
 
@@ -32,6 +33,15 @@ def get_runs(request: Request) -> RunManager:
 
 
 Runs = Annotated[RunManager, Depends(get_runs)]
+
+
+def get_email_sender(request: Request) -> EmailSender:
+    """Brevo, or the log when there's no key (built at startup; tests swap in a fake)."""
+    sender: EmailSender = request.app.state.email
+    return sender
+
+
+Emails = Annotated[EmailSender, Depends(get_email_sender)]
 
 
 def session_token(request: Request) -> str | None:

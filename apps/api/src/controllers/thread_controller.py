@@ -12,7 +12,7 @@ from src.services import thread_service
 
 async def list_threads(db: AsyncSession, access: Access) -> list[ThreadOut]:
     threads = await thread_service.threads_for_user(db, org_id=access.org.id, user_id=access.user.id)
-    return [await thread_service.thread_out(db, thread) for thread in threads]
+    return await thread_service.thread_outs(db, threads)
 
 
 async def get_thread(db: AsyncSession, access: Access, thread_id: uuid.UUID) -> ThreadOut:

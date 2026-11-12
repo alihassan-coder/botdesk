@@ -59,11 +59,11 @@ class Access:
 async def org_access(org_id: uuid.UUID, user: CurrentUser, db: Db) -> Access:
     """Every `/orgs/{org_id}/…` route uses this, so one org's data never leaks into another.
     Non-members get 404 (not 403), so they can't even learn the org exists."""
-    membership = await organization_service.get_membership(db, org_id=org_id, user_id=user.id)
-    org = await db.get(Organization, org_id) if membership else None
-    if membership is None or org is None:
+    found = await organization_service.org_and_role(db, org_id=org_id, user_id=user.id)
+    if found is None:
         raise NotFound("Organization not found.")
-    return Access(org=org, user=user, role=membership.role)
+    org, role = found
+    return Access(org=org, user=user, role=role)
 
 
 OrgAccess = Annotated[Access, Depends(org_access)]

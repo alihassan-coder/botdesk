@@ -55,10 +55,18 @@ async def start_session(db: AsyncSession, user: User, *, days: int) -> str:
 
 
 async def user_for_token(db: AsyncSession, token: str) -> User | None:
-    session = await db.scalar(select(Session).where(Session.token_hash == security.hash_token(token)))
-    if session is None or as_utc(session.expires_at) <= utcnow():
+    # One query on every signed-in request: the session and its user together.
+    row = (
+        await db.execute(
+            select(User, Session.expires_at)
+            .join(Session, Session.user_id == User.id)
+            .where(Session.token_hash == security.hash_token(token))
+        )
+    ).first()
+    if row is None:
         return None
-    return await db.get(User, session.user_id)
+    user, expires_at = row
+    return user if as_utc(expires_at) > utcnow() else None
 
 
 async def end_session(db: AsyncSession, token: str) -> None:

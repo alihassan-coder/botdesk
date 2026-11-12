@@ -40,6 +40,21 @@ async def get_membership(db: AsyncSession, *, org_id: uuid.UUID, user_id: uuid.U
     return await db.get(Membership, (org_id, user_id))
 
 
+async def org_and_role(db: AsyncSession, *, org_id: uuid.UUID, user_id: uuid.UUID) -> tuple[Organization, str] | None:
+    """The organization and the user's role in it, in one query. None if they aren't a member."""
+    row = (
+        await db.execute(
+            select(Organization, Membership.role)
+            .join(Membership, Membership.org_id == Organization.id)
+            .where(Organization.id == org_id, Membership.user_id == user_id)
+        )
+    ).first()
+    if row is None:
+        return None
+    org, role = row
+    return org, role
+
+
 async def update_org(db: AsyncSession, org: Organization, *, name: str | None, slug: str | None) -> Organization:
     if slug and slug != org.slug:
         if await db.scalar(select(Organization.id).where(Organization.slug == slug)):

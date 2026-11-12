@@ -6,8 +6,9 @@ Bot replies come in a later slice; for now messages are stored and read back.
 
 import uuid
 from datetime import datetime
+from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.core.database import utcnow
@@ -23,6 +24,11 @@ def text_part(text: str) -> dict[str, str]:
     return {"type": "text", "text": text}
 
 
+def text_of(parts: list[dict[str, Any]]) -> str:
+    """A message's text parts, joined."""
+    return "\n".join(str(part.get("text", "")) for part in parts if part.get("type") == "text")
+
+
 def message_out(message: Message) -> MessageOut:
     return MessageOut.model_validate(
         {
@@ -36,29 +42,48 @@ def message_out(message: Message) -> MessageOut:
     )
 
 
-async def _participants(db: AsyncSession, thread_id: uuid.UUID) -> list[ThreadParticipant]:
-    return list(await db.scalars(select(ThreadParticipant).where(ThreadParticipant.thread_id == thread_id)))
+async def thread_outs(db: AsyncSession, threads: list[Thread]) -> list[ThreadOut]:
+    """Threads as the API shows them. Two queries in total, however many threads:
+    one for everyone in them, one for each thread's last message."""
+    if not threads:
+        return []
+    ids = [thread.id for thread in threads]
+    participants: dict[uuid.UUID, list[ParticipantOut]] = {thread_id: [] for thread_id in ids}
+    for thread_id, kind, participant_id in await db.execute(
+        select(ThreadParticipant.thread_id, ThreadParticipant.participant_type, ThreadParticipant.participant_id).where(
+            ThreadParticipant.thread_id.in_(ids)
+        )
+    ):
+        participants[thread_id].append(ParticipantOut.model_validate({"type": kind, "id": participant_id}))
+    previews = await _last_message_previews(db, ids)
+    return [
+        ThreadOut.model_validate(
+            {
+                "id": thread.id,
+                "kind": thread.kind,
+                "title": thread.title,
+                "bot_id": thread.bot_id,
+                "participants": participants[thread.id],
+                "last_message_at": thread.last_message_at,
+                "last_message_preview": previews.get(thread.id, ""),
+            }
+        )
+        for thread in threads
+    ]
 
 
 async def thread_out(db: AsyncSession, thread: Thread) -> ThreadOut:
-    last = await db.scalar(
-        select(Message).where(Message.thread_id == thread.id).order_by(Message.created_at.desc()).limit(1)
-    )
-    participants = [
-        ParticipantOut.model_validate({"type": p.participant_type, "id": p.participant_id})
-        for p in await _participants(db, thread.id)
-    ]
-    return ThreadOut.model_validate(
-        {
-            "id": thread.id,
-            "kind": thread.kind,
-            "title": thread.title,
-            "bot_id": thread.bot_id,
-            "participants": participants,
-            "last_message_at": thread.last_message_at,
-            "last_message_preview": last.text[:PREVIEW_LENGTH] if last else "",
-        }
-    )
+    return (await thread_outs(db, [thread]))[0]
+
+
+async def _last_message_previews(db: AsyncSession, thread_ids: list[uuid.UUID]) -> dict[uuid.UUID, str]:
+    """The start of each thread's newest message, in one query.
+    `row_number()` numbers each thread's messages newest first; we keep number 1.
+    It uses the (thread_id, created_at) index and reads only the `parts` column."""
+    newest_first = func.row_number().over(partition_by=Message.thread_id, order_by=Message.created_at.desc()).label("n")
+    ranked = select(Message.thread_id, Message.parts, newest_first).where(Message.thread_id.in_(thread_ids)).subquery()
+    rows = await db.execute(select(ranked.c.thread_id, ranked.c.parts).where(ranked.c.n == 1))
+    return {thread_id: text_of(parts)[:PREVIEW_LENGTH] for thread_id, parts in rows}
 
 
 async def threads_for_user(db: AsyncSession, *, org_id: uuid.UUID, user_id: uuid.UUID) -> list[Thread]:
@@ -78,10 +103,17 @@ async def threads_for_user(db: AsyncSession, *, org_id: uuid.UUID, user_id: uuid
 
 async def get_thread(db: AsyncSession, *, org_id: uuid.UUID, user_id: uuid.UUID, thread_id: uuid.UUID) -> Thread:
     """The thread, if it's in this organization and the user is in it. Otherwise 404."""
-    thread = await db.get(Thread, thread_id)
-    if thread is None or thread.org_id != org_id:
-        raise NotFound(NOT_FOUND)
-    if await db.get(ThreadParticipant, (thread.id, "user", user_id)) is None:
+    thread = await db.scalar(
+        select(Thread)
+        .join(ThreadParticipant, ThreadParticipant.thread_id == Thread.id)
+        .where(
+            Thread.id == thread_id,
+            Thread.org_id == org_id,
+            ThreadParticipant.participant_type == "user",
+            ThreadParticipant.participant_id == user_id,
+        )
+    )
+    if thread is None:
         raise NotFound(NOT_FOUND)
     return thread
 

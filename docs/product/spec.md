@@ -57,13 +57,30 @@ Layout: bot sidebar (left) · thread (centre) · bot details pane (right, collap
 3. **Gmail plugin**, memory, computers, routines.
 4. Desktop, then mobile.
 
-## Status (2026-11-11)
+## Status (2026-11-12)
 
-- Done: docs (this spec, vision, ADRs 0001–0002, architecture, research); monorepo root; `apps/web` (Next.js 16, React 19, Tailwind 4); mock data layer in `apps/web/src/data/`.
-- In progress: shadcn/ui (Radix, Nova preset, all components) install in `apps/web`.
-- Done: web slice 1 on mock data: app shell (sidebar, responsive phone/tablet/desktop, light/dark), DM and group threads with all 9 message cards, composer with streaming mock replies, inline approval card (Approve / Deny / Edit), details pane. Plan and rules: [docs/frontend](../frontend/README.md).
-- Done: every app page on mock data: create bot (/bots/new), marketplace, approvals inbox, routines, connect apps, settings (profile, appearance with accent, models & keys, security matrix, members, usage & budgets with chart, memory), ⌘K command palette, new workspace header with the logo tile.
-- Next: group chats with an @mention picker, then the computer view (live screen, take over) and routine recording.
-- Done: logo (v7, the always-on bd) with all files in [docs/design/logo](../design/logo/README.md).
-- Next in design: brand tokens (colour, type, radius, motion), then the bot avatar system.
-- Open: owner questions in [architecture §16](../architecture/high-level.md).
+History: [PROGRESS.md](../PROGRESS.md).
+
+**Done**
+
+- Docs: this spec, vision, ADRs 0001–0002, architecture, research, glossary.
+- Logo v7, the always-on bd, with all files in [docs/design/logo](../design/logo/README.md).
+- Web frontend on mock data (`apps/web`, Next.js 16, React 19, Tailwind 4, shadcn/ui). Plan and rules: [docs/frontend](../frontend/README.md).
+  - App shell: sidebar that collapses to an icon rail, workspace header with org switcher, light/dark, phone/tablet/desktop layouts.
+  - DM and group threads with all 9 message cards, composer with streaming mock replies, inline approval card (Approve / Deny / Edit), details pane.
+  - Pages: create bot, marketplace, approvals inbox, routines, create routine, connect apps, ⌘K command palette.
+  - Settings (opens on Profile): profile, organization, appearance (theme, accent presets or a custom colour), models & keys, security matrix, members, usage & budgets, memory.
+  - Mock accounts: sign in, sign up, forgot password, sign out. An auth gate sends signed-out people to sign in.
+  - Tests: Vitest logic and UI component tests; Playwright end-to-end tests at desktop and phone size.
+
+**In progress**
+
+- Backend changes to Python (ADR 0003, `docs/adr/0003-python-backend.md`): FastAPI, SQLAlchemy + Alembic, LangGraph for durable runs and approvals, mem0 for memory, own email/password auth, Neon Postgres for dev.
+- First backend slice: auth, orgs, bots, threads and messages, and streaming bot replies. Then the web app swaps its mock for the API in `store.ts`.
+
+**Next**
+
+- Web: group chats with an @mention picker, the computer view (live screen, take over) and routine recording.
+- Design: brand tokens (colour, type, radius, motion), then the bot avatar system.
+
+**Open:** owner questions in [architecture §16](../architecture/high-level.md).

@@ -1,0 +1,34 @@
+# Progress
+
+A short history of BotDesk, newest first. For what is planned next, see the status section in [product/spec.md](product/spec.md#status-2026-11-12).
+
+## 2026-11-12
+
+**Backend moves to Python.** The owner changed the backend plan from Node (Hono, Drizzle, Better Auth) to Python:
+
+- uv for packages, FastAPI on uvicorn for the API.
+- SQLAlchemy 2 (async) and Alembic for the database.
+- LangChain and LangGraph for bots. LangGraph's Postgres checkpointer makes runs durable; approvals pause a run and resume it.
+- mem0 for memory.
+- Our own small email/password auth: argon2 password hashes, opaque session tokens in httpOnly cookies or a Bearer header.
+- Hosted Neon Postgres for development.
+
+The decision is recorded in ADR 0003 ([adr/0003-python-backend.md](adr/0003-python-backend.md)). The first backend slice is auth, orgs, bots, threads and messages, and streaming bot replies.
+
+**Accounts and polish (web).** Mock sign in, sign up, forgot password and sign out. An auth gate sends signed-out people to `/sign-in` and back again afterwards. Also: create a routine (`/routines/new`), manage the organization (`/settings/organization`), Settings opens on Profile with a section nav that stays in view, a sidebar that collapses to an icon rail, an org switcher in the sidebar header, and a custom accent colour. End-to-end tests now start signed in as the demo user.
+
+**Every app page (web).** Create bot with a live preview, marketplace, approvals inbox, routines, connect apps, all settings sections, the ⌘K command palette and a new workspace header with the logo tile.
+
+**Tests.** Vitest and Testing Library for logic and UI components; Playwright for the whole app in Chrome at desktop and phone size, on a production build. Writing the tests found three bugs (an approval field losing focus while typing, the approvals count missing from a link's name, and old mock replies leaking into fresh data). Root commands `pnpm dev:web`, `test:web`, `test:e2e` and `check` were added.
+
+**Slice 1 (web).** The app shell (sidebar, phone/tablet/desktop layouts, light and dark), DM and group threads, all 9 message cards, a composer with streaming mock replies, the inline approval card (Approve / Deny / Edit) and the bot details pane. Everything runs on mock data behind one store, so the API can replace it in one file.
+
+**Logo v7 approved.** After six rounds, the owner chose v7, "the always-on bd": the b and d of botdesk share one loop shaped like an infinity sign, drawn as one even monoline. Earlier rounds taught us what to avoid: plain flat shapes and glossy icons felt cheap, a woven gap read as a cut, pointed bowls read as sly eyes, and calligraphy did not fit. Files and rules: [design/logo](design/logo/README.md).
+
+**Tooling.** Project skills and Claude Code plugins enabled for design, React, testing and docs work.
+
+## 2026-11-11
+
+**Web app scaffold.** `apps/web` on Next.js 16, React 19 and Tailwind 4, with all shadcn/ui components and a mock data layer.
+
+**Planning docs.** The monorepo root, the product vision, the v1 spec, AGENTS.md, the glossary, the architecture proposal, a screen-by-screen teardown of Grok Bot, competitor research, and ADRs 0001 (product scope and deployment) and 0002 (Grok Bot parity, plugin integrations, security levels, approvals).

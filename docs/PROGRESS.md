@@ -6,6 +6,8 @@ A short history of BotDesk, newest first. For what is planned next, see the stat
 
 In API mode the web app now talks to bots for real. The chat list, each bot's DM, message history (50 at a time, with "Show earlier messages"), sending, and replies streamed live from the chat's event stream: typing dots, words as they arrive, the saved reply, an inline error when a reply fails, and a Stop button while a bot replies. The "chat coming soon" placeholder is gone. Settings → Profile saves your name and @handle on the API and gained a Password section.
 
+**Group chats (web).** "New group" in the sidebar's New menu opens a dialog: name the group, tick bots and teammates, Create. On the API it calls `POST /threads/groups`, in the demo it's created in the mock; either way the new chat opens, and the bots you @mention reply. **Dev console fixed:** every page under the app shell logged Next's "Could not validate that a segment in your UI has instant navigation" because the auth gate left the page out until the browser knew your session, so Next's prerender never rendered the route's segments. The gate now renders the page hidden and inert until you're signed in.
+
 Every wired flow was clicked through in a browser against a local API: sign up, sign in, sign out, session restore, forgot password, org switcher and rename, members (role change, removal), invites (create, revoke, accept), bots (create, edit, remove). Fixed on the way: profile edits were only saved in the browser; handles allowed `_`, which the API rejects; times from a SQLite API showed 5 hours off; a renamed bot's DM kept its old name after a reload; a reload straight into a chat flashed "This chat doesn't exist".
 
 ## 2026-11-12: tools, the policy and approvals (build step 2, API)

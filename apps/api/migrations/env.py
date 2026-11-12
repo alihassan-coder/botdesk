@@ -22,17 +22,36 @@ if config.config_file_name is not None:
 target_metadata = Base.metadata
 database_url = get_settings().sqlalchemy_url
 
+# Tables other libraries create and manage themselves (LangGraph's checkpointer, mem0).
+# Without this, autogenerate would offer to drop them.
+FOREIGN_TABLES = {"checkpoints", "checkpoint_blobs", "checkpoint_writes", "checkpoint_migrations", "bot_memories"}
+
+
+def include_object(obj: object, name: str | None, type_: str, reflected: bool, compare_to: object) -> bool:
+    if type_ == "table" and reflected and compare_to is None and name in FOREIGN_TABLES:
+        return False
+    table = getattr(obj, "table", None)
+    return not (type_ == "index" and reflected and table is not None and table.name in FOREIGN_TABLES)
+
 
 def run_migrations_offline() -> None:
     """`alembic upgrade head --sql`: print the SQL instead of running it."""
-    context.configure(url=database_url, target_metadata=target_metadata, literal_binds=True, render_as_batch=True)
+    context.configure(
+        url=database_url,
+        target_metadata=target_metadata,
+        literal_binds=True,
+        render_as_batch=True,
+        include_object=include_object,
+    )
     with context.begin_transaction():
         context.run_migrations()
 
 
 def do_run_migrations(connection: Connection) -> None:
     # Batch mode lets ALTER TABLE work on SQLite too (local default database).
-    context.configure(connection=connection, target_metadata=target_metadata, render_as_batch=True)
+    context.configure(
+        connection=connection, target_metadata=target_metadata, render_as_batch=True, include_object=include_object
+    )
     with context.begin_transaction():
         context.run_migrations()
 

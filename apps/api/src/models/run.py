@@ -9,6 +9,8 @@ from src.core.database import Base, CreatedAtMixin, IdMixin
 
 RunStatus = Literal["queued", "running", "waiting_approval", "needs_attention", "succeeded", "failed", "cancelled"]
 ACTIVE_STATUSES = ("queued", "running")
+# Paused: waiting for a person (an approval, or a decision after a tool may have half run).
+PAUSED_STATUSES = ("waiting_approval", "needs_attention")
 FINISHED_STATUSES = ("succeeded", "failed", "cancelled")
 
 
@@ -42,7 +44,7 @@ class Run(IdMixin, CreatedAtMixin, Base):
     max_steps: Mapped[int] = mapped_column(Integer)
     max_seconds: Mapped[int] = mapped_column(Integer)
     steps_used: Mapped[int] = mapped_column(Integer, default=0)
-    # Set once the run has read outside text (no tools yet, so always false in this slice).
+    # Set once a tool returned outside text (an email, a web page): from then on risky calls ask.
     tainted: Mapped[bool] = mapped_column(default=False)
     stop_requested: Mapped[bool] = mapped_column(default=False)
     graph_version: Mapped[int] = mapped_column(Integer, default=1)
@@ -69,8 +71,17 @@ class RunEvent(CreatedAtMixin, Base):
 
 
 class ToolExecution(IdMixin, CreatedAtMixin, Base):
-    """One tool call, recorded before and after it runs, so it never runs twice (ADR 0004).
-    Created now; tools arrive in build step 2."""
+    """One tool call, recorded before and after it runs, so it never runs twice (ADR 0004 §2).
+
+    `run_id` + `tool_call_id` is the idempotency key: preparing the same call again finds this
+    row instead of adding one. The status moves:
+
+        ready ──────────────→ started → succeeded | failed
+        waiting_approval → ready (approved) | denied
+        denied / failed       (decided without running: policy said no, or bad arguments)
+
+    A row left `started` means we can't tell whether the tool finished (§4.1).
+    """
 
     __tablename__ = "tool_executions"
     __table_args__ = (UniqueConstraint("run_id", "tool_call_id", name="uq_tool_executions_run_id_tool_call_id"),)
@@ -79,8 +90,15 @@ class ToolExecution(IdMixin, CreatedAtMixin, Base):
     run_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("runs.id", ondelete="CASCADE"))
     tool_call_id: Mapped[str] = mapped_column(String(120))
     tool_name: Mapped[str] = mapped_column(String(120))
-    status: Mapped[str] = mapped_column(String(12), default="started")  # started | succeeded | failed
+    status: Mapped[str] = mapped_column(String(20), default="ready")
+    # The policy's answer and why, e.g. "level=Ask before acting · risk=external-send · tainted=no → ask".
+    risk: Mapped[str] = mapped_column(String(20), default="read")
+    decision: Mapped[str] = mapped_column(String(10), default="auto")  # auto | ask | deny | invalid
+    decision_trace: Mapped[str] = mapped_column(Text, default="")
+    # The arguments it runs with (after an edit, the edited ones) and their SHA-256.
+    args: Mapped[dict[str, Any]] = mapped_column(default=dict)
     args_hash: Mapped[str] = mapped_column(String(64))
     result: Mapped[dict[str, Any] | None]
     error: Mapped[str | None] = mapped_column(Text)
+    started_at: Mapped[datetime | None]
     finished_at: Mapped[datetime | None]

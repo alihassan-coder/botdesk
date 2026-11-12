@@ -41,6 +41,9 @@ Every setting is in [`apps/api/.env.example`](../../apps/api/.env.example). The 
 | `RUN_MAX_STEPS`, `RUN_MAX_SECONDS` | 25, 900 | Limits on every run; a run that hits one fails with a clear message |
 | `BOT_MAX_RUNNING_RUNS` | 2 | Runs one bot may have going at once (across chats) |
 | `MEMORY_ENABLED` | false | mem0 memory on pgvector, in the same database. Also needs Postgres and `OPENAI_API_KEY` |
+| `BREVO_API_KEY` | empty | Sends real email through Brevo. Empty = emails are only written to the log (see [Email](#email)) |
+| `EMAIL_FROM_ADDRESS`, `EMAIL_FROM_NAME` | empty, BotDesk | The sender. The address must be verified in Brevo |
+| `PASSWORD_RESET_MINUTES` | 60 | How long a password reset link works |
 
 ### Tests on Postgres
 
@@ -68,12 +71,14 @@ apps/api/
     core/                    things every layer uses
       config.py              Settings from env / .env
       database.py            Base model class, engine, one session per request
-      security.py            password hashing, session tokens
+      security.py            password hashing, session and reset tokens
       errors.py              AppError → NotFound, Conflict, Unauthorized, Forbidden
       handles.py             names → handles and slugs
     models/                  SQLAlchemy tables (one file per area)
     schemas/                 Pydantic request/response shapes (JSON is camelCase)
     services/                business rules + database queries. No HTTP here.
+      email_service.py       EmailSender: Brevo, or the log when there's no key
+    emails/                  email templates: (subject, html, text)
     controllers/             one request at a time: call services, commit, set cookies
     runtime/                 how a bot run happens (ADR 0007: inside the API process for now)
       runner.py              RunManager: starts runs as tasks, one at a time per chat, Stop, restart recovery
@@ -130,14 +135,15 @@ A service raises `NotFound("…")`, `Conflict("…")` and so on. `main.py` turns
 | `GET /api/v1/auth/me` | You, and your organizations with your role |
 | `PATCH /api/v1/auth/me` | Change your name or @handle (unique) |
 | `POST /api/v1/auth/change-password` | Needs the current password; signs out your other devices |
-| `POST /api/v1/auth/forgot-password` | Always the same answer (doesn't reveal accounts) |
+| `POST /api/v1/auth/forgot-password` | Emails a reset link if the account exists. Always the same 202 answer (doesn't reveal accounts) |
+| `POST /api/v1/auth/reset-password` | `{token, password}`: sets a new password from the link (once, before it expires) and signs out every device |
 | `GET /api/v1/orgs` | Your organizations |
 | `GET /api/v1/orgs/{id}` | One organization |
 | `PATCH /api/v1/orgs/{id}` | Rename / change address (owner or admin) |
 | `GET /api/v1/orgs/{id}/members` | People and their roles |
 | `PATCH /api/v1/orgs/{id}/members/{userId}` | Change a role (owners and admins; only owners touch owners) |
 | `DELETE /api/v1/orgs/{id}/members/{userId}` | Remove someone, or leave (your own id). There's always one owner |
-| `POST /api/v1/orgs/{id}/invitations` | Invite an email as admin or member; returns the invite link once |
+| `POST /api/v1/orgs/{id}/invitations` | Invite an email as admin or member; emails them the link, and returns it once |
 | `GET /api/v1/orgs/{id}/invitations` | Pending invites (owners and admins) |
 | `DELETE /api/v1/orgs/{id}/invitations/{invId}` | Revoke an invite |
 | `POST /api/v1/invitations/accept` | Join from an invite link (signed in with the invited email) |
@@ -170,9 +176,29 @@ Each SSE message has `id:` (a growing number), `event:` (the kind) and `data:` J
 
 Error messages match the web app's wording, e.g. `401 "That email and password don't match."`.
 
+## Email
+
+Emails go through [Brevo](https://www.brevo.com)'s transactional API (`POST https://api.brevo.com/v3/smtp/email`), from `services/email_service.py`:
+
+- **One interface:** `EmailSender.send(EmailMessage)`. `BrevoEmailSender` when `BREVO_API_KEY` and `EMAIL_FROM_ADDRESS` are set; otherwise `ConsoleEmailSender`, which logs the subject, the recipient and (outside production) the link, so you can click it in dev. Tests swap in a fake that records what was sent (`outbox` fixture).
+- **In the background:** controllers hand the email to FastAPI's `BackgroundTasks`, so a request never waits on Brevo. A failure is logged (`Couldn't send email …`), never shown to the user. One shared `httpx.AsyncClient` (10 s timeout) lives in the app lifespan.
+- **Templates** live in `src/emails/`: one function per email returning `(subject, html, text)`. Plain HTML with inline CSS, the `botdesk` wordmark as text, one button, the link as text, and "If you didn't ask for this, ignore this email". Names are escaped.
+- **Sent today:** password reset links and invitations. A successful send logs Brevo's `messageId`.
+
+Set it up: Brevo → **SMTP & API → API Keys** → generate a key; **Senders & Domains** → verify the sender address. Put both in `apps/api/.env`. Mail from a Gmail address can land in spam: verify your own domain (DKIM and DMARC) in Brevo and send from it.
+
+### Password reset
+
+Follows the OWASP Forgot Password cheat sheet:
+
+1. `forgot-password` always answers 202 with the same text. If the account exists it stores a new token in `password_reset_tokens` (only its SHA-256 hash, like sessions), deletes the user's older unused tokens, and emails `{WEB_APP_URL}/reset-password?token=…`. Known and unknown emails run the same queries, and the email is sent after the response, so timing doesn't reveal accounts.
+2. `reset-password` claims the token with one guarded `UPDATE` (unused and not expired), so it works once even under races. It checks the same password rules as sign-up, sets a new Argon2 hash and deletes **all** the user's sessions. A bad, used or expired token gets `400 "This reset link has expired or was already used. Ask for a new one."`
+3. The web app's `/reset-password` page reads the token, posts the new password, and sends you to sign in.
+
 ## Security choices
 
 - **Passwords:** Argon2id; old hashes are upgraded on sign-in. Unknown emails take as long as wrong passwords.
+- **Reset links:** single use, expire after `PASSWORD_RESET_MINUTES`, only the SHA-256 hash is stored; using one signs out every device.
 - **Sessions:** 32 random bytes; only the SHA-256 hash is stored. Cookie is `httpOnly`, `SameSite=Lax`, `Secure` in production. Bearer works for apps.
 - **Tenancy:** every `/orgs/{id}/…` route goes through `OrgAccess`. Non-members get 404, so they can't learn an org exists.
 - **CORS:** only `WEB_ORIGINS`, with credentials.
@@ -181,8 +207,7 @@ Error messages match the web app's wording, e.g. `401 "That email and password d
 ## Not yet (in order)
 
 1. Wire the web app's sign-in to this API (replace the mock in `apps/web/src/data/store.ts`).
-2. Invite emails (the link is copied by hand until an email provider is added).
-3. Tool pipeline, policy and approvals via `interrupt()` ([ADR 0004](../adr/0004-agent-runtime-and-safety.md)). Full order: [agents-and-plugins.md §14](../architecture/agents-and-plugins.md#14-build-order-each-step-small-tested-and-usable).
-4. The job queue (procrastinate) and a separate worker, deferred by [ADR 0007](../adr/0007-runs-in-the-api-process-for-now.md); then the Postgres `LISTEN/NOTIFY` bus for several API copies.
-5. Memory screens (see, edit, delete) and `memory_audit`; trimming old `run_events` and checkpoints.
-6. Password reset emails, email verification, rate limiting on sign-in.
+2. Tool pipeline, policy and approvals via `interrupt()` ([ADR 0004](../adr/0004-agent-runtime-and-safety.md)). Full order: [agents-and-plugins.md §14](../architecture/agents-and-plugins.md#14-build-order-each-step-small-tested-and-usable).
+3. The job queue (procrastinate) and a separate worker, deferred by [ADR 0007](../adr/0007-runs-in-the-api-process-for-now.md); then the Postgres `LISTEN/NOTIFY` bus for several API copies.
+4. Memory screens (see, edit, delete) and `memory_audit`; trimming old `run_events` and checkpoints.
+5. Email verification, rate limiting on sign-in and forgot-password.

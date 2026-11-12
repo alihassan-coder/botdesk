@@ -6,6 +6,7 @@ import { Field, FieldDescription, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
 import { actions } from "@/data/store";
 import type { Connector } from "@/data/types";
+import { looksLikeEmail } from "@/lib/email";
 
 /**
  * Connect an app. Gmail asks which account (the real app opens Google sign-in);
@@ -14,12 +15,13 @@ import type { Connector } from "@/data/types";
 export function ConnectDialog({ connector, onClose }: { connector: Connector | null; onClose: () => void }) {
   const [value, setValue] = useState("");
   const isMcp = connector?.category === "mcp";
-  const valid = isMcp ? /^https?:\/\/\S+$/.test(value) : /^\S+@\S+\.\S+$/.test(value);
+  const valid = isMcp ? /^https?:\/\/\S+$/.test(value.trim()) : looksLikeEmail(value);
 
   function connect() {
     if (!connector || !valid) return;
-    actions.connectApp(connector.id, value);
-    toast.success(`${connector.name} connected: ${value}`);
+    const account = value.trim();
+    actions.connectApp(connector.id, account);
+    toast.success(`${connector.name} connected: ${account}`);
     setValue("");
     onClose();
   }

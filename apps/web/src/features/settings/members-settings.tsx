@@ -5,11 +5,12 @@ import { toast } from "sonner";
 import { UserPlus } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
-import { Field, FieldGroup, FieldLabel } from "@/components/ui/field";
+import { Field, FieldError, FieldGroup, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { actions, useCurrentUser, useUsers } from "@/data/store";
 import type { User } from "@/data/types";
+import { looksLikeEmail } from "@/lib/email";
 import { MemberAvatar } from "@/features/bots/bot-avatar";
 import { SettingsSection } from "./settings-shell";
 
@@ -54,7 +55,10 @@ function InviteDialog() {
   const [open, setOpen] = useState(false);
   const [email, setEmail] = useState("");
   const [role, setRole] = useState<User["role"]>("member");
-  const valid = /^\S+@\S+\.\S+$/.test(email);
+  const users = useUsers();
+  const address = email.trim().toLowerCase();
+  const alreadyIn = users.some((u) => u.email.toLowerCase() === address);
+  const valid = looksLikeEmail(address) && !alreadyIn;
 
   return (
     <Dialog open={open} onOpenChange={setOpen}>
@@ -70,16 +74,17 @@ function InviteDialog() {
           onSubmit={(e) => {
             e.preventDefault();
             if (!valid) return;
-            actions.inviteMember(email, role);
-            toast.success(`Invited ${email}`);
+            actions.inviteMember(address, role);
+            toast.success(`Invited ${address}`);
             setEmail("");
             setOpen(false);
           }}
         >
           <FieldGroup>
-            <Field>
+            <Field data-invalid={alreadyIn}>
               <FieldLabel htmlFor="invite-email">Email</FieldLabel>
-              <Input id="invite-email" type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="teammate@company.com" />
+              <Input id="invite-email" type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="teammate@company.com" aria-invalid={alreadyIn} />
+              {alreadyIn && <FieldError>{address} is already in this organization.</FieldError>}
             </Field>
             <Field>
               <FieldLabel htmlFor="invite-role">Role</FieldLabel>

@@ -2,11 +2,12 @@
 
 import { useState } from "react";
 import Link from "next/link";
-import { CircleAlert } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Field, FieldDescription, FieldGroup, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
 import { actions } from "@/data/store";
+import { looksLikeEmail } from "@/lib/email";
+import { FormError } from "./form-error";
 import { PasswordInput } from "./password-input";
 import { useSignedInRedirect } from "./use-signed-in-redirect";
 
@@ -20,7 +21,7 @@ export function SignUpScreen() {
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
 
-  const emailValid = /^\S+@\S+\.\S+$/.test(email);
+  const emailValid = looksLikeEmail(email);
   const passwordLongEnough = password.length >= MIN_PASSWORD;
   const ready = name.trim() && emailValid && passwordLongEnough;
 
@@ -41,11 +42,7 @@ export function SignUpScreen() {
         }}
       >
         <FieldGroup>
-          {error && (
-            <p role="alert" className="flex items-center gap-2 rounded-xl bg-destructive/10 px-3 py-2.5 text-sm text-destructive">
-              <CircleAlert className="size-4 shrink-0" /> {error}
-            </p>
-          )}
+          {error && <FormError>{error}</FormError>}
           <Field>
             <FieldLabel htmlFor="name">Your name</FieldLabel>
             <Input id="name" autoComplete="name" value={name} onChange={(e) => setName(e.target.value)} placeholder="Ali Hassan" />

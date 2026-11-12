@@ -21,9 +21,8 @@ import { pluralize } from "@/lib/format";
 import { finishSlug, slugWhileTyping } from "@/lib/handle";
 import { actions, useBots, useOrg, useUsers } from "@/data/store";
 import { OrgAvatar } from "@/features/shell/org-avatar";
+import { PLAN_LABEL } from "@/features/shell/plan";
 import { SettingsSection } from "./settings-shell";
-
-const PLAN_LABEL = { "self-hosted": "Self-hosted", free: "Free", pro: "Pro", team: "Team" };
 
 /** Settings → Organization: the org's name and address, what's in it, and deleting it. */
 export function OrganizationSettings() {
@@ -44,7 +43,7 @@ export function OrganizationSettings() {
           <div>
             <p className="font-medium">{org.name}</p>
             <p className="text-sm text-muted-foreground">
-              {PLAN_LABEL[org.plan]} plan · {pluralize(users.length, "person", "people")} · {pluralize(bots.length, "bot")}
+              {PLAN_LABEL[org.plan]} · {pluralize(users.length, "person", "people")} · {pluralize(bots.length, "bot")}
             </p>
           </div>
         </div>

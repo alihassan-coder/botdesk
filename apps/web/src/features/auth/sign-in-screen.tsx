@@ -3,11 +3,11 @@
 import { useState } from "react";
 import Link from "next/link";
 import { toast } from "sonner";
-import { CircleAlert } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Field, FieldGroup, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
 import { actions } from "@/data/store";
+import { FormError } from "./form-error";
 import { PasswordInput } from "./password-input";
 import { useSignedInRedirect } from "./use-signed-in-redirect";
 
@@ -34,11 +34,7 @@ export function SignInScreen() {
         }}
       >
         <FieldGroup>
-          {error && (
-            <p role="alert" className="flex items-center gap-2 rounded-xl bg-destructive/10 px-3 py-2.5 text-sm text-destructive">
-              <CircleAlert className="size-4 shrink-0" /> {error}
-            </p>
-          )}
+          {error && <FormError>{error}</FormError>}
           <Field>
             <FieldLabel htmlFor="email">Email</FieldLabel>
             <Input id="email" type="email" autoComplete="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="you@company.com" required />

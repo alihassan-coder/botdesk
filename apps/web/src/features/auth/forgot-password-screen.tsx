@@ -6,6 +6,7 @@ import { ArrowLeft, MailCheck } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Field, FieldGroup, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
+import { looksLikeEmail } from "@/lib/email";
 
 /**
  * /forgot-password — ask for a reset link. The answer is the same whether or not the
@@ -14,7 +15,7 @@ import { Input } from "@/components/ui/input";
 export function ForgotPasswordScreen() {
   const [email, setEmail] = useState("");
   const [sentTo, setSentTo] = useState<string | null>(null);
-  const valid = /^\S+@\S+\.\S+$/.test(email);
+  const valid = looksLikeEmail(email);
 
   if (sentTo) {
     return (

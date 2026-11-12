@@ -17,8 +17,7 @@ import { useOrg } from "@/data/store";
 import { openCommandPalette } from "@/features/command-palette/command-palette";
 import { BotdeskMark } from "./logo";
 import { OrgAvatar } from "./org-avatar";
-
-const PLAN_LABEL = { "self-hosted": "Self-hosted", free: "Free plan", pro: "Pro plan", team: "Team plan" };
+import { PLAN_LABEL } from "./plan";
 
 /* Classes that only apply when the sidebar is collapsed to the icon rail. */
 const RAIL_HIDDEN = "group-data-[collapsible=icon]:hidden";

@@ -6,7 +6,8 @@ from datetime import UTC, datetime
 from typing import Any, ClassVar
 
 from fastapi import Request
-from sqlalchemy import DateTime, MetaData
+from sqlalchemy import JSON, DateTime, MetaData, event
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 from sqlalchemy.pool import StaticPool
@@ -32,7 +33,11 @@ def as_utc(moment: datetime) -> datetime:
 
 class Base(DeclarativeBase):
     metadata = MetaData(naming_convention=NAMING_CONVENTION)
-    type_annotation_map: ClassVar[dict[Any, Any]] = {datetime: DateTime(timezone=True)}
+    type_annotation_map: ClassVar[dict[Any, Any]] = {
+        datetime: DateTime(timezone=True),
+        # JSON lists (like a message's parts): JSONB on Postgres, plain JSON elsewhere.
+        list[dict[str, Any]]: JSON().with_variant(JSONB(), "postgresql"),
+    }
 
 
 class IdMixin:
@@ -43,12 +48,27 @@ class CreatedAtMixin:
     created_at: Mapped[datetime] = mapped_column(default=utcnow)
 
 
+def _enforce_sqlite_foreign_keys(engine: AsyncEngine) -> None:
+    """SQLite ignores foreign keys (and ON DELETE CASCADE) unless asked, unlike Postgres."""
+
+    @event.listens_for(engine.sync_engine, "connect")
+    def turn_on(dbapi_connection: Any, _record: Any) -> None:
+        cursor = dbapi_connection.cursor()
+        cursor.execute("PRAGMA foreign_keys=ON")
+        cursor.close()
+
+
 def create_engine(url: str) -> AsyncEngine:
-    in_memory_sqlite = url.startswith("sqlite") and (":memory:" in url or url.endswith("://"))
-    if in_memory_sqlite:
-        # One shared connection, so an in-memory test database lives for the whole app.
-        return create_async_engine(url, poolclass=StaticPool, connect_args={"check_same_thread": False})
-    return create_async_engine(url, pool_pre_ping=True)
+    if not url.startswith("sqlite"):
+        return create_async_engine(url, pool_pre_ping=True)
+    in_memory = ":memory:" in url or url.endswith("://")
+    # In memory: one shared connection, so the test database lives for the whole app.
+    options: dict[str, Any] = (
+        {"poolclass": StaticPool, "connect_args": {"check_same_thread": False}} if in_memory else {}
+    )
+    engine = create_async_engine(url, **options)
+    _enforce_sqlite_foreign_keys(engine)
+    return engine
 
 
 def create_sessionmaker(engine: AsyncEngine) -> async_sessionmaker[AsyncSession]:

@@ -93,7 +93,13 @@ A service raises `NotFound("…")`, `Conflict("…")` and so on. `main.py` turns
 | `POST /api/v1/orgs/{id}/bots` | Hire a bot (any member); @handle comes from the name |
 | `GET /api/v1/orgs/{id}/bots/{botId}` | One bot |
 | `PATCH /api/v1/orgs/{id}/bots/{botId}` | Edit a bot (only the fields you send) |
-| `DELETE /api/v1/orgs/{id}/bots/{botId}` | Remove a bot (owners and admins) |
+| `DELETE /api/v1/orgs/{id}/bots/{botId}` | Remove a bot (owners and admins); its chats go too |
+| `GET /api/v1/orgs/{id}/threads` | Your chats, most recent first, with a preview of the last message |
+| `POST /api/v1/orgs/{id}/threads/dm` | Your chat with a bot (`{botId}`): the existing one or a new one. Private to you |
+| `POST /api/v1/orgs/{id}/threads/groups` | Group chat with you plus the people and bots you pick |
+| `GET /api/v1/orgs/{id}/threads/{threadId}` | One chat (404 unless you're in it) |
+| `GET /api/v1/orgs/{id}/threads/{threadId}/messages` | Messages oldest first; `limit` (1–200) and `before` to page back |
+| `POST /api/v1/orgs/{id}/threads/{threadId}/messages` | Send a message (`{text}`) |
 
 Error messages match the web app's wording, e.g. `401 "That email and password don't match."`.
 
@@ -109,7 +115,7 @@ Error messages match the web app's wording, e.g. `401 "That email and password d
 
 1. Wire the web app's sign-in to this API (replace the mock in `apps/web/src/data/store.ts`).
 2. Invite emails (the link is copied by hand until an email provider is added).
-3. Threads and messages, then bot replies streamed over SSE (bots exist, but don't talk yet).
+3. Bot replies, streamed over SSE (threads and messages are stored; bots don't answer yet).
 4. Agent runtime: LangGraph + LangChain models, Postgres checkpointer, approvals via `interrupt()`.
 5. Memory with mem0 (pgvector).
 6. Password reset emails, email verification, rate limiting on sign-in.

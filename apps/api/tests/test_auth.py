@@ -118,7 +118,8 @@ async def test_changing_your_password_signs_out_other_devices(client: httpx.Asyn
     wrong = await client.post(
         f"{AUTH}/change-password", json={"currentPassword": "nope", "newPassword": "a-new-password"}
     )
-    assert wrong.status_code == 401
+    assert wrong.status_code == 400  # not 401: you are still signed in
+    assert wrong.json() == {"detail": "Your current password isn't right."}
     ok = await client.post(
         f"{AUTH}/change-password", json={"currentPassword": PASSWORD, "newPassword": "a-new-password"}
     )

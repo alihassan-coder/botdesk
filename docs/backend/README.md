@@ -144,7 +144,7 @@ A service raises `NotFound("…")`, `Conflict("…")` and so on. `main.py` turns
 | `POST /api/v1/auth/sign-out` | Ends this session everywhere it was used |
 | `GET /api/v1/auth/me` | You, and your organizations with your role |
 | `PATCH /api/v1/auth/me` | Change your name or @handle (unique) |
-| `POST /api/v1/auth/change-password` | Needs the current password; signs out your other devices |
+| `POST /api/v1/auth/change-password` | Needs the current password (wrong one: 400, so the app keeps you signed in); signs out your other devices |
 | `POST /api/v1/auth/forgot-password` | Emails a reset link if the account exists. Always the same 202 answer (doesn't reveal accounts) |
 | `POST /api/v1/auth/reset-password` | `{token, password}`: sets a new password from the link (once, before it expires) and signs out every device |
 | `GET /api/v1/orgs` | Your organizations |

@@ -90,7 +90,8 @@ async def change_password(
 ) -> None:
     """Check the current password, set the new one, and sign out every other device."""
     if not security.verify_password(user.password_hash, current_password):
-        raise Unauthorized("Your current password isn't right.")
+        # 400, not 401: the web app reads 401 as "your session ended" and signs you out.
+        raise BadRequest("Your current password isn't right.")
     user.password_hash = security.hash_password(new_password)
     other_sessions = delete(Session).where(Session.user_id == user.id)
     if keep_token:

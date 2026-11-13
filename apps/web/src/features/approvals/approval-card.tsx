@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Check, ShieldAlert } from "lucide-react";
 import { toast } from "sonner";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
@@ -9,28 +9,51 @@ import type { Approval } from "@/data/types";
 import { useNow } from "@/hooks/use-now";
 import { explainReason, expiryLabel } from "@/lib/approval-text";
 import { PartCard } from "@/features/messages/part-card";
-import { ApprovalDecision } from "./approval-decision";
+import { ApprovalDecision, useAlreadyDecidedText } from "./approval-decision";
 import { ApprovalEditor } from "./approval-editor";
 import { RISK } from "./risk";
 
 /**
  * A bot paused on a risky action. You see exactly what it wants to do and why it asked, then
  * choose: Approve, Deny, or Edit (change the details, then approve). Nothing happens until you decide.
+ *
+ * Focus follows the flow: Edit focuses the form's first field, Cancel returns to Edit, and your
+ * decision moves focus to the decision line, which sits in a live region that stays mounted,
+ * so the decision is announced whoever made it.
  */
 export function ApprovalCard({ approvalId }: { approvalId: string }) {
   const approval = useApproval(approvalId);
   const [isEditing, setIsEditing] = useState(false);
   const [deciding, setDeciding] = useState<"approve" | "deny" | null>(null);
+  const editButton = useRef<HTMLButtonElement>(null);
+  const decisionLine = useRef<HTMLParagraphElement>(null);
+  /** Where focus goes after the next render: back to Edit, or to the decision line. */
+  const focusNext = useRef<"edit" | "decision" | null>(null);
+  const isPending = approval?.status === "pending";
+
+  useEffect(() => {
+    // Someone else decided while you were editing: the form (and the focus in it) is gone.
+    if (isEditing && !isPending && document.activeElement === document.body) focusNext.current = "decision";
+    const target = focusNext.current === "edit" ? editButton.current : focusNext.current === "decision" ? decisionLine.current : null;
+    if (!target) return;
+    focusNext.current = null;
+    target.focus();
+  });
 
   if (!approval) return null;
   const risk = RISK[approval.riskClass];
-  const isPending = approval.status === "pending";
 
   async function decide(decision: "approve" | "deny") {
     setDeciding(decision);
     const result = await actions.decideApproval(approvalId, decision);
     setDeciding(null);
-    if (!result.ok) toast.error(result.error);
+    if (result.ok) focusNext.current = "decision";
+    else toast.error(result.error);
+  }
+
+  function closeEditor(decided: boolean) {
+    focusNext.current = decided ? "decision" : "edit";
+    setIsEditing(false);
   }
 
   return (
@@ -44,8 +67,17 @@ export function ApprovalCard({ approvalId }: { approvalId: string }) {
       {approval.reason && <p className="mt-1 text-xs text-muted-foreground">{explainReason(approval.reason)}</p>}
       {isPending && approval.tainted && <TaintWarning />}
 
+      {/* Always mounted, so screen readers announce the decision when it arrives, yours or a teammate's. */}
+      <div aria-live="polite" aria-atomic="true">
+        {!isPending && (
+          <>
+            {isEditing && <AlreadyDecided approval={approval} />}
+            <ApprovalDecision approval={approval} ref={decisionLine} />
+          </>
+        )}
+      </div>
       {isEditing && isPending ? (
-        <ApprovalEditor approval={approval} onClose={() => setIsEditing(false)} />
+        <ApprovalEditor approval={approval} onClose={closeEditor} />
       ) : isPending ? (
         <>
           <PreviewFields preview={approval.preview} />
@@ -53,7 +85,7 @@ export function ApprovalCard({ approvalId }: { approvalId: string }) {
             <Button size="sm" onClick={() => decide("approve")} disabled={deciding !== null}>
               {deciding === "approve" ? <Spinner /> : <Check />} Approve
             </Button>
-            <Button size="sm" variant="outline" onClick={() => setIsEditing(true)} disabled={deciding !== null}>
+            <Button ref={editButton} size="sm" variant="outline" onClick={() => setIsEditing(true)} disabled={deciding !== null}>
               Edit
             </Button>
             <Button size="sm" variant="ghost" onClick={() => decide("deny")} disabled={deciding !== null}>
@@ -61,11 +93,16 @@ export function ApprovalCard({ approvalId }: { approvalId: string }) {
             </Button>
           </div>
         </>
-      ) : (
-        <ApprovalDecision approval={approval} />
-      )}
+      ) : null}
     </PartCard>
   );
+}
+
+/** Someone else decided while your edit was open: say who, rather than just dropping the form. */
+function AlreadyDecided({ approval }: { approval: Approval }) {
+  const text = useAlreadyDecidedText(approval);
+  if (!text) return null;
+  return <p className="mt-3 rounded-xl bg-muted/60 p-3 text-[13px]">{text}</p>;
 }
 
 /** The exact action: To, Subject, Body… Long values keep their line breaks. */

@@ -2,12 +2,13 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { CheckCheck } from "lucide-react";
+import { CheckCheck, TriangleAlert } from "lucide-react";
+import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Spinner } from "@/components/ui/spinner";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { TimeAgo } from "@/components/time-ago";
-import { actions, useApprovals, useAuthStatus, useBot, useBots, useThread } from "@/data/store";
+import { actions, useApprovals, useAuthStatus, useBot, useBots, useOrg, useThread } from "@/data/store";
 import type { Approval } from "@/data/types";
 import { BotAvatar } from "@/features/bots/bot-avatar";
 import { PageHeader } from "@/features/shell/page-header";
@@ -20,7 +21,7 @@ export function ApprovalsScreen() {
   const approvals = useApprovals();
   const bots = useBots();
   const [botId, setBotId] = useState(ALL_BOTS);
-  const isLoading = useLoadApprovals();
+  const { isLoading, error, retry } = useLoadApprovals();
 
   const shown = botId === ALL_BOTS ? approvals : approvals.filter((a) => a.botId === botId);
   const waiting = shown.filter((a) => a.status === "pending");
@@ -54,11 +55,21 @@ export function ApprovalsScreen() {
           </div>
 
           <TabsContent value="waiting" className="flex flex-col gap-6">
-            {isLoading ? <Loading /> : waiting.length > 0 ? waiting.map((a) => <ApprovalEntry key={a.id} approval={a} />) : <AllCaughtUp />}
+            {isLoading ? (
+              <Loading />
+            ) : error ? (
+              <LoadFailed error={error} onRetry={retry} />
+            ) : waiting.length > 0 ? (
+              waiting.map((a) => <ApprovalEntry key={a.id} approval={a} />)
+            ) : (
+              <AllCaughtUp />
+            )}
           </TabsContent>
           <TabsContent value="decided" className="flex flex-col gap-6">
             {isLoading ? (
               <Loading />
+            ) : error ? (
+              <LoadFailed error={error} onRetry={retry} />
             ) : decided.length > 0 ? (
               decided.map((a) => <ApprovalEntry key={a.id} approval={a} />)
             ) : (
@@ -72,21 +83,45 @@ export function ApprovalsScreen() {
 }
 
 /**
- * The page asks for the newest approvals when it opens (the mock has them all). Until then it
- * shows a spinner, on the server too, so the server's HTML matches the browser's first render.
+ * The page asks for the newest approvals when it opens, and again when you switch organization
+ * (the mock has them all). Until then it shows a spinner, on the server too, so the server's
+ * HTML matches the browser's first render. A failed load says so, with Retry, rather than
+ * looking like there's nothing to decide.
  */
 function useLoadApprovals() {
   const authStatus = useAuthStatus();
-  const [isLoading, setIsLoading] = useState(true);
+  const orgId = useOrg().id;
+  const [attempt, setAttempt] = useState(0);
+  /** Which load (org and attempt) the last answer was for, so a new one shows the spinner again. */
+  const key = `${orgId}:${attempt}`;
+  const [answer, setAnswer] = useState<{ key: string; error: string | null } | null>(null);
   useEffect(() => {
     if (authStatus !== "signed-in") return;
     let current = true;
-    void actions.loadApprovals().then(() => current && setIsLoading(false));
+    void actions.loadApprovals().then((result) => {
+      if (current) setAnswer({ key, error: result.ok ? null : result.error });
+    });
     return () => {
       current = false;
     };
-  }, [authStatus]);
-  return isLoading && authStatus !== "signed-out";
+  }, [authStatus, key]);
+  const isLoading = answer?.key !== key;
+  return {
+    isLoading: isLoading && authStatus !== "signed-out",
+    error: isLoading ? null : (answer?.error ?? null),
+    retry: () => setAttempt((n) => n + 1),
+  };
+}
+
+function LoadFailed({ error, onRetry }: { error: string; onRetry: () => void }) {
+  return (
+    <div className="flex flex-col items-center gap-2 py-16 text-center" role="alert">
+      <TriangleAlert className="size-8 text-destructive" />
+      <p className="font-medium">Couldn&apos;t load approvals</p>
+      <p className="text-sm text-muted-foreground">{error}</p>
+      <Button size="sm" variant="outline" className="mt-2" onClick={onRetry}>Try again</Button>
+    </div>
+  );
 }
 
 function Loading() {

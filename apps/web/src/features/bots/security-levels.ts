@@ -30,7 +30,11 @@ export const RISK_CLASSES: RiskClass[] = ["read", "write-internal", "write-exter
 /**
  * What each level does with each kind of action: run it (auto), ask first (ask) or refuse (deny).
  * The table from ADR 0004, the same as apps/api/src/runtime/policy.py. On top of it, once a run
- * has read outside content, anything above write-internal asks, at every level.
+ * has read outside content (it's tainted), the rules only get stricter:
+ * - an action above write-internal the table would run on its own asks instead; one the table
+ *   refuses stays refused (Read only still denies), so taint never turns a "deny" into "ask";
+ * - a tool that can reach any address (egress "open") counts as external-send, even a read,
+ *   since it could leak data in the address it calls.
  */
 export const POLICY: Record<SecurityLevel, Record<RiskClass, PolicyDecision>> = {
   "read-only": row("auto", "auto", "deny", "deny", "deny", "deny", "deny"),

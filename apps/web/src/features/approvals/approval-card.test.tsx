@@ -1,6 +1,6 @@
-import { screen } from "@testing-library/react";
+import { act, screen } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
-import { getStoreSnapshot } from "@/data/store";
+import { actions, getStoreSnapshot } from "@/data/store";
 import { renderUI } from "@/test/render";
 import { ApprovalCard } from "./approval-card";
 
@@ -65,5 +65,40 @@ describe("ApprovalCard", () => {
     renderUI(<ApprovalCard approvalId="a_4" />);
     expect(screen.getByText(/Approved by you/)).toBeInTheDocument();
     expect(screen.queryByRole("button")).not.toBeInTheDocument();
+  });
+
+  it("Edit focuses the first field, and Cancel puts focus back on Edit", async () => {
+    const { user } = renderUI(<ApprovalCard approvalId="a_2" />);
+    await user.click(screen.getByRole("button", { name: "Edit" }));
+    expect(screen.getByLabelText("To")).toHaveFocus();
+
+    await user.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(screen.getByRole("button", { name: "Edit" })).toHaveFocus();
+  });
+
+  it("after you decide, focus moves to the decision line and it's announced", async () => {
+    const { user } = renderUI(<ApprovalCard approvalId="a_1" />);
+    const live = document.querySelector("[aria-live=polite]");
+    expect(live).toBeEmptyDOMElement(); // mounted before anything is decided
+
+    await user.click(screen.getByRole("button", { name: "Approve" }));
+
+    expect(await screen.findByText(/^Approved by you/, { selector: "p[tabindex]" })).toHaveFocus();
+    expect(live).toHaveTextContent("Approved by you");
+  });
+
+  it("someone else deciding while you edit says who, instead of silently dropping the form", async () => {
+    const { user } = renderUI(<ApprovalCard approvalId="a_2" />);
+    await user.click(screen.getByRole("button", { name: "Edit" }));
+
+    await act(async () => {
+      await actions.signIn("sara@acme.dev", "botdesk123");
+      await actions.decideApproval("a_2", "deny");
+      await actions.signIn("ali@acme.dev", "botdesk123");
+    });
+
+    expect(screen.queryByRole("button", { name: "Approve edited version" })).not.toBeInTheDocument();
+    expect(screen.getByText("Sara Khan already denied this, so your changes weren't used.")).toBeInTheDocument();
+    expect(screen.getByText(/^Denied by Sara Khan/, { selector: "p[tabindex]" })).toHaveFocus();
   });
 });

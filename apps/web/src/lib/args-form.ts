@@ -12,7 +12,10 @@ export interface ArgField {
   kind: "text" | "textarea" | "number" | "boolean" | "enum";
   required: boolean;
   description?: string;
+  /** What each option shows (and the form keeps as its value). */
   options?: string[];
+  /** The schema's own values, in the same order: a numeric enum goes back as a number. */
+  optionValues?: (string | number)[];
   integer?: boolean;
   email?: boolean;
   minLength?: number;
@@ -56,15 +59,25 @@ export function initialValues(fields: ArgField[], args: Record<string, unknown>)
   );
 }
 
-/** Checks the form like the API would and turns it back into arguments, or says what's wrong. */
-export function readValues(fields: ArgField[], values: ArgValues): { args: Record<string, unknown>; errors: FieldErrors } {
+/**
+ * Checks the form like the API would and turns it back into arguments, or says what's wrong.
+ * `original` is what the bot asked for: an optional field it left out stays out unless you
+ * fill it in (an empty text or an unticked box isn't sent), so the tool's own default applies.
+ */
+export function readValues(
+  fields: ArgField[],
+  values: ArgValues,
+  original: Record<string, unknown> = {},
+): { args: Record<string, unknown>; errors: FieldErrors } {
   const args: Record<string, unknown> = {};
   const errors: FieldErrors = {};
 
   for (const field of fields) {
     const raw = values[field.name];
+    const wasSent = field.name in original;
     if (field.kind === "boolean") {
-      args[field.name] = raw === true;
+      const checked = raw === true;
+      if (wasSent || field.required || checked) args[field.name] = checked;
       continue;
     }
     const text = typeof raw === "string" ? raw : "";
@@ -73,9 +86,15 @@ export function readValues(fields: ArgField[], values: ArgValues): { args: Recor
       errors[field.name] = problem;
       continue;
     }
+    const isText = field.kind === "text" || field.kind === "textarea";
+    // Empty and optional: left out, except a text the bot sent, which you may clear on purpose.
+    if (text === "" && !field.required && !(isText && wasSent)) continue;
     if (field.kind === "number") {
       if (text.trim() !== "") args[field.name] = Number(text);
-    } else if (text !== "" || field.required || field.kind !== "enum") {
+    } else if (field.kind === "enum") {
+      const at = field.options?.indexOf(text) ?? -1;
+      args[field.name] = at === -1 ? text : (field.optionValues?.[at] ?? text);
+    } else {
       args[field.name] = text;
     }
   }
@@ -109,7 +128,7 @@ export function previewFromArgs(args: Record<string, unknown>): { label: string;
 
 function fieldFor(name: string, schema: ArgSchema, required: boolean, value: unknown): ArgField {
   const base = { name, label: schema.title ?? humanize(name), required, ...(schema.description ? { description: schema.description } : {}) };
-  if (schema.enum) return { ...base, kind: "enum", options: schema.enum.map(String) };
+  if (schema.enum) return { ...base, kind: "enum", options: schema.enum.map(String), optionValues: schema.enum };
   if (schema.type === "boolean") return { ...base, kind: "boolean" };
   if (schema.type === "number" || schema.type === "integer") {
     return { ...base, kind: "number", integer: schema.type === "integer", minimum: schema.minimum, maximum: schema.maximum };
@@ -143,7 +162,7 @@ function checkText(field: ArgField, text: string): string | undefined {
   if (empty) return field.required && (field.minLength ?? 1) > 0 ? "Fill this in." : undefined;
   if (field.kind === "number") {
     const n = Number(text);
-    if (Number.isNaN(n)) return "Enter a number.";
+    if (!Number.isFinite(n)) return "Enter a number.";
     if (field.integer && !Number.isInteger(n)) return "Enter a whole number.";
     if (field.minimum !== undefined && n < field.minimum) return `Use ${field.minimum} or more.`;
     if (field.maximum !== undefined && n > field.maximum) return `Use ${field.maximum} or less.`;

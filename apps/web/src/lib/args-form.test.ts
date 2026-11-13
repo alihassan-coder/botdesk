@@ -41,6 +41,7 @@ describe("formFields", () => {
     ]);
     expect(fields[0]).toMatchObject({ integer: true, minimum: 1 });
     expect(fields[2].options).toEqual(["friendly", "formal"]);
+    expect(fields[2].optionValues).toEqual(["friendly", "formal"]);
   });
 
   it("long or multi-line text gets a textarea even without a long limit", () => {
@@ -75,10 +76,27 @@ describe("initialValues and readValues", () => {
     expect(readValues(numeric, { code: "ab", amount: "7" })).toEqual({ args: { code: "ab", amount: 7 }, errors: {} });
   });
 
-  it("booleans come back as booleans", () => {
+  it("booleans come back as booleans, and an unticked one the bot left out stays out", () => {
     const flags = formFields({ properties: { urgent: { type: "boolean" } } }, {});
     expect(initialValues(flags, {})).toEqual({ urgent: false });
     expect(readValues(flags, { urgent: true }).args).toEqual({ urgent: true });
+    expect(readValues(flags, { urgent: false }).args).toEqual({});
+    expect(readValues(flags, { urgent: false }, { urgent: false }).args).toEqual({ urgent: false });
+  });
+
+  it("an optional text the bot left out isn't sent as \"\"; one it sent can be cleared", () => {
+    const schema: ArgsSchema = { properties: { cc: { type: "string" }, note: { type: "string" } } };
+    const optional = formFields(schema, { note: "Hi" });
+    expect(readValues(optional, { cc: "", note: "" }, { note: "Hi" }).args).toEqual({ note: "" });
+    expect(readValues(optional, { cc: "omar@acme.dev", note: "Hi" }, { note: "Hi" }).args).toEqual({ cc: "omar@acme.dev", note: "Hi" });
+  });
+
+  it("a numeric enum goes back as a number; numbers must be finite", () => {
+    const schema: ArgsSchema = { properties: { priority: { type: "integer", enum: [1, 2, 3] }, amount: { type: "number" } }, required: ["priority"] };
+    const fields = formFields(schema, { priority: 2 });
+    expect(fields[0].kind).toBe("enum");
+    expect(readValues(fields, { priority: "3", amount: "" }, { priority: 2 }).args).toEqual({ priority: 3 });
+    expect(readValues(fields, { priority: "3", amount: "Infinity" }).errors).toEqual({ amount: "Enter a number." });
   });
 });
 

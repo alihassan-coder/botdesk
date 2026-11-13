@@ -77,10 +77,28 @@ describe("ApprovalEditor", () => {
     expect(onClose).not.toHaveBeenCalled();
   });
 
-  it("closes when someone else decided first (409), so the card shows what happened", async () => {
+  it("leaves it to the card when someone else decided first (409): it says who", async () => {
     const { user, decide, onClose } = renderEditor();
-    decide.mockResolvedValue({ ok: false, reason: "conflict", error: "This approval was already decided." });
+    decide.mockResolvedValue({ ok: false, reason: "conflict", status: "approved", error: "This approval was already decided." });
     await user.click(screen.getByRole("button", { name: "Approve edited version" }));
-    await vi.waitFor(() => expect(onClose).toHaveBeenCalled());
+    await vi.waitFor(() => expect(decide).toHaveBeenCalled());
+    expect(onClose).not.toHaveBeenCalled();
+  });
+
+  it("any other failure keeps the form open with your changes", async () => {
+    const { user, decide, onClose } = renderEditor();
+    decide.mockResolvedValue({ ok: false, status: "pending", error: "This tool isn't available any more." });
+    const amount = screen.getByRole("spinbutton", { name: "Amount" });
+    await user.clear(amount);
+    await user.type(amount, "95");
+    await user.click(screen.getByRole("button", { name: "Approve edited version" }));
+    await vi.waitFor(() => expect(decide).toHaveBeenCalled());
+    expect(onClose).not.toHaveBeenCalled();
+    expect(screen.getByRole("spinbutton", { name: "Amount" })).toHaveValue(95);
+  });
+
+  it("opens with the first field focused", () => {
+    renderEditor();
+    expect(screen.getByRole("textbox", { name: "To" })).toHaveFocus();
   });
 });

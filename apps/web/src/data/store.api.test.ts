@@ -483,3 +483,121 @@ describe("chats on the API", () => {
     expect(state().threadLoads.t1).toEqual({ status: "ready", hasOlder: false });
   });
 });
+
+describe("approvals on the API", () => {
+  const scout = {
+    id: "b1", name: "Scout", handle: "scout", role: "Research", description: "", instructions: "", avatarColor: "sky",
+    modelId: "", securityLevel: "ask-before-acting", monthlyBudgetUsd: 50, status: "idle", createdAt: "2026-11-12T08:00:00Z",
+  };
+  const dm = {
+    id: "t1", kind: "dm", title: "Scout", botId: "b1", participants: [{ type: "user", id: "u1" }, { type: "bot", id: "b1" }],
+    lastMessageAt: "2026-11-12T08:00:00Z", lastMessagePreview: "",
+  };
+  const approval = (patch: Record<string, unknown> = {}) => ({
+    id: "a1", runId: "r1", threadId: "t1", botId: "b1", toolExecutionId: "x1", tool: "demo.send_email",
+    title: "Send an email", summary: "Send an email to sara@acme.dev: Launch", riskClass: "external-send",
+    reason: "level=Ask before acting · risk=external-send · tainted=no → ask", tainted: false,
+    args: { to: "sara@acme.dev", subject: "Launch", body: "" }, finalArgs: null, argsSchema: null,
+    preview: [{ label: "To", value: "sara@acme.dev" }], status: "pending",
+    requestedAt: "2026-11-12T09:00:01Z", expiresAt: "2026-11-15T09:00:01Z", decidedAt: null, decidedBy: null,
+    ...patch,
+  });
+  const decided = (status: string, patch: Record<string, unknown> = {}) =>
+    approval({ status, decidedAt: "2026-11-12T09:05:00Z", decidedBy: { id: "u2", name: "Omar" }, ...patch });
+  const stored = () => state().approvals.find((a) => a.id === "a1");
+  const body = (path: string) => JSON.parse(String(vi.mocked(fetch).mock.calls.find(([url]) => String(url).endsWith(path))![1]?.body));
+
+  beforeEach(async () => {
+    vi.stubGlobal("EventSource", FakeEventSource);
+    routes["GET /api/v1/orgs/o1/bots"] = { status: 200, body: [scout] };
+    routes["GET /api/v1/orgs/o1/threads"] = { status: 200, body: [dm] };
+    routes["GET /api/v1/orgs/o1/threads/t1/messages?limit=50"] = { status: 200, body: [] };
+    routes["GET /api/v1/orgs/o1/approvals?status=all"] = { status: 200, body: [approval()] };
+    routes["GET /api/v1/orgs/o1/approvals?status=pending"] = { status: 200, body: [approval()] };
+    await actions.signIn("zara@example.com", "long-enough");
+    await vi.waitFor(() => expect(state().botsLoading).toBe(false));
+  });
+
+  it("loadApprovals fills the Approvals page from the list", async () => {
+    await expect(actions.loadApprovals()).resolves.toEqual({ ok: true });
+    expect(stored()).toMatchObject({ status: "pending", runId: "r1", riskClass: "external-send", expiresAt: "2026-11-15T09:00:01Z" });
+  });
+
+  it("approving sends the decision and shows who decided", async () => {
+    await actions.loadApprovals();
+    routes["POST /api/v1/orgs/o1/approvals/a1/decide"] = { status: 200, body: decided("approved", { decidedBy: { id: "u1", name: "Zara" } }) };
+    await expect(actions.decideApproval("a1", "approve")).resolves.toEqual({ ok: true });
+    expect(body("/approvals/a1/decide")).toEqual({ decision: "approve" });
+    expect(stored()).toMatchObject({ status: "approved", decidedBy: "u1", decidedByName: "Zara" });
+  });
+
+  it("an edit sends the edited arguments", async () => {
+    await actions.loadApprovals();
+    const editedArgs = { to: "sara@acme.dev", subject: "Launch day", body: "" };
+    routes["POST /api/v1/orgs/o1/approvals/a1/decide"] = { status: 200, body: decided("edited", { finalArgs: editedArgs }) };
+    await actions.decideApproval("a1", "approve", editedArgs);
+    expect(body("/approvals/a1/decide")).toEqual({ decision: "approve", editedArgs });
+    expect(stored()).toMatchObject({ status: "edited", finalArgs: editedArgs });
+  });
+
+  it("409: someone decided first, so the approval is fetched again and the card shows what happened", async () => {
+    await actions.loadApprovals();
+    routes["POST /api/v1/orgs/o1/approvals/a1/decide"] = { status: 409, body: { detail: "This approval was already decided." } };
+    routes["GET /api/v1/orgs/o1/approvals/a1"] = { status: 200, body: decided("denied") };
+    await expect(actions.decideApproval("a1", "approve")).resolves.toEqual({ ok: false, error: "This approval was already decided.", reason: "conflict" });
+    expect(stored()).toMatchObject({ status: "denied", decidedByName: "Omar" });
+  });
+
+  it("400: the edited arguments don't fit, and nothing changes", async () => {
+    await actions.loadApprovals();
+    const detail = "Those changes don't fit this action: to: value is not a valid email address";
+    routes["POST /api/v1/orgs/o1/approvals/a1/decide"] = { status: 400, body: { detail } };
+    await expect(actions.decideApproval("a1", "approve", { to: "nope", subject: "Launch" })).resolves.toEqual({ ok: false, error: detail, reason: "invalid" });
+    expect(stored()?.status).toBe("pending");
+  });
+
+  it("refreshPendingApprovals adds new requests and re-checks ones decided elsewhere", async () => {
+    await actions.refreshPendingApprovals();
+    expect(stored()?.status).toBe("pending");
+
+    routes["GET /api/v1/orgs/o1/approvals?status=pending"] = { status: 200, body: [approval({ id: "a2" })] };
+    routes["GET /api/v1/orgs/o1/approvals/a1"] = { status: 200, body: decided("expired", { decidedBy: null }) };
+    await actions.refreshPendingApprovals();
+    expect(stored()?.status).toBe("expired");
+    expect(state().approvals.filter((a) => a.status === "pending").map((a) => a.id)).toEqual(["a2"]);
+  });
+
+  it("opening a chat with a waiting approval shows its card and the bot waiting", async () => {
+    routes["GET /api/v1/orgs/o1/approvals?status=all&threadId=t1"] = { status: 200, body: [approval()] };
+    actions.openThread("t1");
+    await vi.waitFor(() => expect(state().threadLoads.t1?.status).toBe("ready"));
+    expect(state().messages.at(-1)).toMatchObject({ id: "typing-r1", parts: [{ type: "approval", approvalId: "a1" }, { type: "text", text: "" }] });
+    expect(state().bots[0]).toMatchObject({ status: "waiting-approval", statusText: "Waiting for approval" });
+  });
+
+  it("live: a request pauses the bot, a decision resumes it, needs-attention can be stopped", async () => {
+    actions.openThread("t1");
+    await vi.waitFor(() => expect(state().threadLoads.t1?.status).toBe("ready"));
+    const stream = FakeEventSource.last!;
+
+    stream.emit("run_started", { runId: "r1", data: { botId: "b1" } });
+    stream.emit("approval_requested", { runId: "r1", data: { approval: approval() } });
+    expect(stored()?.status).toBe("pending");
+    expect(state().bots[0]).toMatchObject({ status: "waiting-approval", statusText: "Waiting for approval" });
+    // The sidebar count is refreshed at once too.
+    await vi.waitFor(() => expect(calls).toContain("GET /api/v1/orgs/o1/approvals?status=pending"));
+
+    stream.emit("approval_decided", { runId: "r1", data: { approval: decided("approved") } });
+    stream.emit("run_resumed", { runId: "r1", data: { botId: "b1" } });
+    expect(stored()?.status).toBe("approved");
+    expect(state().bots[0]).toMatchObject({ status: "working", statusText: "Thinking…" });
+
+    stream.emit("run_needs_attention", { runId: "r1", data: { status: "needs_attention", error: "Check the outbox." } });
+    expect(state().bots[0]).toMatchObject({ status: "error", statusText: "Needs attention" });
+    routes["POST /api/v1/orgs/o1/runs/r1/cancel"] = { status: 200, body: {} };
+    await expect(actions.stopRun("r1")).resolves.toEqual({ ok: true });
+
+    stream.emit("run_finished", { runId: "r1", data: { status: "cancelled" } });
+    expect(state().bots[0]).toMatchObject({ status: "idle" });
+  });
+});

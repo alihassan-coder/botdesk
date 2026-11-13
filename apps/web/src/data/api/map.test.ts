@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { asUtc, toApiBot, toBot, toMessage, toOrg, toThread, toUser } from "./map";
+import { asUtc, toApiBot, toApproval, toBot, toMessage, toOrg, toThread, toUser } from "./map";
 
 describe("API → web shapes", () => {
   it("a user gets the role they hold in the org and shows as online", () => {
@@ -58,5 +58,31 @@ describe("API → web shapes", () => {
     expect(asUtc("2026-11-12T11:36:54.520126")).toBe("2026-11-12T11:36:54.520126Z");
     expect(asUtc("2026-11-12T11:36:54Z")).toBe("2026-11-12T11:36:54Z");
     expect(asUtc("2026-11-12T11:36:54+05:00")).toBe("2026-11-12T11:36:54+05:00");
+  });
+});
+
+describe("toApproval", () => {
+  const api = {
+    id: "a1", runId: "r1", threadId: "t1", botId: "b1", toolExecutionId: "x1", tool: "demo.send_email",
+    title: "Send an email", summary: "To sara", riskClass: "external-send" as const,
+    reason: "level=Ask before acting · risk=external-send · tainted=yes → ask", tainted: true,
+    args: { to: "sara@acme.dev" }, finalArgs: { to: "omar@acme.dev" }, argsSchema: { type: "object", properties: {} },
+    preview: [{ label: "To", value: "omar@acme.dev" }], status: "edited" as const,
+    requestedAt: "2026-11-12T09:00:00", expiresAt: "2026-11-15T09:00:00", decidedAt: "2026-11-12T09:01:00", decidedBy: { id: "u1", name: "Ali" },
+  };
+
+  it("keeps what the card needs, reads times as UTC, and splits the decider into id and name", () => {
+    expect(toApproval(api)).toEqual({
+      id: "a1", botId: "b1", threadId: "t1", runId: "r1", riskClass: "external-send", title: "Send an email", summary: "To sara",
+      reason: api.reason, tainted: true, preview: api.preview, args: api.args, finalArgs: api.finalArgs, argsSchema: api.argsSchema,
+      status: "edited", requestedAt: "2026-11-12T09:00:00Z", expiresAt: "2026-11-15T09:00:00Z",
+      decidedAt: "2026-11-12T09:01:00Z", decidedBy: "u1", decidedByName: "Ali",
+    });
+  });
+
+  it("a waiting approval has no decision fields", () => {
+    const pending = toApproval({ ...api, status: "pending", decidedAt: null, decidedBy: null, finalArgs: null });
+    expect(pending).not.toHaveProperty("decidedBy");
+    expect(pending).not.toHaveProperty("decidedAt");
   });
 });

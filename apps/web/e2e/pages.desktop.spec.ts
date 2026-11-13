@@ -57,6 +57,14 @@ test("the approvals inbox collects every request", async ({ page }) => {
   await expect(page.getByText(/Approved by you/).first()).toBeVisible();
 });
 
+test("the approvals inbox filters by bot", async ({ page }) => {
+  await page.goto("/approvals");
+  await page.getByRole("combobox", { name: "Filter by bot" }).click();
+  await page.getByRole("option", { name: "Bug Fixer" }).click();
+  await expect(page.getByRole("tab", { name: "Waiting · 1" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Take over to log in to staging" })).toBeVisible();
+});
+
 test("routines can be switched off", async ({ page }) => {
   await page.goto("/routines");
   const toggle = page.getByRole("switch", { name: "Run Morning triage" });

@@ -51,7 +51,16 @@ test("editing an action before approving it", async ({ page }) => {
   const body = page.getByLabel("Body");
   await body.fill("Not this quarter. Thanks!");
   await page.getByRole("button", { name: "Approve edited version" }).click();
-  await expect(page.getByText(/Approved by you/)).toBeVisible();
+  await expect(page.getByText(/Edited and approved by you/)).toBeVisible();
+});
+
+test("the edit form checks fields before approving", async ({ page }) => {
+  await page.goto("/chat/t_inbox");
+  await page.getByRole("button", { name: "Edit" }).first().click();
+  await page.getByRole("textbox", { name: "To" }).fill("vicky");
+  await page.getByRole("button", { name: "Approve edited version" }).click();
+  await expect(page.getByText("Enter an email address, like sara@acme.dev.")).toBeVisible();
+  await expect(page.locator("[data-sidebar=sidebar]").getByRole("link", { name: "Approvals, 3 waiting" })).toBeVisible();
 });
 
 test("answering a bot's question collapses it to your answer", async ({ page }) => {

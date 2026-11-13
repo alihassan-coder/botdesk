@@ -11,6 +11,7 @@ import { useThreadLoad, useThreadMessages } from "@/data/store";
 import type { Thread } from "@/data/types";
 import { LoadOlderMessages } from "./load-older-messages";
 import { MessageItem } from "./message-item";
+import { RunAttentionNotices } from "./run-attention-notice";
 
 /** The scrolling conversation. Opens at the newest message and follows new ones as they arrive. */
 export function MessageList({ thread }: { thread: Thread }) {
@@ -53,6 +54,7 @@ export function MessageList({ thread }: { thread: Thread }) {
                 <MessageItem message={message} isGroup={thread.kind === "group"} />
               </MessageScrollerItem>
             ))}
+            <RunAttentionNotices threadId={thread.id} />
           </MessageScrollerContent>
         </MessageScrollerViewport>
         <MessageScrollerButton />

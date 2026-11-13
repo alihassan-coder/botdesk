@@ -27,6 +27,7 @@ from src.models.bot import SecurityLevel
 from src.plugins.registry import RegisteredTool, ToolRegistry
 from src.runtime.policy import LEVEL_NAMES, decide
 from src.runtime.reporter import RunReporter
+from src.services import approval_service
 from src.services import tool_execution_service as executions
 from src.services.tool_execution_service import ApprovalDraft, NewCall, Recorded, RunRef
 
@@ -89,10 +90,9 @@ async def record(
     """Save the decision (and the approval, when the policy asks). Safe to call twice."""
     draft = None
     if call.decision == "ask" and call.tool:
-        args = call.tool.spec.args_model.model_validate(call.args)
         draft = ApprovalDraft(
             title=call.tool.spec.title,
-            summary=call.tool.spec.summary(args),
+            summary=approval_service.summarize(call.tool, call.args),
             tainted=tainted,
             expires_at=utcnow() + approval_expiry,
         )

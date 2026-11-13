@@ -351,6 +351,11 @@ async def test_editing_runs_the_edited_arguments(world: World) -> None:
     assert approved.json()["status"] == "edited"
     assert approved.json()["finalArgs"] == edited
     assert approved.json()["args"] == {"to": "sara@acme.dev", "subject": "Hi", "body": ""}
+    # The summary describes what will run, built the same way as when it was asked for.
+    assert approved.json()["summary"] == "Send an email to omar@acme.dev: Hello"
+    listed = (await world.client.get(f"{world.org}/approvals/{recorded.approval.id}")).json()
+    assert listed["summary"] == "Send an email to omar@acme.dev: Hello"
+    assert [line["value"] for line in listed["preview"]] == ["omar@acme.dev", "Hello", "Hi Omar"]
     async with world.runs.sessionmaker() as db:
         execution = await db.get(ToolExecution, recorded.execution.id)
     assert execution is not None and execution.args == edited

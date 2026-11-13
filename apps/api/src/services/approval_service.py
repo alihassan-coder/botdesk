@@ -17,7 +17,7 @@ from src.core.database import as_utc, utcnow
 from src.core.errors import BadRequest, Conflict, NotFound
 from src.models import Approval, ThreadParticipant, ToolExecution, User
 from src.models.approval import ApprovalStatus
-from src.plugins.registry import ToolRegistry
+from src.plugins.registry import RegisteredTool, ToolRegistry
 from src.schemas.approval import ApprovalOut, Decider, PreviewLine
 from src.services.tool_execution_service import args_hash
 
@@ -101,15 +101,23 @@ class Decided:
     expired: bool  # it had run out of time: the run is told "no", and the caller answers 409
 
 
-def _checked_args(registry: ToolRegistry, tool_name: str, edited: dict[str, Any]) -> dict[str, Any]:
+def summarize(tool: RegisteredTool, args: dict[str, Any]) -> str:
+    """The card's one-line summary of a call with these arguments. Used when the approval is
+    asked for and again after an edit, so the summary always matches what will run."""
+    return tool.spec.summary(tool.spec.args_model.model_validate(args))
+
+
+def _checked_args(registry: ToolRegistry, tool_name: str, edited: dict[str, Any]) -> tuple[dict[str, Any], str]:
+    """The edited arguments, validated, and the summary they give."""
     tool = registry.get(tool_name)
     if tool is None:
         raise Conflict("This tool isn't available any more.")
     try:
-        return tool.spec.args_model.model_validate(edited).model_dump(mode="json")
+        args = tool.spec.args_model.model_validate(edited).model_dump(mode="json")
     except ValidationError as error:
         problems = "; ".join(f"{'.'.join(map(str, e['loc'])) or 'args'}: {e['msg']}" for e in error.errors())
         raise BadRequest(f"Those changes don't fit this action: {problems}") from error
+    return args, summarize(tool, args)
 
 
 async def decide(
@@ -133,13 +141,21 @@ async def decide(
             raise Conflict(ALREADY_DECIDED)
         return Decided(view=await view_by_id(db, approval.id), expired=True)
 
-    final_args = approval.args
+    final_args, summary = approval.args, approval.summary
     if approve and edited_args is not None:
-        final_args = _checked_args(registry, approval.tool_name, edited_args)
+        final_args, summary = _checked_args(registry, approval.tool_name, edited_args)
     status: ApprovalStatus = "denied"
     if approve:
         status = "edited" if final_args != approval.args else "approved"
-    if not await _settle(db, approval, status=status, user_id=user.id, final_args=final_args if approve else None):
+    settled = await _settle(
+        db,
+        approval,
+        status=status,
+        user_id=user.id,
+        final_args=final_args if approve else None,
+        summary=summary if status == "edited" else None,
+    )
+    if not settled:
         raise Conflict(ALREADY_DECIDED)
     return Decided(view=await view_by_id(db, approval.id), expired=False)
 
@@ -151,13 +167,18 @@ async def _settle(
     status: ApprovalStatus,
     user_id: uuid.UUID | None,
     final_args: dict[str, Any] | None,
+    summary: str | None = None,
 ) -> bool:
     """The atomic part: pending → `status`, and the tool call becomes ready to run (with the
-    approved arguments) or denied. False if someone else decided first."""
+    approved arguments) or denied. An edit also replaces the summary, so the card describes
+    what runs. False if someone else decided first."""
+    values: dict[str, Any] = {"status": status, "decided_by": user_id, "decided_at": utcnow(), "final_args": final_args}
+    if summary is not None:
+        values["summary"] = summary
     won = await db.execute(
         update(Approval)
         .where(Approval.id == approval.id, Approval.status == "pending")
-        .values(status=status, decided_by=user_id, decided_at=utcnow(), final_args=final_args)
+        .values(**values)
         .returning(Approval.id)
     )
     if won.first() is None:

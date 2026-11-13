@@ -55,8 +55,11 @@ export function ModelPicker({ id, value, onChange }: { id: string; value: string
               <CommandGroup key={group.providerId} heading={group.providerName}>
                 {group.models.map((m) => (
                   <CommandItem key={m.id} value={`${m.name} ${m.id} ${group.providerName}`} data-checked={m.id === value} onSelect={() => pick(m.id)}>
-                    <span className="truncate">{m.name}</span>
-                    <span className="ml-auto shrink-0 text-xs text-muted-foreground">{formatContextWindow(m)}</span>
+                    {/* One flexible box, so the context window sits at the right edge, next to the tick. */}
+                    <span className="flex min-w-0 flex-1 items-baseline justify-between gap-2">
+                      <span className="truncate">{m.name}</span>
+                      <span className="shrink-0 text-xs text-muted-foreground">{formatContextWindow(m)}</span>
+                    </span>
                   </CommandItem>
                 ))}
               </CommandGroup>

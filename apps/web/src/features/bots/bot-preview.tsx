@@ -33,7 +33,7 @@ export function BotPreview({ bot }: { bot: NewBotInput }) {
 
       <dl className="grid grid-cols-[92px_1fr] gap-x-3 gap-y-1.5 border-t pt-4 text-sm">
         <dt className="text-muted-foreground">Model</dt>
-        <dd>{model?.name}</dd>
+        <dd>{model?.name ?? (bot.modelId || "Organization default")}</dd>
         <dt className="text-muted-foreground">Security</dt>
         <dd>{securityLabel(bot.securityLevel)}</dd>
         <dt className="text-muted-foreground">Budget</dt>

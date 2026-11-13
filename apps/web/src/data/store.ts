@@ -9,9 +9,9 @@
  *   each bot's DM, message history, sending, and bot replies streamed live over the
  *   chat's event stream (with a Stop button), and approvals: cards in the chat, live from
  *   the stream, and the Approvals page from the list; and Models & keys: providers, their
- *   keys and live model lists; and what each bot remembers (Memory), loaded per bot.
- *   Routines, apps and usage aren't on the API yet,
- *   so they start empty or stay mock.
+ *   keys and live model lists; what each bot remembers (Memory), loaded per bot; and Usage &
+ *   budgets: daily spend, each bot's spend this month and the org's budget. Routines and
+ *   apps aren't on the API yet, so they start empty or stay mock.
  * - Not set (tests, e2e, demos): everything is the in-memory mock, with fake bot replies.
  * Guest mode ("Explore the demo") uses the mock in either case, so people can look
  * around without an account; it never calls the API.
@@ -21,15 +21,15 @@ import { useCallback, useRef, useSyncExternalStore } from "react";
 import { makeHandle } from "@/lib/handle";
 import { parseMentions } from "@/lib/mentions";
 import { previewFromArgs } from "@/lib/args-form";
-import { approvalApi, authApi, botApi, inviteApi, memoryApi, modelApi, orgApi, runApi, threadApi } from "./api/botdesk";
+import { approvalApi, authApi, botApi, inviteApi, memoryApi, modelApi, orgApi, runApi, threadApi, usageApi } from "./api/botdesk";
 import { ApiError, apiBaseUrl } from "./api/client";
-import { toApiBot, toApproval, toBot, toInvitation, toMemory, toMemoryStatus, toMessage, toModel, toModelProvider, toOrg, toThread, toUser } from "./api/map";
+import { toApiBot, toApproval, toBot, toInvitation, toMemory, toMemoryStatus, toMessage, toModel, toModelProvider, toOrg, toThread, toUsage, toUser } from "./api/map";
 import { applyRunEvent, typingId, upsertApproval, withActiveRuns, withPreview, withWaitingApprovals, type ActiveRun } from "./api/run-events";
 import type { ApiMe, ApiRunEvent, ApiThread, ApiThreadRuns } from "./api/types";
 import * as mock from "./mock/fixtures";
 import type {
   Approval, ApprovalStatus, Bot, Invitation, MemoryItem, MemoryList, MemoryStatus, Membership, Message, Model, ModelListProblem, ModelProvider, Org,
-  Participant, Routine, Thread, User,
+  Participant, Routine, Thread, UsageSummary, User,
 } from "./types";
 
 /** What you fill in to create a bot; the rest (id, handle, status…) is filled in for you. */
@@ -114,7 +114,12 @@ interface State {
   memoryLists: Record<string, MemoryList>;
   /** Whether bots can remember here. Null until the API has said. */
   memoryStatus: MemoryStatus | null;
-  usage: typeof mock.usage;
+  /** Settings → Usage & budgets. Each bot's own spend is on the bot. */
+  usage: UsageSummary;
+  /** API only: true while the usage report is on its way. */
+  usageLoading: boolean;
+  /** API only: each bot's spend this month, by bot id, so bots loaded after the report still show it. */
+  spentByBot: Record<string, number>;
   templates: typeof mock.templates;
 }
 
@@ -146,7 +151,9 @@ function seed(): State {
     memories: mock.memories,
     memoryLists: {},
     memoryStatus: { enabled: true },
-    usage: mock.usage,
+    usage: mockUsage(),
+    usageLoading: false,
+    spentByBot: {},
     templates: mock.templates,
   };
 }
@@ -174,6 +181,8 @@ function apiSeed(): State {
     memoryStatus: null,
     models: [],
     modelProviders: [],
+    usage: EMPTY_USAGE,
+    usageLoading: true,
   };
 }
 
@@ -320,10 +329,14 @@ function enterOrg(org: Membership) {
     memoryLists: {},
     memoryStatus: null,
     botsLoading: true,
+    usage: EMPTY_USAGE,
+    usageLoading: true,
+    spentByBot: {},
   }));
   void loadOrgPeople(org);
   void loadBotsAndChats(org);
   void loadModelCatalog(org.id);
+  void loadUsage(org.id);
 }
 
 /**
@@ -335,7 +348,7 @@ async function loadBotsAndChats(org: Membership) {
     botApi.list(org.id).catch(() => null),
     threadApi.list(org.id).catch(() => null),
   ]);
-  const bots = apiBots?.map(toBot) ?? [];
+  const bots = withSpend(apiBots?.map(toBot) ?? [], state.spentByBot);
   const threads = apiThreads ?? [];
   const withoutDm = bots.filter((b) => !threads.some((t) => t.kind === "dm" && t.botId === b.id));
   const opened = await Promise.all(withoutDm.map((b) => threadApi.openDm(org.id, b.id).catch(() => null)));
@@ -343,7 +356,8 @@ async function loadBotsAndChats(org: Membership) {
   set((st) => {
     if (st.org.id !== org.id) return st; // switched org while loading
     const all = [...threads, ...opened.filter((t): t is ApiThread => t !== null)];
-    return { ...st, bots, threads: all.map((t) => withBotName(toThread(t), bots)), botsLoading: false };
+    const spent = withSpend(bots, st.spentByBot); // the usage report may have come in meanwhile
+    return { ...st, bots: spent, threads: all.map((t) => withBotName(toThread(t), spent)), botsLoading: false };
   });
 }
 
@@ -639,6 +653,7 @@ function followChat(orgId: string, threadId: string, after?: number): () => void
 
 function onRunEvent(orgId: string, event: ApiRunEvent) {
   set((st) => (st.org.id === orgId ? withRunStatus({ ...st, ...applyRunEvent(st, event) }) : st));
+  if (event.kind === "run_finished" || event.kind === "run_failed") scheduleUsageRefresh(orgId);
   // Someone asked or decided: the sidebar count may be behind on other chats too.
   if (event.kind === "approval_requested" || event.kind === "approval_decided") void approvalActions.refreshPendingApprovals();
 }
@@ -1103,12 +1118,74 @@ const modelActions = {
   },
 };
 
+/* ---------- Usage and budgets ----------
+ * What the org's bots spent (Settings → Usage & budgets, a bot's "Budget this month") and the
+ * org's monthly budget. On the API the report is loaded with the org, again when a usage screen
+ * opens, and shortly after replies finish. A budget of 0 (bots) or none (the org) is no limit.
+ */
+
+const EMPTY_USAGE: UsageSummary = { days: [], monthToDateUsd: 0, unpricedTokens: 0 };
+
+/** MOCK: the demo's 14 days, and this month as the sum of what the demo bots spent. */
+function mockUsage(): UsageSummary {
+  return { days: mock.usage, monthToDateUsd: mock.bots.reduce((sum, b) => sum + b.spentThisMonthUsd, 0), unpricedTokens: 0 };
+}
+
+function withSpend(bots: Bot[], spentByBot: Record<string, number>): Bot[] {
+  return bots.map((b) => (b.id in spentByBot && b.spentThisMonthUsd !== spentByBot[b.id] ? { ...b, spentThisMonthUsd: spentByBot[b.id] } : b));
+}
+
+async function loadUsage(orgId: string) {
+  const report = await usageApi.org(orgId).catch(() => null);
+  set((st) => {
+    if (st.org.id !== orgId) return st; // switched org while loading
+    if (!report) return { ...st, usageLoading: false };
+    const { summary, spentByBot } = toUsage(report);
+    return { ...st, usage: summary, usageLoading: false, spentByBot, bots: withSpend(st.bots, spentByBot) };
+  });
+}
+
+/** Replies cost money: load the report again a moment after they finish, once for a burst of them. */
+const USAGE_REFRESH_MS = 2_000;
+let usageRefresh: ReturnType<typeof setTimeout> | undefined;
+
+function scheduleUsageRefresh(orgId: string) {
+  if (usageRefresh) return;
+  usageRefresh = setTimeout(() => {
+    usageRefresh = undefined;
+    if (state.org.id === orgId && !isDemoMode()) void loadUsage(orgId);
+  }, USAGE_REFRESH_MS);
+}
+
+const usageActions = {
+  /** Fetch the usage report again (a usage screen opened). */
+  loadUsage(): Promise<void> {
+    if (isDemoMode()) return Promise.resolve();
+    return loadUsage(state.org.id);
+  },
+
+  /** What all the org's bots may spend a month; null or 0 removes the limit. Owners and admins. */
+  async setOrgBudget(usd: number | null): Promise<ActionResult> {
+    const budget = usd ? Math.round(usd) : undefined;
+    if (!isDemoMode()) {
+      try {
+        await orgApi.update(state.org.id, { monthlyBudgetUsd: budget ?? null });
+      } catch (error) {
+        return failure(error);
+      }
+    }
+    set((st) => ({ ...st, usage: { ...st.usage, orgBudgetUsd: budget } }));
+    return { ok: true };
+  },
+};
+
 export const actions = {
   ...authActions,
   ...orgActions,
   ...chatActions,
   ...approvalActions,
   ...modelActions,
+  ...usageActions,
 
   /** Sends your message. Bots reply in a moment: in a DM that bot, in a group the ones you @mention. */
   sendMessage(threadId: string, text: string) {
@@ -1596,6 +1673,7 @@ export const useModelsLoading = () => useStore(useCallback((s: State) => s.model
 export const useTemplates = () => useStore(useCallback((s: State) => s.templates, []));
 export const useRoutines = () => useStore(useCallback((s: State) => s.routines, []));
 export const useUsage = () => useStore(useCallback((s: State) => s.usage, []));
+export const useUsageLoading = () => useStore(useCallback((s: State) => s.usageLoading, []));
 export const useConnectors = () => useStore(useCallback((s: State) => s.connectors, []));
 export const useConnections = () => useStore(useCallback((s: State) => s.connections, []));
 

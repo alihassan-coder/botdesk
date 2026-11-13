@@ -16,6 +16,8 @@ export interface ApiOrg {
   slug: string;
   plan: "self-hosted" | "free" | "pro" | "team";
   role: ApiRole;
+  /** null = no limit. */
+  monthlyBudgetUsd?: number | null;
 }
 
 /** Who is signed in, and which organizations they belong to. */
@@ -65,6 +67,38 @@ export type ApiBotInput = Pick<
   ApiBot,
   "name" | "role" | "description" | "instructions" | "avatarColor" | "modelId" | "securityLevel" | "monthlyBudgetUsd" | "memoryEnabled"
 >;
+
+/* ---------- Usage and budgets ---------- */
+
+export interface ApiUsageDay {
+  date: string;
+  modelsUsd: number;
+  computersUsd: number;
+  inputTokens: number;
+  outputTokens: number;
+  unpricedTokens: number;
+}
+
+/** A bot's spend this calendar month (UTC). `budgetUsd` null = no limit. */
+export interface ApiBotSpend {
+  botId: string;
+  name: string;
+  spentUsd: number;
+  budgetUsd: number | null;
+  inputTokens: number;
+  outputTokens: number;
+  unpricedTokens: number;
+}
+
+export interface ApiUsage {
+  days: ApiUsageDay[];
+  monthStart: string;
+  monthToDateUsd: number;
+  orgBudgetUsd: number | null;
+  unpricedTokens: number;
+  bots: ApiBotSpend[];
+  pricesChecked: string;
+}
 
 /* ---------- Models & keys ---------- */
 
@@ -220,7 +254,8 @@ export type ApiRunEvent = {
   | { kind: "run_started"; data: { botId: string } }
   | { kind: "message_delta"; data: { messageId: string; botId: string; text: string } }
   | { kind: "run_finished"; data: { status: "succeeded" | "cancelled" } }
-  | { kind: "run_failed"; data: { status: "failed"; error: string } }
+  /** `code` "budget": the bot or the org reached its monthly budget. */
+  | { kind: "run_failed"; data: { status: "failed"; error: string; code?: "budget" } }
   | { kind: "tool_started"; data: { toolExecutionId: string; tool: string; risk: ApiRiskClass; args: Record<string, unknown> } }
   | {
       kind: "tool_finished";

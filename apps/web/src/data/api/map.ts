@@ -1,5 +1,5 @@
-import type { Approval, ArgsSchema, Bot, Invitation, MemoryItem, MemoryStatus, Message, MessagePart, Model, ModelProvider, Org, Thread, User } from "../types";
-import type { ApiApproval, ApiBot, ApiBotInput, ApiInvitation, ApiMemory, ApiMemoryStatus, ApiMessage, ApiModel, ApiModelProvider, ApiOrg, ApiRole, ApiThread, ApiUser } from "./types";
+import type { Approval, ArgsSchema, Bot, Invitation, MemoryItem, MemoryStatus, Message, MessagePart, Model, ModelProvider, Org, Thread, UsageSummary, User } from "../types";
+import type { ApiApproval, ApiBot, ApiBotInput, ApiInvitation, ApiMemory, ApiMemoryStatus, ApiMessage, ApiModel, ApiModelProvider, ApiOrg, ApiRole, ApiThread, ApiUsage, ApiUser } from "./types";
 
 /**
  * Turns API answers into the web app's own types, so screens never see API shapes.
@@ -27,7 +27,7 @@ export function toInvitation({ id, email, role, createdAt, expiresAt }: ApiInvit
   return { id, email, role, createdAt: asUtc(createdAt), expiresAt: asUtc(expiresAt) };
 }
 
-/** Bots on the API don't have computers, connections or spend yet, so those start empty. */
+/** Bots on the API don't have computers or connections yet. Spend comes from the usage report (toUsage). */
 export function toBot({ createdAt, ...bot }: ApiBot): Bot {
   return { ...bot, createdAt: asUtc(createdAt), computerMode: "none", connectionIds: [], spentThisMonthUsd: 0 };
 }
@@ -72,6 +72,24 @@ export function toApproval(a: ApiApproval): Approval {
     status: a.status, requestedAt: asUtc(a.requestedAt), expiresAt: asUtc(a.expiresAt),
     ...(a.decidedAt ? { decidedAt: asUtc(a.decidedAt) } : {}),
     ...(a.decidedBy ? { decidedBy: a.decidedBy.id, decidedByName: a.decidedBy.name } : {}),
+  };
+}
+
+/* ---------- Usage and budgets ---------- */
+
+/** The usage report as the web app keeps it: the summary, plus each bot's spend by bot id. A budget of null is no limit. */
+export function toUsage(usage: ApiUsage): { summary: UsageSummary; spentByBot: Record<string, number> } {
+  return {
+    summary: {
+      days: usage.days.map((d) => ({
+        date: d.date, tokensUsd: d.modelsUsd, computerUsd: d.computersUsd,
+        inputTokens: d.inputTokens, outputTokens: d.outputTokens, unpricedTokens: d.unpricedTokens,
+      })),
+      monthToDateUsd: usage.monthToDateUsd,
+      unpricedTokens: usage.unpricedTokens,
+      ...(usage.orgBudgetUsd ? { orgBudgetUsd: usage.orgBudgetUsd } : {}),
+    },
+    spentByBot: Object.fromEntries(usage.bots.map((b) => [b.botId, b.spentUsd])),
   };
 }
 

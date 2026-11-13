@@ -4,6 +4,7 @@ import { useBot, useCurrentUser, useParticipantName } from "@/data/store";
 import type { Message } from "@/data/types";
 import { BotAvatar, MemberAvatar } from "@/features/bots/bot-avatar";
 import { MessageParts } from "@/features/messages/message-parts";
+import { BudgetStopNotice } from "./budget-stop-notice";
 
 /**
  * One message. Yours line up on the right; bots and teammates on the left.
@@ -23,9 +24,12 @@ export function MessageItem({ message, isGroup }: { message: Message; isGroup: b
         {showAuthor && <AuthorLine message={message} />}
         <MessageParts message={message} isOwn={isOwn} />
         {isThinking && <TypingDots />}
-        {message.status === "error" && (
-          <p className="text-xs text-destructive">{message.error ?? "This reply didn't finish."}</p>
-        )}
+        {message.status === "error" &&
+          (message.errorCode === "budget" ? (
+            <BudgetStopNotice message={message} />
+          ) : (
+            <p className="text-xs text-destructive">{message.error ?? "This reply didn't finish."}</p>
+          ))}
         {message.reactions?.length ? (
           <div className="flex gap-1">
             {message.reactions.map((r) => (

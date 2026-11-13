@@ -1,7 +1,9 @@
+import { useEffect } from "react";
 import { Monitor } from "lucide-react";
 import { Progress } from "@/components/ui/progress";
 import { Switch } from "@/components/ui/switch";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { budgetUse } from "@/lib/budget";
 import { formatUsd } from "@/lib/format";
 import { actions, useBotRoutines, useCurrentUser, useModel } from "@/data/store";
 import type { Bot } from "@/data/types";
@@ -9,6 +11,7 @@ import { BotAvatar } from "@/features/bots/bot-avatar";
 import { EditBotDialog } from "@/features/bots/edit-bot-dialog";
 import { BotMemories } from "@/features/memory/bot-memories";
 import { RemoveBotButton } from "@/features/bots/remove-bot-button";
+import { barColor } from "@/features/settings/budget-list";
 import { securityLabel } from "@/features/bots/security-levels";
 
 /** The details pane for a DM: who this bot is, its routines, what it remembers, its computer. */
@@ -35,7 +38,6 @@ function Profile({ bot }: { bot: Bot }) {
   const model = useModel(bot.modelId);
   // Any member can edit a bot; removing one takes an owner or admin.
   const canRemove = useCurrentUser().role !== "member";
-  const spentShare = bot.monthlyBudgetUsd > 0 ? Math.min(100, (bot.spentThisMonthUsd / bot.monthlyBudgetUsd) * 100) : 0;
 
   return (
     <div className="flex flex-col gap-5">
@@ -59,13 +61,31 @@ function Profile({ bot }: { bot: Bot }) {
         <dt className="text-muted-foreground">Computer</dt>
         <dd>{bot.computerMode === "own" ? "Its own" : bot.computerMode === "shared" ? "Shared" : "None"}</dd>
       </dl>
-      <div className="flex flex-col gap-2 text-sm">
-        <div className="flex justify-between">
-          <span className="text-muted-foreground">Budget this month</span>
-          <span>{formatUsd(bot.spentThisMonthUsd)} of {formatUsd(bot.monthlyBudgetUsd)}</span>
-        </div>
-        <Progress value={spentShare} aria-label="Budget used" />
+      <BudgetThisMonth bot={bot} />
+    </div>
+  );
+}
+
+/** Spend this month against the bot's budget (0 = no limit), fresh each time the pane opens. */
+function BudgetThisMonth({ bot }: { bot: Bot }) {
+  useEffect(() => {
+    void actions.loadUsage();
+  }, [bot.id]);
+  const use = budgetUse(bot.spentThisMonthUsd, bot.monthlyBudgetUsd);
+
+  return (
+    <div className="flex flex-col gap-2 text-sm">
+      <div className="flex justify-between gap-2">
+        <span className="text-muted-foreground">Budget this month</span>
+        <span className="tabular-nums">
+          {use.level === "none" ? `${formatUsd(bot.spentThisMonthUsd)} · no limit` : `${formatUsd(bot.spentThisMonthUsd)} of ${formatUsd(bot.monthlyBudgetUsd)}`}
+        </span>
       </div>
+      {use.level !== "none" && <Progress value={use.percent} className={barColor(use.level)} aria-label="Budget used" />}
+      {use.level === "near" && <p className="text-xs text-muted-foreground">Close to its budget. Raise it with Edit if it needs more this month.</p>}
+      {use.level === "reached" && (
+        <p className="text-xs text-destructive">Reached its budget: it won&apos;t reply until you raise it with Edit or the month ends.</p>
+      )}
     </div>
   );
 }

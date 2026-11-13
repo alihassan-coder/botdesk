@@ -12,6 +12,7 @@ import {
   type ApiMe,
   type ApiMember,
   type ApiMessage,
+  type ApiUsage,
   type ApiModelList,
   type ApiModelProvider,
   type ApiNewInvitation,
@@ -47,7 +48,8 @@ export const authApi = {
 };
 
 export const orgApi = {
-  update: (orgId: string, patch: { name?: string; slug?: string }) =>
+  /** `monthlyBudgetUsd`: null removes the limit. Owners and admins only. */
+  update: (orgId: string, patch: { name?: string; slug?: string; monthlyBudgetUsd?: number | null }) =>
     apiFetch<ApiOrg>(`/api/v1/orgs/${orgId}`, { method: "PATCH", body: patch }),
   members: (orgId: string) => apiFetch<ApiMember[]>(`/api/v1/orgs/${orgId}/members`),
   changeRole: (orgId: string, userId: string, role: ApiRole) =>
@@ -138,6 +140,11 @@ export const runApi = {
 };
 
 /** Settings → Models & keys. Everyone may read; owners and admins change keys. Keys go in, never come back out. */
+export const usageApi = {
+  /** Daily totals for the last `days` UTC days, this month's total, and every bot's spend. Any member. */
+  org: (orgId: string, days = 14) => apiFetch<ApiUsage>(`/api/v1/orgs/${orgId}/usage?days=${days}`),
+};
+
 export const modelApi = {
   providers: (orgId: string) => apiFetch<ApiModelProvider[]>(`/api/v1/orgs/${orgId}/providers`),
   /** Checked live before it's saved; a key that doesn't work comes back as a 400 saying why. "custom" adds a new server. */

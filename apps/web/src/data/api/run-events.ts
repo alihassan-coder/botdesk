@@ -108,7 +108,7 @@ function reduce(chat: ChatSlice, event: ApiRunEvent): ChatSlice {
       const endedRunIds = ended(chat, event.runId);
       const failed = event.runId ? replyOf(chat, event.runId) : undefined;
       if (failed) {
-        const messages = chat.messages.map((m) => (m === failed ? { ...m, status: "error" as const, error: event.data.error } : m));
+        const messages = chat.messages.map((m) => (m === failed ? { ...m, status: "error" as const, ...failure(event.data) } : m));
         return { ...chat, messages, runs, endedRunIds };
       }
       // The failure is all we heard of this reply (say, it never started): still say so.
@@ -116,7 +116,7 @@ function reduce(chat: ChatSlice, event: ApiRunEvent): ChatSlice {
       if (!botId || !event.runId) return { ...chat, runs, endedRunIds };
       const notice: Message = {
         id: typingId(event.runId), threadId: event.threadId, author: { type: "bot", id: botId },
-        parts: [], status: "error", error: event.data.error, createdAt: asUtc(event.createdAt),
+        parts: [], status: "error", ...failure(event.data), createdAt: asUtc(event.createdAt),
       };
       return { ...chat, messages: [...chat.messages, notice], runs, endedRunIds };
     }
@@ -160,6 +160,11 @@ function reduce(chat: ChatSlice, event: ApiRunEvent): ChatSlice {
     default:
       return chat;
   }
+}
+
+/** Why a reply failed, and whether it was the budget (the chat then offers a way to raise it). */
+function failure({ error, code }: { error: string; code?: "budget" }): Pick<Message, "error" | "errorCode"> {
+  return code === "budget" ? { error, errorCode: "budget" } : { error };
 }
 
 /**

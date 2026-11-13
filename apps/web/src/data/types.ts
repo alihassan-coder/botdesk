@@ -82,6 +82,7 @@ export interface Bot {
   connectionIds: ID[];
   instructions: string;
   createdAt: ISODate;
+  /** What the bot may spend in a calendar month (UTC). 0 = no limit. */
   monthlyBudgetUsd: number;
   spentThisMonthUsd: number;
   /** Off: the bot neither recalls nor saves memories. What it already remembers stays until forgotten. */
@@ -204,6 +205,8 @@ export interface Message {
   status?: "streaming" | "complete" | "error";
   /** Why it failed, when `status` is "error": a reply that broke off, or a message that wasn't sent. */
   error?: string;
+  /** "budget": the bot or the org reached its monthly budget, so the chat offers a way to raise it. */
+  errorCode?: "budget";
   reactions?: { emoji: string; count: number }[];
 }
 
@@ -378,10 +381,26 @@ export interface MemoryList {
   error?: string;
 }
 
+/** One UTC day of spend. Token counts come from the API; the demo has dollars only. */
 export interface UsageDay {
   date: ISODate;
   tokensUsd: number;
   computerUsd: number;
+  inputTokens?: number;
+  outputTokens?: number;
+  /** Tokens from models with no known price (custom servers, models missing from the price table). */
+  unpricedTokens?: number;
+}
+
+/** Settings → Usage & budgets. Each bot's own spend is on the bot (`spentThisMonthUsd`). */
+export interface UsageSummary {
+  /** Oldest first, one per day. */
+  days: UsageDay[];
+  monthToDateUsd: number;
+  /** Tokens this month whose price isn't known, so they aren't in the dollar totals. */
+  unpricedTokens: number;
+  /** What all the org's bots together may spend this month. Unset = no limit. */
+  orgBudgetUsd?: number;
 }
 
 export interface Template {

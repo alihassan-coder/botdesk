@@ -58,6 +58,13 @@ describe("a chat's live updates", () => {
     expect(play(started, failed).runs).toEqual([]);
   });
 
+  it("a run stopped by its budget says so, so the chat can offer to raise it", () => {
+    const error = "Inbox Manager reached its $40 monthly budget. Raise it in the bot's settings.";
+    const budget = event({ kind: "run_failed", data: { status: "failed", error, code: "budget" } });
+    expect(play(started, budget).messages).toEqual([expect.objectContaining({ status: "error", error, errorCode: "budget" })]);
+    expect(play(started, failed).messages[0].errorCode).toBeUndefined();
+  });
+
   it("your own saved message (no run) is added once, however often it arrives", () => {
     const mine = apiMessage("m5", "Hi", { type: "user", id: "u1" }, "2026-11-12T09:00:03Z");
     const saved = event({ kind: "message_saved", runId: null, data: { message: mine } });

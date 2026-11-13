@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { asUtc, toApiBot, toApproval, toBot, toMessage, toOrg, toThread, toUser } from "./map";
+import { asUtc, toApiBot, toApproval, toBot, toMessage, toOrg, toThread, toUsage, toUser } from "./map";
 
 describe("API → web shapes", () => {
   it("a user gets the role they hold in the org and shows as online", () => {
@@ -93,5 +93,28 @@ describe("toApproval", () => {
     const pending = toApproval({ ...api, status: "pending", decidedAt: null, decidedBy: null, finalArgs: null });
     expect(pending).not.toHaveProperty("decidedBy");
     expect(pending).not.toHaveProperty("decidedAt");
+  });
+});
+
+describe("toUsage", () => {
+  const report = {
+    days: [{ date: "2026-11-13", modelsUsd: 1.5, computersUsd: 0, inputTokens: 10, outputTokens: 2, unpricedTokens: 0 }],
+    monthStart: "2026-11-01", monthToDateUsd: 1.5, orgBudgetUsd: null, unpricedTokens: 7, pricesChecked: "2026-11-13",
+    bots: [{ botId: "b1", name: "Scout", spentUsd: 1.5, budgetUsd: null, inputTokens: 10, outputTokens: 2, unpricedTokens: 0 }],
+  };
+
+  it("keeps daily model spend as the chart's tokens series, and each bot's spend by id", () => {
+    expect(toUsage(report)).toEqual({
+      summary: {
+        days: [{ date: "2026-11-13", tokensUsd: 1.5, computerUsd: 0, inputTokens: 10, outputTokens: 2, unpricedTokens: 0 }],
+        monthToDateUsd: 1.5, unpricedTokens: 7,
+      },
+      spentByBot: { b1: 1.5 },
+    });
+  });
+
+  it("an org budget of null is no limit; a number is kept", () => {
+    expect(toUsage(report).summary.orgBudgetUsd).toBeUndefined();
+    expect(toUsage({ ...report, orgBudgetUsd: 200 }).summary.orgBudgetUsd).toBe(200);
   });
 });

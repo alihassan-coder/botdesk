@@ -1,67 +1,63 @@
 "use client";
 
-import Link from "next/link";
-import { TriangleAlert } from "lucide-react";
-import { Progress } from "@/components/ui/progress";
-import { formatUsd } from "@/lib/format";
-import { useBots, useThreads, useUsage } from "@/data/store";
-import { BotAvatar } from "@/features/bots/bot-avatar";
+import { useEffect } from "react";
+import { Skeleton } from "@/components/ui/skeleton";
+import { formatCount, formatUsd } from "@/lib/format";
+import { actions, useBots, useUsage, useUsageLoading } from "@/data/store";
 import { SettingsSection } from "./settings-shell";
 import { SpendChart } from "./spend-chart";
+import { BudgetList } from "./budget-list";
+import { OrgBudget } from "./org-budget";
 
 /** Settings → Usage & budgets: what the team spent, and how close each bot is to its limit. */
 export function UsageSettings() {
   const usage = useUsage();
+  const loading = useUsageLoading();
   const bots = useBots();
-  const threads = useThreads();
 
-  const total = usage.reduce((sum, d) => sum + d.tokensUsd + d.computerUsd, 0);
-  const budget = bots.reduce((sum, b) => sum + b.monthlyBudgetUsd, 0);
-  const spent = bots.reduce((sum, b) => sum + b.spentThisMonthUsd, 0);
+  // Spend moves with every reply: fetch the latest whenever this screen opens.
+  useEffect(() => {
+    void actions.loadUsage();
+  }, []);
+
+  const lastDays = usage.days.reduce((sum, d) => sum + d.tokensUsd + d.computerUsd, 0);
 
   return (
     <div className="flex flex-col gap-8">
-      <SettingsSection title="Usage" description="Model tokens and computer time across all bots.">
+      <SettingsSection title="Usage" description="Model tokens and computer time across all bots. Days and months are in UTC.">
         <div className="grid gap-3 sm:grid-cols-3">
-          <Stat label="Last 14 days" value={formatUsd(total)} />
-          <Stat label="Spent this month" value={formatUsd(spent)} />
-          <Stat label="Monthly budgets" value={formatUsd(budget)} />
+          <Stat label={`Last ${usage.days.length || 14} days`} value={loading ? null : formatUsd(lastDays)} />
+          <Stat label="Spent this month" value={loading ? null : formatUsd(usage.monthToDateUsd)} />
+          <OrgBudget spentUsd={usage.monthToDateUsd} budgetUsd={usage.orgBudgetUsd} loading={loading} />
         </div>
-        <SpendChart usage={usage} />
+        {usage.unpricedTokens > 0 && (
+          <p className="text-sm text-muted-foreground">
+            {formatCount(usage.unpricedTokens)} tokens this month came from models without a known price (like your own
+            servers), so they aren&apos;t in these totals or counted against budgets.
+          </p>
+        )}
+        {loading ? <Skeleton className="h-64 w-full rounded-2xl" /> : <SpendChart usage={usage.days} />}
       </SettingsSection>
 
-      <SettingsSection title="Budgets" description="A bot pauses when it reaches its budget and tells you. Change a budget in its details pane.">
-        <ul className="flex flex-col divide-y rounded-2xl border">
-          {[...bots].sort((a, b) => b.spentThisMonthUsd / b.monthlyBudgetUsd - a.spentThisMonthUsd / a.monthlyBudgetUsd).map((bot) => {
-            const share = Math.min(100, (bot.spentThisMonthUsd / bot.monthlyBudgetUsd) * 100);
-            const thread = threads.find((t) => t.botId === bot.id);
-            return (
-              <li key={bot.id} className="flex items-center gap-3 p-3">
-                <BotAvatar name={bot.name} color={bot.avatarColor} size="sm" />
-                <Link href={thread ? `/chat/${thread.id}` : "#"} className="w-36 truncate text-sm font-medium hover:underline">{bot.name}</Link>
-                <Progress value={share} className="flex-1" aria-label={`${bot.name} budget used`} />
-                <span className="w-32 text-right text-sm tabular-nums text-muted-foreground">
-                  {formatUsd(bot.spentThisMonthUsd)} / {formatUsd(bot.monthlyBudgetUsd)}
-                </span>
-                {share >= 70 ? (
-                  <TriangleAlert className="size-4 text-working" aria-label="Close to its budget" />
-                ) : (
-                  <span className="size-4" aria-hidden />
-                )}
-              </li>
-            );
-          })}
-        </ul>
+      <SettingsSection
+        title="Budgets"
+        description="A bot stops before a reply that would take it past its budget, and says so in the chat. Change a bot's budget in its details pane."
+      >
+        <BudgetList bots={bots} />
       </SettingsSection>
     </div>
   );
 }
 
-function Stat({ label, value }: { label: string; value: string }) {
+function Stat({ label, value }: { label: string; value: string | null }) {
   return (
     <div className="rounded-2xl border p-4">
       <p className="text-sm text-muted-foreground">{label}</p>
-      <p className="mt-1 text-2xl font-semibold tracking-tight tabular-nums">{value}</p>
+      {value === null ? (
+        <Skeleton className="mt-2 h-7 w-24" />
+      ) : (
+        <p className="mt-1 text-2xl font-semibold tracking-tight tabular-nums">{value}</p>
+      )}
     </div>
   );
 }

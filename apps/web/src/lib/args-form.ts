@@ -11,6 +11,8 @@ export interface ArgField {
   label: string;
   kind: "text" | "textarea" | "number" | "boolean" | "enum";
   required: boolean;
+  /** The schema allows null (`anyOf: [..., {type: "null"}]`): an argument cleared on purpose is sent as null. */
+  nullable?: boolean;
   description?: string;
   /** What each option shows (and the form keeps as its value). */
   options?: string[];
@@ -45,7 +47,10 @@ export function formFields(schema: ArgsSchema | null | undefined, args: Record<s
     return Object.entries(args).map(([name, value]) => fieldFor(name, guessSchema(value), false, value));
   }
   const required = new Set(schema.required ?? []);
-  return Object.entries(properties).map(([name, property]) => fieldFor(name, plain(property), required.has(name), args[name]));
+  return Object.entries(properties).map(([name, property]) => {
+    const field = fieldFor(name, plain(property), required.has(name), args[name]);
+    return property.anyOf?.some((option) => option.type === "null") ? { ...field, nullable: true } : field;
+  });
 }
 
 /** What the form starts with: the bot's arguments as form values. */
@@ -63,6 +68,9 @@ export function initialValues(fields: ArgField[], args: Record<string, unknown>)
  * Checks the form like the API would and turns it back into arguments, or says what's wrong.
  * `original` is what the bot asked for: an optional field it left out stays out unless you
  * fill it in (an empty text or an unticked box isn't sent), so the tool's own default applies.
+ * Clearing an optional field the bot did send never sends "" (which may not be a valid value):
+ * it sends null if the schema allows it, and otherwise leaves the field out, for the tool's default.
+ * One the bot sent empty and you left alone goes back as it was.
  */
 export function readValues(
   fields: ArgField[],
@@ -86,9 +94,12 @@ export function readValues(
       errors[field.name] = problem;
       continue;
     }
-    const isText = field.kind === "text" || field.kind === "textarea";
-    // Empty and optional: left out, except a text the bot sent, which you may clear on purpose.
-    if (text === "" && !field.required && !(isText && wasSent)) continue;
+    if (text === "" && !field.required) {
+      const before = original[field.name];
+      if (before === "" || before === null) args[field.name] = before; // empty as the bot sent it
+      else if (wasSent && field.nullable) args[field.name] = null; // cleared on purpose
+      continue;
+    }
     if (field.kind === "number") {
       if (text.trim() !== "") args[field.name] = Number(text);
     } else if (field.kind === "enum") {

@@ -1,8 +1,20 @@
-import { act, screen } from "@testing-library/react";
+import { useState } from "react";
+import { act, fireEvent, screen } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 import { actions, getStoreSnapshot } from "@/data/store";
 import { renderUI } from "@/test/render";
 import { ApprovalCard } from "./approval-card";
+
+/** The card, plus a button that makes it render again (like a clock tick). */
+function WithRerender() {
+  const [renders, setRenders] = useState(0);
+  return (
+    <>
+      <button type="button" onClick={() => setRenders(renders + 1)}>Render again {renders}</button>
+      <ApprovalCard approvalId="a_2" />
+    </>
+  );
+}
 
 const approval = (id: string) => getStoreSnapshot().approvals.find((a) => a.id === id);
 
@@ -100,5 +112,26 @@ describe("ApprovalCard", () => {
     expect(screen.queryByRole("button", { name: "Approve edited version" })).not.toBeInTheDocument();
     expect(screen.getByText("Sara Khan already denied this, so your changes weren't used.")).toBeInTheDocument();
     expect(screen.getByText(/^Denied by Sara Khan/, { selector: "p[tabindex]" })).toHaveFocus();
+  });
+
+  it("after someone else decides, focus moves to the decision line once, not again on later renders", async () => {
+    const { user } = renderUI(<WithRerender />);
+    await user.click(screen.getByRole("button", { name: "Edit" }));
+    await act(async () => {
+      await actions.signIn("sara@acme.dev", "botdesk123");
+      await actions.decideApproval("a_2", "deny");
+      await actions.signIn("ali@acme.dev", "botdesk123");
+    });
+    const decisionLine = screen.getByText(/^Denied by Sara Khan/, { selector: "p[tabindex]" });
+    expect(decisionLine).toHaveFocus();
+
+    // You click somewhere else on the page; the card renders again (a clock tick, a store update).
+    act(() => decisionLine.blur());
+    fireEvent.click(screen.getByRole("button", { name: /Render again/ })); // a click that doesn't move focus
+    expect(screen.getByRole("button", { name: "Render again 1" })).toBeInTheDocument();
+
+    expect(decisionLine).not.toHaveFocus();
+    expect(screen.queryByRole("button", { name: "Approve edited version" })).not.toBeInTheDocument();
+    expect(screen.getByText("Sara Khan already denied this, so your changes weren't used.")).toBeInTheDocument();
   });
 });

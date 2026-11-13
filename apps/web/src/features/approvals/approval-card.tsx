@@ -19,11 +19,15 @@ import { RISK } from "./risk";
  *
  * Focus follows the flow: Edit focuses the form's first field, Cancel returns to Edit, and your
  * decision moves focus to the decision line, which sits in a live region that stays mounted,
- * so the decision is announced whoever made it.
+ * so the decision is announced whoever made it. If someone else decides while your edit is
+ * open, the form closes, the card says your changes weren't used, and focus (if it was in the
+ * form) moves to the decision line once.
  */
 export function ApprovalCard({ approvalId }: { approvalId: string }) {
   const approval = useApproval(approvalId);
   const [isEditing, setIsEditing] = useState(false);
+  /** Someone else decided while your edit was open: the form is gone, and the card says so. */
+  const [editOverruled, setEditOverruled] = useState(false);
   const [deciding, setDeciding] = useState<"approve" | "deny" | null>(null);
   const editButton = useRef<HTMLButtonElement>(null);
   const decisionLine = useRef<HTMLParagraphElement>(null);
@@ -31,9 +35,20 @@ export function ApprovalCard({ approvalId }: { approvalId: string }) {
   const focusNext = useRef<"edit" | "decision" | null>(null);
   const isPending = approval?.status === "pending";
 
+  // Decided elsewhere while you were editing: close the edit (adjusting state while rendering,
+  // so it happens once, on the render that sees the decision).
+  if (isEditing && approval && !isPending) {
+    setIsEditing(false);
+    setEditOverruled(true);
+  }
+
   useEffect(() => {
-    // Someone else decided while you were editing: the form (and the focus in it) is gone.
-    if (isEditing && !isPending && document.activeElement === document.body) focusNext.current = "decision";
+    // The form had focus and is gone: move it to the decision line, once. If you were somewhere
+    // else, focus stays there.
+    if (editOverruled && document.activeElement === document.body) decisionLine.current?.focus();
+  }, [editOverruled]);
+
+  useEffect(() => {
     const target = focusNext.current === "edit" ? editButton.current : focusNext.current === "decision" ? decisionLine.current : null;
     if (!target) return;
     focusNext.current = null;
@@ -71,7 +86,7 @@ export function ApprovalCard({ approvalId }: { approvalId: string }) {
       <div aria-live="polite" aria-atomic="true">
         {!isPending && (
           <>
-            {isEditing && <AlreadyDecided approval={approval} />}
+            {editOverruled && <AlreadyDecided approval={approval} />}
             <ApprovalDecision approval={approval} ref={decisionLine} />
           </>
         )}

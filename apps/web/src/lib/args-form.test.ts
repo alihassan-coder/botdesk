@@ -87,8 +87,19 @@ describe("initialValues and readValues", () => {
   it("an optional text the bot left out isn't sent as \"\"; one it sent can be cleared", () => {
     const schema: ArgsSchema = { properties: { cc: { type: "string" }, note: { type: "string" } } };
     const optional = formFields(schema, { note: "Hi" });
-    expect(readValues(optional, { cc: "", note: "" }, { note: "Hi" }).args).toEqual({ note: "" });
+    // Cleared, and the schema doesn't allow null: left out, so the tool's default applies.
+    expect(readValues(optional, { cc: "", note: "" }, { note: "Hi" }).args).toEqual({});
     expect(readValues(optional, { cc: "omar@acme.dev", note: "Hi" }, { note: "Hi" }).args).toEqual({ cc: "omar@acme.dev", note: "Hi" });
+  });
+
+  it("clearing an optional field the bot sent sends null when the schema allows it, never \"\"", () => {
+    const nullableText = { anyOf: [{ type: "string" as const }, { type: "null" as const }] };
+    const schema: ArgsSchema = { properties: { cc: nullableText, note: nullableText, amount: { anyOf: [{ type: "number" }, { type: "null" }] } } };
+    const fields = formFields(schema, { cc: "omar@acme.dev", amount: 5 });
+    expect(fields.map((f) => f.nullable)).toEqual([true, true, true]);
+    expect(readValues(fields, { cc: "", note: "", amount: "" }, { cc: "omar@acme.dev", amount: 5 }).args).toEqual({ cc: null, amount: null });
+    // Sent empty and left alone: sent back as it was.
+    expect(readValues(fields, { cc: "", note: "", amount: "" }, { cc: "", note: null }).args).toEqual({ cc: "", note: null });
   });
 
   it("a numeric enum goes back as a number; numbers must be finite", () => {

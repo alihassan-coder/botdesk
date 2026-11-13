@@ -61,6 +61,14 @@ def not_a_manifest() -> dict[str, str]:
     return {"id": "not-a-manifest"}
 
 
+def exits() -> PluginManifest:
+    raise SystemExit(1)
+
+
+def wrong_types() -> PluginManifest:
+    return PluginManifest(id="wrong-types", name=None, version="1", description="", tools=())  # type: ignore[arg-type]
+
+
 STATIC = _manifest("static")  # an entry point may also name a ready-made manifest
 
 
@@ -80,6 +88,8 @@ def fake_plugins(monkeypatch: pytest.MonkeyPatch) -> None:
         _entry("wrong-id", f"{here}:wrong_id"),
         _entry("not-a-manifest", f"{here}:not_a_manifest"),
         _entry("missing-module", "botdesk_no_such_module:plugin"),
+        _entry("exits", f"{here}:exits"),
+        _entry("wrong-types", f"{here}:wrong_types"),
         _entry("twice", f"{here}:good"),
         _entry("twice", f"{here}:STATIC"),
     ]
@@ -101,6 +111,7 @@ def test_only_allowlisted_plugins_are_imported() -> None:
     registry = build_registry(["good", "static", "good"])
     assert [plugin.id for plugin in registry.plugins()] == ["good", "static"]
     assert registry.get("good__ping") is not None
+    assert registry.get("good.ping") is registry.get("good__ping")  # a full name is looked up as it is
 
 
 @pytest.mark.usefixtures("fake_plugins")
@@ -110,7 +121,10 @@ def test_an_empty_allowlist_loads_nothing() -> None:
 
 @pytest.mark.usefixtures("fake_plugins")
 def test_broken_plugins_are_skipped_with_a_clear_log_line(caplog: pytest.LogCaptureFixture) -> None:
-    broken = ["raises", "sync-handler", "bad-risk", "wrong-id", "not-a-manifest", "missing-module", "twice"]
+    broken = [
+        *["raises", "sync-handler", "bad-risk", "wrong-id", "not-a-manifest", "missing-module", "twice"],
+        *["exits", "wrong-types"],
+    ]
     with caplog.at_level(logging.ERROR, logger=loader.__name__):
         registry = build_registry(["good", *broken])
 
@@ -123,6 +137,8 @@ def test_broken_plugins_are_skipped_with_a_clear_log_line(caplog: pytest.LogCapt
     assert "Plugin 'not-a-manifest' skipped: expected a PluginManifest, got dict" in log
     assert "Plugin 'missing-module' skipped: loading botdesk_no_such_module:plugin failed: ModuleNotFoundError" in log
     assert "Plugin 'twice' skipped: more than one installed package provides it" in log
+    assert "Plugin 'exits' skipped: loading tests.test_plugins:exits failed: SystemExit" in log
+    assert "Plugin 'wrong-types' skipped: id, name and version must be strings" in log
 
 
 @pytest.mark.usefixtures("fake_plugins")

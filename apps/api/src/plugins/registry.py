@@ -70,7 +70,8 @@ class ToolRegistry:
 
     def get(self, name: str) -> RegisteredTool | None:
         """Find a tool by its full name (`demo.create_note`) or the model's name (`demo__create_note`)."""
-        return self._tools.get(name.replace(MODEL_NAME_SEPARATOR, ".", 1))
+        # Exact full name first, so a full name is never rewritten.
+        return self._tools.get(name) or self._tools.get(name.replace(MODEL_NAME_SEPARATOR, ".", 1))
 
     def tools(self) -> list[RegisteredTool]:
         return list(self._tools.values())

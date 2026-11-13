@@ -33,10 +33,15 @@ def load_plugin(plugin_id: str, entry: EntryPoint) -> PluginManifest:
         # The entry point names a function that returns the manifest (so each app gets fresh
         # plugin state), or, for a stateless plugin, the manifest itself.
         manifest = target if isinstance(target, PluginManifest) else target()
-    except Exception as error:
+    except (Exception, SystemExit) as error:  # a plugin calling sys.exit() must not stop the API
         raise PluginError(plugin_id, [f"loading {entry.value} failed: {type(error).__name__}: {error}"]) from error
 
-    manifest = validate_manifest(manifest)
+    try:
+        manifest = validate_manifest(manifest)
+    except PluginError:
+        raise
+    except Exception as error:  # a manifest too broken to even inspect
+        raise PluginError(plugin_id, [f"its manifest is malformed: {type(error).__name__}: {error}"]) from error
     if manifest.id != plugin_id:
         raise PluginError(plugin_id, [f"its manifest says id {manifest.id!r}, but the entry point is {plugin_id!r}"])
     return manifest

@@ -128,3 +128,33 @@ def test_the_summary_falls_back_to_the_title() -> None:
     args = GreetArgs(name="Sara")
     assert greet_tool().summary(args) == "Greet someone"
     assert greet_tool(summarize=lambda a: f"Greet {a.name}").summary(args) == "Greet Sara"
+
+
+@pytest.mark.parametrize("name", ["foo__bar", "foo_", "_foo", "Foo", "foo-bar", "a" * 49])
+def test_tool_names_with_double_or_edge_underscores_are_refused(name: str) -> None:
+    # The model sees `plugin__tool`, so `__` inside a tool name would be ambiguous.
+    assert any("single underscores" in problem for problem in manifest_problems(plugin(greet_tool(name=name))))
+
+
+@pytest.mark.parametrize("name", ["greet", "send_email", "get_v2_data", "a" * 48])
+def test_ordinary_tool_names_pass(name: str) -> None:
+    assert manifest_problems(plugin(greet_tool(name=name))) == []
+
+
+def test_a_manifest_with_wrong_types_is_reported_not_crashed() -> None:
+    broken_id = dataclasses.replace(plugin(), id=None)  # type: ignore[arg-type]
+    assert manifest_problems(broken_id) == ["id, name and version must be strings"]
+    not_a_tool = plugin(greet_tool(), "oops")  # type: ignore[arg-type]
+    assert manifest_problems(not_a_tool) == ["every tool must be a ToolSpec, got str"]
+
+
+class Unschemable(BaseModel):
+    model_config = {"arbitrary_types_allowed": True}
+    thing: object = None
+    callback: Any = None
+    when: type = int
+
+
+def test_an_args_model_without_a_json_schema_is_refused() -> None:
+    problems = manifest_problems(plugin(greet_tool(args_model=Unschemable)))
+    assert any("has no JSON schema" in problem for problem in problems)

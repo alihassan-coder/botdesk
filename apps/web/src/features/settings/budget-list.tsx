@@ -36,7 +36,7 @@ export function BudgetList({ bots }: { bots: Bot[] }) {
                 <Progress value={use.percent} className={cn("sm:flex-1", barColor(use.level))} aria-label={`${bot.name} budget used`} />
               )}
             </div>
-            <span className="shrink-0 text-right text-sm tabular-nums text-muted-foreground">
+            <span className="shrink-0 text-right text-sm tabular-nums text-muted-foreground sm:w-36">
               {formatUsd(bot.spentThisMonthUsd)}
               {use.level !== "none" && <> / {formatUsd(bot.monthlyBudgetUsd)}</>}
             </span>

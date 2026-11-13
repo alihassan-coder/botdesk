@@ -1,13 +1,13 @@
-import { Monitor, Trash2 } from "lucide-react";
-import { Button } from "@/components/ui/button";
+import { Monitor } from "lucide-react";
 import { Progress } from "@/components/ui/progress";
 import { Switch } from "@/components/ui/switch";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { formatUsd } from "@/lib/format";
-import { actions, useBotMemories, useBotRoutines, useCurrentUser, useModel } from "@/data/store";
+import { actions, useBotRoutines, useCurrentUser, useModel } from "@/data/store";
 import type { Bot } from "@/data/types";
 import { BotAvatar } from "@/features/bots/bot-avatar";
 import { EditBotDialog } from "@/features/bots/edit-bot-dialog";
+import { BotMemories } from "@/features/memory/bot-memories";
 import { RemoveBotButton } from "@/features/bots/remove-bot-button";
 import { securityLabel } from "@/features/bots/security-levels";
 
@@ -24,7 +24,7 @@ export function BotDetails({ bot }: { bot: Bot }) {
       <div className="flex-1 overflow-y-auto p-4">
         <TabsContent value="details"><Profile bot={bot} /></TabsContent>
         <TabsContent value="routines"><Routines botId={bot.id} /></TabsContent>
-        <TabsContent value="memory"><Memories botId={bot.id} /></TabsContent>
+        <TabsContent value="memory"><BotMemories bot={bot} compact /></TabsContent>
         <TabsContent value="computer"><Computer bot={bot} /></TabsContent>
       </div>
     </Tabs>
@@ -83,27 +83,6 @@ function Routines({ botId }: { botId: string }) {
             <p className="text-xs text-muted-foreground">{r.schedule}</p>
           </div>
           <Switch checked={r.enabled} onCheckedChange={() => actions.toggleRoutine(r.id)} aria-label={`Run ${r.name}`} />
-        </li>
-      ))}
-    </ul>
-  );
-}
-
-function Memories({ botId }: { botId: string }) {
-  const memories = useBotMemories(botId);
-  if (memories.length === 0) return <Empty text="Nothing remembered yet." />;
-
-  return (
-    <ul className="flex flex-col gap-2">
-      {memories.map((m) => (
-        <li key={m.id} className="group flex items-start gap-2 rounded-xl border p-3">
-          <div className="min-w-0 flex-1">
-            <p className="text-sm">{m.text}</p>
-            <p className="mt-1 text-xs text-muted-foreground">{m.source}</p>
-          </div>
-          <Button variant="ghost" size="icon-sm" onClick={() => actions.deleteMemory(m.id)} aria-label="Forget this">
-            <Trash2 />
-          </Button>
         </li>
       ))}
     </ul>

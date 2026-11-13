@@ -1,5 +1,5 @@
-import type { Approval, ArgsSchema, Bot, Invitation, Message, MessagePart, Model, ModelProvider, Org, Thread, User } from "../types";
-import type { ApiApproval, ApiBot, ApiBotInput, ApiInvitation, ApiMessage, ApiModel, ApiModelProvider, ApiOrg, ApiRole, ApiThread, ApiUser } from "./types";
+import type { Approval, ArgsSchema, Bot, Invitation, MemoryItem, MemoryStatus, Message, MessagePart, Model, ModelProvider, Org, Thread, User } from "../types";
+import type { ApiApproval, ApiBot, ApiBotInput, ApiInvitation, ApiMemory, ApiMemoryStatus, ApiMessage, ApiModel, ApiModelProvider, ApiOrg, ApiRole, ApiThread, ApiUser } from "./types";
 
 /**
  * Turns API answers into the web app's own types, so screens never see API shapes.
@@ -35,7 +35,7 @@ export function toBot({ createdAt, ...bot }: ApiBot): Bot {
 /** The fields of a bot the API stores, ready to send. Anything else (computer, status…) stays behind. */
 export function toApiBot(bot: Partial<Bot>): Partial<ApiBotInput> {
   const fields: Partial<ApiBotInput> = {};
-  for (const key of ["name", "role", "description", "instructions", "avatarColor", "modelId", "securityLevel"] as const) {
+  for (const key of ["name", "role", "description", "instructions", "avatarColor", "modelId", "securityLevel", "memoryEnabled"] as const) {
     if (bot[key] !== undefined) Object.assign(fields, { [key]: bot[key] });
   }
   if (bot.monthlyBudgetUsd !== undefined) fields.monthlyBudgetUsd = Math.round(bot.monthlyBudgetUsd);
@@ -95,4 +95,19 @@ export function toModel({ id, provider, name, contextWindow, pricing }: ApiModel
     ...(contextWindow ? { contextWindow } : {}),
     ...(pricing ? { pricing: { inputPerMTok: pricing.inputPerMtok, outputPerMTok: pricing.outputPerMtok } } : {}),
   };
+}
+
+/* ---------- Memory ---------- */
+
+/** The API doesn't say which bot a memory belongs to (it's in the URL), so it's passed in. */
+export function toMemory({ id, text, scope, createdAt, updatedAt }: ApiMemory, botId: string): MemoryItem {
+  return {
+    id, botId, text, scope,
+    ...(createdAt ? { createdAt: asUtc(createdAt) } : {}),
+    ...(updatedAt && updatedAt !== createdAt ? { updatedAt: asUtc(updatedAt) } : {}),
+  };
+}
+
+export function toMemoryStatus({ enabled, reason }: ApiMemoryStatus): MemoryStatus {
+  return { enabled, ...(reason ? { reason } : {}) };
 }

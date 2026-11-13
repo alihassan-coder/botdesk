@@ -9,7 +9,8 @@
  *   each bot's DM, message history, sending, and bot replies streamed live over the
  *   chat's event stream (with a Stop button), and approvals: cards in the chat, live from
  *   the stream, and the Approvals page from the list; and Models & keys: providers, their
- *   keys and live model lists. Routines, memories, apps and usage aren't on the API yet,
+ *   keys and live model lists; and what each bot remembers (Memory), loaded per bot.
+ *   Routines, apps and usage aren't on the API yet,
  *   so they start empty or stay mock.
  * - Not set (tests, e2e, demos): everything is the in-memory mock, with fake bot replies.
  * Guest mode ("Explore the demo") uses the mock in either case, so people can look
@@ -20,21 +21,22 @@ import { useCallback, useRef, useSyncExternalStore } from "react";
 import { makeHandle } from "@/lib/handle";
 import { parseMentions } from "@/lib/mentions";
 import { previewFromArgs } from "@/lib/args-form";
-import { approvalApi, authApi, botApi, inviteApi, modelApi, orgApi, runApi, threadApi } from "./api/botdesk";
+import { approvalApi, authApi, botApi, inviteApi, memoryApi, modelApi, orgApi, runApi, threadApi } from "./api/botdesk";
 import { ApiError, apiBaseUrl } from "./api/client";
-import { toApiBot, toApproval, toBot, toInvitation, toMessage, toModel, toModelProvider, toOrg, toThread, toUser } from "./api/map";
+import { toApiBot, toApproval, toBot, toInvitation, toMemory, toMemoryStatus, toMessage, toModel, toModelProvider, toOrg, toThread, toUser } from "./api/map";
 import { applyRunEvent, typingId, upsertApproval, withActiveRuns, withPreview, withWaitingApprovals, type ActiveRun } from "./api/run-events";
 import type { ApiMe, ApiRunEvent, ApiThread, ApiThreadRuns } from "./api/types";
 import * as mock from "./mock/fixtures";
 import type {
-  Approval, ApprovalStatus, Bot, Invitation, Membership, Message, Model, ModelListProblem, ModelProvider, Org, Participant, Routine, Thread, User,
+  Approval, ApprovalStatus, Bot, Invitation, MemoryItem, MemoryList, MemoryStatus, Membership, Message, Model, ModelListProblem, ModelProvider, Org,
+  Participant, Routine, Thread, User,
 } from "./types";
 
 /** What you fill in to create a bot; the rest (id, handle, status…) is filled in for you. */
 export type NewBotInput = Pick<
   Bot,
   "name" | "role" | "description" | "avatarColor" | "modelId" | "securityLevel" | "computerMode" | "instructions" | "monthlyBudgetUsd"
->;
+> & Partial<Pick<Bot, "memoryEnabled">>;
 
 /** What you pick to start a group chat. You're in it anyway, so leave yourself out of `userIds`. */
 export interface NewGroupInput {
@@ -106,7 +108,12 @@ interface State {
   modelProblems: ModelListProblem[];
   /** API only: true while providers and models are on their way. */
   modelsLoading: boolean;
-  memories: typeof mock.memories;
+  /** MOCK: every memory of every bot. On the API, memories are loaded per bot into `memoryLists`. */
+  memories: MemoryItem[];
+  /** Each bot's memories as last loaded (or searched), by bot id. */
+  memoryLists: Record<string, MemoryList>;
+  /** Whether bots can remember here. Null until the API has said. */
+  memoryStatus: MemoryStatus | null;
   usage: typeof mock.usage;
   templates: typeof mock.templates;
 }
@@ -137,6 +144,8 @@ function seed(): State {
     modelProblems: [],
     modelsLoading: false,
     memories: mock.memories,
+    memoryLists: {},
+    memoryStatus: { enabled: true },
     usage: mock.usage,
     templates: mock.templates,
   };
@@ -162,6 +171,7 @@ function apiSeed(): State {
     approvals: [],
     routines: [],
     memories: [],
+    memoryStatus: null,
     models: [],
     modelProviders: [],
   };
@@ -307,6 +317,8 @@ function enterOrg(org: Membership) {
     modelsLoading: true,
     routines: [],
     memories: [],
+    memoryLists: {},
+    memoryStatus: null,
     botsLoading: true,
   }));
   void loadOrgPeople(org);
@@ -1156,8 +1168,84 @@ export const actions = {
     }));
   },
 
-  deleteMemory(memoryId: string) {
+  /* ---------- Memory ----------
+   * On the API, a bot's memories are loaded (or searched) one bot at a time into `memoryLists`.
+   * MOCK: `memories` holds every bot's, and each change re-reads the open lists from it.
+   */
+
+  /** Whether bots can remember on this server, and if not, why. The demo always can. */
+  async loadMemoryStatus() {
+    if (isDemoMode()) return;
+    const orgId = state.org.id;
+    const status = await memoryApi.status(orgId).catch(() => null);
+    set((st) => {
+      if (st.org.id !== orgId) return st;
+      return { ...st, memoryStatus: status ? toMemoryStatus(status) : { enabled: false, reason: "Couldn't check whether memory is on. Reload to try again." } };
+    });
+  },
+
+  /** A bot's memories, newest first; with a query, the closest matches (on the API) or the ones that contain it (mock). */
+  async loadMemories(botId: string, query = "") {
+    if (isDemoMode()) return void setMemoryList(botId, { status: "ready", query, items: mockMemoriesOf(state.memories, botId, query) });
+    const orgId = state.org.id;
+    const request = (memoryRequests.get(botId) ?? 0) + 1;
+    memoryRequests.set(botId, request);
+    const current = () => memoryRequests.get(botId) === request && state.org.id === orgId; // a newer search wins
+    setMemoryList(botId, { status: "loading", query, items: state.memoryLists[botId]?.items ?? [] });
+    try {
+      const items = (await memoryApi.list(orgId, botId, query)).map((m) => toMemory(m, botId));
+      if (current()) setMemoryList(botId, { status: "ready", query, items });
+    } catch (error) {
+      if (current()) setMemoryList(botId, { status: "error", query, items: [], error: failure(error).error });
+    }
+  },
+
+  /** Forget one memory. Members may forget only what the bot learned in their own DM. */
+  async forgetMemory(botId: string, memoryId: string): Promise<ActionResult> {
+    if (!isDemoMode()) {
+      try {
+        await memoryApi.forget(state.org.id, botId, memoryId);
+      } catch (error) {
+        return failure(error);
+      }
+    }
     set((st) => ({ ...st, memories: st.memories.filter((m) => m.id !== memoryId) }));
+    updateMemoryList(botId, (items) => items.filter((m) => m.id !== memoryId));
+    return { ok: true };
+  },
+
+  /** Put right something a bot remembers wrongly. Same rules as forgetting. */
+  async correctMemory(botId: string, memoryId: string, text: string): Promise<ActionResult> {
+    let saved: MemoryItem | undefined;
+    if (isDemoMode()) {
+      const found = state.memories.find((m) => m.id === memoryId);
+      if (found) saved = { ...found, text, updatedAt: now() };
+    } else {
+      try {
+        saved = toMemory(await memoryApi.correct(state.org.id, botId, memoryId, text), botId);
+      } catch (error) {
+        return failure(error);
+      }
+    }
+    if (!saved) return { ok: false, error: "That memory is already gone." };
+    const corrected = saved;
+    set((st) => ({ ...st, memories: st.memories.map((m) => (m.id === memoryId ? corrected : m)) }));
+    updateMemoryList(botId, (items) => items.map((m) => (m.id === memoryId ? corrected : m)));
+    return { ok: true };
+  },
+
+  /** The bot forgets everything it learned, in every chat. Owners and admins only. */
+  async forgetAllMemories(botId: string): Promise<ActionResult> {
+    if (!isDemoMode()) {
+      try {
+        await memoryApi.forgetAll(state.org.id, botId);
+      } catch (error) {
+        return failure(error);
+      }
+    }
+    set((st) => ({ ...st, memories: st.memories.filter((m) => m.botId !== botId) }));
+    updateMemoryList(botId, () => []);
+    return { ok: true };
   },
 
   /**
@@ -1317,7 +1405,7 @@ function createMockBot(input: NewBotInput) {
     ...st,
     bots: [
       ...st.bots,
-      { ...input, id: botId, handle, status: "idle", statusText: "Just hired", connectionIds: [], createdAt: now(), spentThisMonthUsd: 0 },
+      { memoryEnabled: true, ...input, id: botId, handle, status: "idle", statusText: "Just hired", connectionIds: [], createdAt: now(), spentThisMonthUsd: 0 },
     ],
     threads: [
       {
@@ -1413,6 +1501,31 @@ function fakeBotReply(threadId: string, botId: string, userText: string) {
   }, 600);
 }
 
+/* ---------- Memory helpers ---------- */
+
+/** The latest request per bot, so an older search answering late can't replace a newer one. */
+const memoryRequests = new Map<string, number>();
+
+function setMemoryList(botId: string, list: MemoryList) {
+  set((st) => ({ ...st, memoryLists: { ...st.memoryLists, [botId]: list } }));
+}
+
+/** Changes the items of a bot's open list, if it has one. */
+function updateMemoryList(botId: string, change: (items: MemoryItem[]) => MemoryItem[]) {
+  set((st) => {
+    const list = st.memoryLists[botId];
+    return list ? { ...st, memoryLists: { ...st.memoryLists, [botId]: { ...list, items: change(list.items) } } } : st;
+  });
+}
+
+/** MOCK: a bot's memories, newest first, keeping those that contain `query`. */
+function mockMemoriesOf(memories: MemoryItem[], botId: string, query: string) {
+  const needle = query.trim().toLowerCase();
+  return memories
+    .filter((m) => m.botId === botId && m.text.toLowerCase().includes(needle))
+    .sort((a, b) => (b.updatedAt ?? b.createdAt ?? "").localeCompare(a.updatedAt ?? a.createdAt ?? ""));
+}
+
 /* ---------- Selectors ---------- */
 
 export const selectBot = (botId?: string) => (s: State) => s.bots.find((b) => b.id === botId);
@@ -1462,9 +1575,12 @@ export const usePendingApprovalCount = () => useStore(useCallback((s: State) => 
 export const useBotRoutines = (botId?: string) =>
   useStore(useCallback((s: State) => s.routines.filter((r) => r.botId === botId), [botId]));
 
-/** Memories this bot can use: its own plus the ones shared with every bot. */
-export const useBotMemories = (botId?: string) =>
-  useStore(useCallback((s: State) => s.memories.filter((m) => !m.botId || m.botId === botId), [botId]));
+/** A bot's memories as last loaded with `actions.loadMemories`; undefined until then. */
+export const useMemoryList = (botId?: string) =>
+  useStore(useCallback((s: State) => (botId ? s.memoryLists[botId] : undefined), [botId]));
+
+/** Whether bots can remember here (null while the API is asked). */
+export const useMemoryStatus = () => useStore(useCallback((s: State) => s.memoryStatus, []));
 
 /* Whole-collection hooks for the app pages (marketplace, settings, approvals…). */
 export const useBots = () => useStore(useCallback((s: State) => s.bots, []));
@@ -1479,7 +1595,6 @@ export const useModelProblems = () => useStore(useCallback((s: State) => s.model
 export const useModelsLoading = () => useStore(useCallback((s: State) => s.modelsLoading, []));
 export const useTemplates = () => useStore(useCallback((s: State) => s.templates, []));
 export const useRoutines = () => useStore(useCallback((s: State) => s.routines, []));
-export const useMemories = () => useStore(useCallback((s: State) => s.memories, []));
 export const useUsage = () => useStore(useCallback((s: State) => s.usage, []));
 export const useConnectors = () => useStore(useCallback((s: State) => s.connectors, []));
 export const useConnections = () => useStore(useCallback((s: State) => s.connections, []));

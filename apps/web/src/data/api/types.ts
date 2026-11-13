@@ -55,6 +55,7 @@ export interface ApiBot {
   modelId: string;
   securityLevel: ApiSecurityLevel;
   monthlyBudgetUsd: number;
+  memoryEnabled: boolean;
   status: "idle" | "working" | "waiting-approval" | "sleeping" | "error";
   createdAt: string;
 }
@@ -62,7 +63,7 @@ export interface ApiBot {
 /** What you send to hire or edit a bot; the API fills in id, handle, status and createdAt. */
 export type ApiBotInput = Pick<
   ApiBot,
-  "name" | "role" | "description" | "instructions" | "avatarColor" | "modelId" | "securityLevel" | "monthlyBudgetUsd"
+  "name" | "role" | "description" | "instructions" | "avatarColor" | "modelId" | "securityLevel" | "monthlyBudgetUsd" | "memoryEnabled"
 >;
 
 /* ---------- Models & keys ---------- */
@@ -235,3 +236,19 @@ export const RUN_EVENT_KINDS = [
   "message_saved", "run_started", "message_delta", "run_finished", "run_failed",
   "tool_started", "tool_finished", "approval_requested", "approval_decided", "run_resumed", "run_needs_attention",
 ] as const satisfies readonly ApiRunEvent["kind"][];
+
+/* ---------- Memory ---------- */
+
+export interface ApiMemory {
+  id: string;
+  text: string;
+  createdAt: string | null;
+  updatedAt: string | null;
+  /** "bot": learned in group chats; "you": learned in your own DM with the bot. */
+  scope: "bot" | "you";
+}
+
+export interface ApiMemoryStatus {
+  enabled: boolean;
+  reason: string | null;
+}

@@ -1,57 +1,39 @@
 "use client";
 
 import { useState } from "react";
-import { Trash2 } from "lucide-react";
-import { Button } from "@/components/ui/button";
-import { TimeAgo } from "@/components/time-ago";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { actions, useBots, useMemories } from "@/data/store";
+import { useBots, useBotsLoading } from "@/data/store";
+import { BotMemories } from "@/features/memory/bot-memories";
 import { SettingsSection } from "./settings-shell";
 
-const EVERYONE = "shared";
-
-/** Settings → Memory: everything your bots remember, which bot it belongs to, and forget. */
+/** Settings → Memory: pick a bot to see what it remembers, correct it, or make it forget. */
 export function MemorySettings() {
-  const memories = useMemories();
   const bots = useBots();
-  const [filter, setFilter] = useState("all");
-
-  const shown = memories.filter((m) => filter === "all" || (filter === EVERYONE ? !m.botId : m.botId === filter));
-  const ownerName = (botId?: string) => (botId ? (bots.find((b) => b.id === botId)?.name ?? "A bot") : "All bots");
+  const loading = useBotsLoading();
+  const [picked, setPicked] = useState<string>();
+  const bot = bots.find((b) => b.id === picked) ?? bots[0];
 
   return (
     <SettingsSection
       title="Memory"
-      description="Facts your bots have learned. Shared memories are used by every bot. Forget anything that's wrong."
+      description="What your bots learned while chatting. Memories from group chats help everyone's chats with that bot; ones from your DM stay yours."
       action={
-        <Select value={filter} onValueChange={setFilter}>
-          <SelectTrigger className="w-44" aria-label="Show memories for"><SelectValue /></SelectTrigger>
-          <SelectContent>
-            <SelectItem value="all">Everything</SelectItem>
-            <SelectItem value={EVERYONE}>Shared with all bots</SelectItem>
-            {bots.map((b) => <SelectItem key={b.id} value={b.id}>{b.name}</SelectItem>)}
-          </SelectContent>
-        </Select>
+        bot && (
+          <Select value={bot.id} onValueChange={setPicked}>
+            <SelectTrigger className="w-44" aria-label="Show memories of"><SelectValue /></SelectTrigger>
+            <SelectContent>
+              {bots.map((b) => <SelectItem key={b.id} value={b.id}>{b.name}</SelectItem>)}
+            </SelectContent>
+          </Select>
+        )
       }
     >
-      {shown.length === 0 ? (
-        <p className="py-8 text-center text-sm text-muted-foreground">Nothing remembered here yet.</p>
+      {bot ? (
+        <BotMemories key={bot.id} bot={bot} />
       ) : (
-        <ul className="flex flex-col gap-2">
-          {shown.map((m) => (
-            <li key={m.id} className="flex items-start gap-3 rounded-2xl border p-4">
-              <div className="min-w-0 flex-1">
-                <p className="text-sm">{m.text}</p>
-                <p className="mt-1 text-xs text-muted-foreground">
-                  {ownerName(m.botId)} · {m.source} · <TimeAgo iso={m.createdAt} />
-                </p>
-              </div>
-              <Button variant="ghost" size="icon-sm" onClick={() => actions.deleteMemory(m.id)} aria-label={`Forget: ${m.text}`}>
-                <Trash2 />
-              </Button>
-            </li>
-          ))}
-        </ul>
+        <p className="py-8 text-center text-sm text-muted-foreground">
+          {loading ? "Loading your bots…" : "Hire a bot first. What it learns will show up here."}
+        </p>
       )}
     </SettingsSection>
   );

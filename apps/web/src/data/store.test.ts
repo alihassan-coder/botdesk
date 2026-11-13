@@ -159,9 +159,26 @@ describe("smaller actions", () => {
     expect(state().routines.find((r) => r.id === "r_1")?.enabled).toBe(true);
   });
 
-  it("deleteMemory forgets a memory", () => {
-    actions.deleteMemory("mem_1");
-    expect(state().memories.some((m) => m.id === "mem_1")).toBe(false);
+  it("loadMemories lists a bot's memories newest first, and searches them", async () => {
+    await actions.loadMemories("b_chief");
+    expect(state().memoryLists.b_chief.items.map((m) => m.id)).toEqual(["mem_5", "mem_3"]);
+    await actions.loadMemories("b_chief", "thursdays");
+    expect(state().memoryLists.b_chief).toMatchObject({ status: "ready", query: "thursdays", items: [{ id: "mem_3" }] });
+  });
+
+  it("forgetMemory and correctMemory change the memory and the open list", async () => {
+    await actions.loadMemories("b_chief");
+    await expect(actions.correctMemory("b_chief", "mem_3", "Thursday afternoons are for calls.")).resolves.toEqual({ ok: true });
+    expect(state().memoryLists.b_chief.items.find((m) => m.id === "mem_3")).toMatchObject({ text: "Thursday afternoons are for calls." });
+    await actions.forgetMemory("b_chief", "mem_3");
+    expect(state().memories.some((m) => m.id === "mem_3")).toBe(false);
+    expect(state().memoryLists.b_chief.items.map((m) => m.id)).toEqual(["mem_5"]);
+  });
+
+  it("forgetAllMemories empties one bot's memory and leaves the others", async () => {
+    await actions.forgetAllMemories("b_chief");
+    expect(state().memories.some((m) => m.botId === "b_chief")).toBe(false);
+    expect(state().memories.some((m) => m.botId === "b_sales")).toBe(true);
   });
 
   it("createBotFromTemplate hires the bot and opens a chat where it speaks first", async () => {
@@ -244,8 +261,8 @@ describe("smaller actions", () => {
     expect(messagesIn("t_sales")).toHaveLength(before);
   });
 
-  it("reset brings back the original mock data", () => {
-    actions.deleteMemory("mem_1");
+  it("reset brings back the original mock data", async () => {
+    await actions.forgetMemory("b_inbox", "mem_1");
     actions.reset();
     expect(state().memories.some((m) => m.id === "mem_1")).toBe(true);
   });

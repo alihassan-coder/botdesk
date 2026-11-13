@@ -7,6 +7,8 @@ import {
   type ApiBot,
   type ApiBotInput,
   type ApiInvitation,
+  type ApiMemory,
+  type ApiMemoryStatus,
   type ApiMe,
   type ApiMember,
   type ApiMessage,
@@ -148,4 +150,18 @@ export const modelApi = {
   /** Every connected provider's models, live (cached ~10 minutes on the API unless `refresh`). */
   models: (orgId: string, refresh = false) =>
     apiFetch<ApiModelList>(`/api/v1/orgs/${orgId}/models${refresh ? "?refresh=true" : ""}`),
+};
+
+/** What a bot remembers. Members see the bot's shared memories and their own DM ones. */
+export const memoryApi = {
+  status: (orgId: string) => apiFetch<ApiMemoryStatus>(`/api/v1/orgs/${orgId}/memory/status`),
+  /** Everything, newest first; or with a query, the closest matches first. */
+  list: (orgId: string, botId: string, query = "") =>
+    apiFetch<ApiMemory[]>(`/api/v1/orgs/${orgId}/bots/${botId}/memories${query ? `?q=${encodeURIComponent(query)}` : ""}`),
+  correct: (orgId: string, botId: string, memoryId: string, text: string) =>
+    apiFetch<ApiMemory>(`/api/v1/orgs/${orgId}/bots/${botId}/memories/${memoryId}`, { method: "PATCH", body: { text } }),
+  forget: (orgId: string, botId: string, memoryId: string) =>
+    apiFetch<void>(`/api/v1/orgs/${orgId}/bots/${botId}/memories/${memoryId}`, { method: "DELETE" }),
+  /** Owners and admins only: the bot forgets everything, from every chat. */
+  forgetAll: (orgId: string, botId: string) => apiFetch<void>(`/api/v1/orgs/${orgId}/bots/${botId}/memories`, { method: "DELETE" }),
 };

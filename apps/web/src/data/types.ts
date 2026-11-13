@@ -84,6 +84,8 @@ export interface Bot {
   createdAt: ISODate;
   monthlyBudgetUsd: number;
   spentThisMonthUsd: number;
+  /** Off: the bot neither recalls nor saves memories. What it already remembers stays until forgotten. */
+  memoryEnabled: boolean;
 }
 
 export type ThreadKind = "dm" | "group";
@@ -345,12 +347,35 @@ export interface ModelListProblem {
   message: string;
 }
 
+/**
+ * Whose memory it is. "bot": learned in group chats, so the bot uses it in everyone's chats.
+ * "you": learned in your DM with the bot, and used only there. Nobody sees another member's.
+ */
+export type MemoryScope = "bot" | "you";
+
+/** Something a bot remembers (Settings → Memory, and the Memory tab in a bot's details). */
 export interface MemoryItem {
   id: ID;
-  botId?: ID;
+  botId: ID;
   text: string;
-  source: string;
-  createdAt: ISODate;
+  scope: MemoryScope;
+  createdAt?: ISODate;
+  /** Set when someone corrected it after it was saved. */
+  updatedAt?: ISODate;
+}
+
+/** Whether bots can remember on this server; when they can't, `reason` says what to set. */
+export interface MemoryStatus {
+  enabled: boolean;
+  reason?: string;
+}
+
+/** One bot's memories as last loaded: all of them, or the matches for `query`. */
+export interface MemoryList {
+  status: "loading" | "ready" | "error";
+  query: string;
+  items: MemoryItem[];
+  error?: string;
 }
 
 export interface UsageDay {

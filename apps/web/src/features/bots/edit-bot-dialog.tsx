@@ -3,8 +3,9 @@ import { toast } from "sonner";
 import { Pencil } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
-import { Field, FieldError, FieldGroup, FieldLabel } from "@/components/ui/field";
+import { Field, FieldContent, FieldDescription, FieldError, FieldGroup, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
+import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 import { actions, type NewBotInput } from "@/data/store";
 import type { Bot } from "@/data/types";
@@ -37,7 +38,7 @@ export function EditBotDialog({ bot }: { bot: Bot }) {
 function EditBotForm({ bot, onDone }: { bot: Bot; onDone: () => void }) {
   const [draft, setDraft] = useState<Editable>(() => ({
     name: bot.name, role: bot.role, description: bot.description, avatarColor: bot.avatarColor, instructions: bot.instructions,
-    modelId: bot.modelId, securityLevel: bot.securityLevel, monthlyBudgetUsd: bot.monthlyBudgetUsd,
+    modelId: bot.modelId, securityLevel: bot.securityLevel, monthlyBudgetUsd: bot.monthlyBudgetUsd, memoryEnabled: bot.memoryEnabled,
   }));
   const [saving, startSaving] = useTransition();
   const update = <K extends keyof Editable>(key: K, value: Editable[K]) => setDraft((d) => ({ ...d, [key]: value }));
@@ -94,6 +95,13 @@ function EditBotForm({ bot, onDone }: { bot: Bot; onDone: () => void }) {
           <FieldLabel htmlFor="edit-bot-budget">Monthly budget (USD)</FieldLabel>
           <Input id="edit-bot-budget" type="number" min={0} step={5} className="max-w-40" value={draft.monthlyBudgetUsd}
             onChange={(e) => update("monthlyBudgetUsd", Math.max(0, Number(e.target.value)))} />
+        </Field>
+        <Field orientation="horizontal">
+          <FieldContent>
+            <FieldLabel htmlFor="edit-bot-memory">Memory</FieldLabel>
+            <FieldDescription>Remembers useful facts from chats and uses them later. Off keeps what it knows, but it stops learning and using it.</FieldDescription>
+          </FieldContent>
+          <Switch id="edit-bot-memory" checked={draft.memoryEnabled ?? true} onCheckedChange={(on) => update("memoryEnabled", on)} />
         </Field>
       </FieldGroup>
       <DialogFooter>

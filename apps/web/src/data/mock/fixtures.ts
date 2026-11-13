@@ -67,7 +67,7 @@ export const bots: Bot[] = [
     avatarColor: "indigo", status: "working", statusText: "Coordinating 3 handoffs",
     modelId: "anthropic:claude-sonnet-5-5", securityLevel: "ask-before-acting", computerMode: "own", connectionIds: ["c_gmail"],
     instructions: "You coordinate the other bots. Keep Ali's day clear. Batch questions.", createdAt: ago(60 * 24 * 20),
-    monthlyBudgetUsd: 80, spentThisMonthUsd: 31.4,
+    monthlyBudgetUsd: 80, spentThisMonthUsd: 31.4, memoryEnabled: true,
   },
   {
     id: "b_inbox", name: "Inbox Manager", handle: "inbox", role: "Email triage",
@@ -75,7 +75,7 @@ export const bots: Bot[] = [
     avatarColor: "violet", status: "waiting-approval", statusText: "2 replies waiting for you",
     modelId: "openai:gpt-5.5", securityLevel: "ask-before-acting", computerMode: "none", connectionIds: ["c_gmail"],
     instructions: "Triage the inbox every morning. Never send without approval.", createdAt: ago(60 * 24 * 18),
-    monthlyBudgetUsd: 40, spentThisMonthUsd: 18.9,
+    monthlyBudgetUsd: 40, spentThisMonthUsd: 18.9, memoryEnabled: true,
   },
   {
     id: "b_sales", name: "Sales Outbound", handle: "sales", role: "Outbound sales",
@@ -83,7 +83,7 @@ export const bots: Bot[] = [
     avatarColor: "sky", status: "idle", statusText: "Next run tonight at 11 PM",
     modelId: "openrouter:x-ai/grok-4.5", securityLevel: "ask-before-acting", computerMode: "own", connectionIds: ["c_gmail"],
     instructions: "Target seed-stage dev-tool founders.", createdAt: ago(60 * 24 * 12),
-    monthlyBudgetUsd: 60, spentThisMonthUsd: 44.2,
+    monthlyBudgetUsd: 60, spentThisMonthUsd: 44.2, memoryEnabled: true,
   },
   {
     id: "b_talent", name: "Talent Scout", handle: "talent", role: "Recruiting",
@@ -91,7 +91,7 @@ export const bots: Bot[] = [
     avatarColor: "emerald", status: "sleeping", statusText: "Sleeping until Monday 9 AM",
     modelId: "gemini:gemini-3-pro", securityLevel: "read-only", computerMode: "own", connectionIds: [],
     instructions: "Hiring: senior TypeScript engineers, remote.", createdAt: ago(60 * 24 * 9),
-    monthlyBudgetUsd: 30, spentThisMonthUsd: 6.1,
+    monthlyBudgetUsd: 30, spentThisMonthUsd: 6.1, memoryEnabled: true,
   },
   {
     id: "b_expense", name: "Expense Manager", handle: "expenses", role: "Finance ops",
@@ -99,7 +99,7 @@ export const bots: Bot[] = [
     avatarColor: "amber", status: "idle", statusText: "Filed 9 receipts today",
     modelId: "openrouter:deepseek/deepseek-v4", securityLevel: "ask-before-acting", computerMode: "none", connectionIds: ["c_gmail"],
     instructions: "Anything above $500 needs approval.", createdAt: ago(60 * 24 * 6),
-    monthlyBudgetUsd: 15, spentThisMonthUsd: 2.3,
+    monthlyBudgetUsd: 15, spentThisMonthUsd: 2.3, memoryEnabled: true,
   },
   {
     id: "b_bugs", name: "Bug Fixer", handle: "bugs", role: "Engineering",
@@ -107,7 +107,7 @@ export const bots: Bot[] = [
     avatarColor: "rose", status: "error", statusText: "Lost access to staging",
     modelId: "anthropic:claude-sonnet-5-5", securityLevel: "autonomous", computerMode: "own", connectionIds: [],
     instructions: "Repro first, then file. Never push to main.", createdAt: ago(60 * 24 * 3),
-    monthlyBudgetUsd: 50, spentThisMonthUsd: 12.7,
+    monthlyBudgetUsd: 50, spentThisMonthUsd: 12.7, memoryEnabled: true,
   },
 ];
 
@@ -306,10 +306,11 @@ export const modelProviders: ModelProvider[] = [
 ];
 
 export const memories: MemoryItem[] = [
-  { id: "mem_1", text: "Ali prefers short emails that end with “Best, Ali”.", source: "Inbox Manager, from edits to 6 drafts", createdAt: ago(60 * 24 * 4) },
-  { id: "mem_2", botId: "b_sales", text: "Don't contact anyone reached in the last 30 days.", source: "Chat with Chief", createdAt: ago(60 * 24 * 2) },
-  { id: "mem_3", text: "Thursdays after 2 PM are for customer calls.", source: "Calendar pattern", createdAt: ago(60 * 24 * 7) },
-  { id: "mem_4", botId: "b_expense", text: "Anything over $500 needs approval.", source: "Bot instructions", createdAt: ago(60 * 24 * 6) },
+  { id: "mem_1", botId: "b_inbox", scope: "you", text: "Ali prefers short emails that end with “Best, Ali”.", createdAt: ago(60 * 24 * 4) },
+  { id: "mem_2", botId: "b_sales", scope: "bot", text: "Don't contact anyone reached in the last 30 days.", createdAt: ago(60 * 24 * 2) },
+  { id: "mem_3", botId: "b_chief", scope: "you", text: "Thursdays after 2 PM are for customer calls.", createdAt: ago(60 * 24 * 7) },
+  { id: "mem_4", botId: "b_expense", scope: "bot", text: "Anything over $500 needs approval.", createdAt: ago(60 * 24 * 6) },
+  { id: "mem_5", botId: "b_chief", scope: "bot", text: "The launch crew ships on Fridays, never on Mondays.", createdAt: ago(60 * 24 * 3) },
 ];
 
 export const usage: UsageDay[] = Array.from({ length: 14 }, (_, i) => {

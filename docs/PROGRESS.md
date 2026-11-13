@@ -2,6 +2,18 @@
 
 A short history of BotDesk, newest first. For one checklist of what is done and what is next, see [ROADMAP.md](ROADMAP.md).
 
+## 2026-11-13: approvals on the web (finishes build step 2)
+
+In API mode a bot's risky action now shows up in the chat as an approval card, live from the chat's event stream, and on the Approvals page.
+
+- **The card** shows the title and summary, the risk in plain words, why the bot asked (from the policy's trace), a warning when the run read outside content first, the exact action and when it expires. **Approve**, **Deny**, or **Edit**: a form built from the tool's argument schema (text, long text, numbers, yes/no, choices), filled in with what the bot asked for, checked before sending and showing the API's own field errors. After a decision the card says "Approved by you", "Edited and approved by Sara", "Denied by…" or "Expired", live. If someone decided first, the card refreshes to what happened and a toast says so.
+- **Run states in the chat:** tools the bot used show as a compact line ("Used Send email · done"); while it waits the bot's status says "Waiting for approval"; after a decision it's thinking again; a run that needs attention gets a notice with the error and a Stop button. A chat that opens while a run waits still shows the card. How events change the chat stays in the pure, tested `api/run-events.ts`.
+- **Approvals page** reads the API's list, with Waiting and Decided tabs and a filter by bot. The sidebar's count is checked every 20 seconds while the tab is visible (no org-wide stream yet), and at once when a chat hears of a request or decision.
+- **The web policy table** now has ADR 0004's 7 risk classes (with `write-external`, reversible changes in other apps like drafts and labels), and the security levels describe it: *Read only* reads and keeps internal notes but never drafts outside; *Ask before acting* asks before drafting, sending, spending, deleting or using a login; *Autonomous* drafts and sends on its own. Settings → Security explains taint.
+- **Demo:** the mock approvals carry arguments and a schema, so Edit works the same way without an API; one shows the outside-content warning.
+
+Clicked through against a local API with the stand-in model: approve, edit (with a bad address caught in the form), deny, a waiting card surviving a reload, the Approvals page, and a decision made elsewhere (409).
+
 ## 2026-11-12: chats on the API, and the web checked end to end
 
 In API mode the web app now talks to bots for real. The chat list, each bot's DM, message history (50 at a time, with "Show earlier messages"), sending, and replies streamed live from the chat's event stream: typing dots, words as they arrive, the saved reply, an inline error when a reply fails, and a Stop button while a bot replies. The "chat coming soon" placeholder is gone. Settings → Profile saves your name and @handle on the API and gained a Password section.

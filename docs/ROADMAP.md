@@ -45,23 +45,21 @@ When you finish something, tick it here in the same pull request.
 - [x] Memory with mem0 (off until `MEMORY_ENABLED` and an OpenAI key)
 - [x] Web: chat on the API with live streamed replies and Stop
 
-### 5. Tools and approvals (build step 2, API)
+### 5. Tools and approvals (build step 2)
 - [x] Risk policy: 3 security levels × 7 risk classes, strict taint ([ADR 0004](adr/0004-agent-runtime-and-safety.md))
 - [x] Tool pipeline: validate → classify → decide → (ask) → run → record; never runs twice
 - [x] Approvals that pause a run and resume it on Approve / Edit / Deny; only one decision wins
 - [x] Built-in demo plugin (time, search, notes, draft and "send" email, a pretend inbox)
+- [x] Web: approval cards in the chat and on the Approvals page, live from the event stream
+- [x] Web: Approve, Edit (with the tool's fields) and Deny against the API
+- [x] Web: policy table with all 7 risk classes (`write-external`) and the `edited` status
+- [x] Web: waiting and "needs attention" states for a run
 
 ### Developer experience
 - [x] `pnpm dev` (web + API), `pnpm dev:web`, `pnpm dev:api`, reload on save, busy-port check
 - [x] `pnpm check` runs type checks, lint and every test
 
 ## Next
-
-### Approvals on the web (finishes step 2)
-- [ ] Approval cards in the chat and on the Approvals page, live from the event stream
-- [ ] Approve, Edit (with the tool's fields) and Deny against the API
-- [ ] Web policy table with all 7 risk classes (`write-external`) and the `edited` status
-- [ ] Waiting and "needs attention" states for a run
 
 ### Real AI
 - [ ] Add `ANTHROPIC_API_KEY` or `OPENAI_API_KEY` to `apps/api/.env` (owner, no code)

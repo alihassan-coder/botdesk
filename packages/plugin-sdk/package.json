@@ -1,0 +1,11 @@
+{
+  "name": "@botdesk/plugin-sdk",
+  "private": true,
+  "description": "BotDesk plugin SDK (Python, PyPI: botdesk-plugin-sdk). These scripts let pnpm and Turborepo check it like the other packages.",
+  "scripts": {
+    "test": "uv run pytest -q",
+    "lint": "uv run ruff check . && uv run ruff format --check .",
+    "format": "uv run ruff format . && uv run ruff check --fix .",
+    "typecheck": "uv run mypy"
+  }
+}

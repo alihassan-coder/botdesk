@@ -1,0 +1,56 @@
+[project]
+name = "botdesk-plugin-sdk"
+version = "0.1.0"
+description = "Write tools for BotDesk bots: the plugin contract (manifest, risk classes, tool context)."
+readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
+requires-python = ">=3.13"
+authors = [{ name = "BotDesk contributors" }]
+keywords = ["botdesk", "plugin", "ai-agents", "tools"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "Programming Language :: Python :: 3.13",
+    "Typing :: Typed",
+]
+# Kept tiny on purpose: plugin authors install only this, never the BotDesk app.
+dependencies = ["pydantic>=2.11"]
+
+[project.urls]
+Homepage = "https://github.com/alihassan-coder/botdesk"
+Documentation = "https://github.com/alihassan-coder/botdesk/tree/main/packages/plugin-sdk#readme"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/botdesk_plugin_sdk"]
+
+[dependency-groups]
+dev = [
+    "mypy>=2.4.1",
+    "pytest>=9.2.0",
+    "pytest-asyncio>=1.4.1.post1",
+    "ruff>=0.17.4",
+]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 120
+target-version = "py313"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP", "SIM", "ASYNC", "S", "RUF"]
+ignore = ["S101"]  # assert is how pytest checks things
+
+[tool.mypy]
+python_version = "3.13"
+strict = true
+plugins = ["pydantic.mypy"]
+files = ["src", "tests"]

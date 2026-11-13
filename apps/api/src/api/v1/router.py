@@ -9,6 +9,7 @@ from src.api.v1.routes import (
     health,
     invitations,
     organizations,
+    plugins,
     providers,
     runs,
     threads,
@@ -24,3 +25,4 @@ api_router.include_router(threads.router)
 api_router.include_router(runs.router)
 api_router.include_router(approvals.router)
 api_router.include_router(providers.router)
+api_router.include_router(plugins.router)

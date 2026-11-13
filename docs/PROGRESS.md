@@ -2,6 +2,17 @@
 
 A short history of BotDesk, newest first. For one checklist of what is done and what is next, see [ROADMAP.md](ROADMAP.md).
 
+## 2026-11-13: memory privacy and run-event fixes from a review
+
+An independent review of the memory screen and the run-event lock found seven problems; all are fixed, with tests. Details: [backend guide](backend/README.md#memory).
+
+- **Privacy (important):** the member's scope was only in mem0 metadata, which mem0 ignores when it builds its extraction context, so other members' DM messages and memories could reach the model and come back as a shared memory. The scope is now mem0's `run_id` (`shared` or the member's id) on every call; a DM's recall searches shared and the member's and merges. Migration `7d2c4e9a1b3f` moves old rows' `member` tag into `run_id`. Tested against real mem0 with a spy model.
+- **Newest first, really (important):** mem0's pgvector list has no order, so with more memories than the limit the screen showed an arbitrary subset. It now reads the newest straight from mem0's table with `ORDER BY`.
+- **A memory forgotten by someone else mid-request** is 404, not 503.
+- **Web:** forgetting, correcting or forgetting everything outdates searches still in flight, so a late answer can't bring a forgotten memory back; a list still loading is loaded again.
+- **Run-event lock:** the flush hook returns before touching the connection when there are no new events, and a transaction that would take chat locks out of order now fails loudly instead of risking a deadlock.
+- **`replayFrom` counts only queued and running runs.** A paused run no longer pins every page load's replay to its start; it's rebuilt from the active-runs list and its approval card.
+
 ## 2026-11-13: usage and budgets, for real
 
 Every model call is now counted and priced, and budgets stop a bot before it overspends. Details: [backend guide](backend/README.md#usage-and-budgets).

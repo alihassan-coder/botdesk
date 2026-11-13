@@ -136,7 +136,7 @@ POST /threads/{id}/messages       one transaction: the message, a queued run per
 GET /threads/{id}/events          SSE: replays run_events after Last-Event-ID, then follows new ones
 ```
 
-A chat opened later (or in a second tab) first asks `GET /threads/{id}/runs?active=true`: the runs still going, the chat's newest event id (`lastEventId`) and `replayFrom` (just before the unfinished runs' first events), read in one statement. It then follows `/events?after={replayFrom}`, which replays those runs from their start (their words so far, tool lines and cards) and carries on live, and loads the messages.
+A chat opened later (or in a second tab) first asks `GET /threads/{id}/runs?active=true`: the runs still going, the chat's newest event id (`lastEventId`) and `replayFrom` (just before the first events of the runs still streaming, queued or running), read in one statement. It then follows `/events?after={replayFrom}`, which replays those runs from their start (their words so far and tool lines) and carries on live, and loads the messages. A paused run (waiting for approval, or needing attention) doesn't move `replayFrom`: it's rebuilt from the list and the approvals list (its card), and its words come with the saved reply.
 
 **Event ids become visible in order.** On Postgres an id is taken when the row is inserted but seen only when its transaction commits, so two transactions writing to one chat (a run's words, someone's message or decision) could commit id 8 before id 7, and a stream that had seen 8 would never send 7. So before any new `run_events` row is flushed, the transaction takes that chat's advisory lock (`pg_advisory_xact_lock`, keyed by the thread id, released on commit; a `before_flush` hook in `run_event_service`). Within a chat, ids are then taken and committed one transaction at a time. Event transactions are short (the token batcher already groups words into a few events a second), so the lock is cheap. SQLite writes one at a time anyway, so it's skipped there.
 
@@ -236,11 +236,11 @@ Run `status` values: `queued`, `running`, `waiting_approval`, `needs_attention`,
     }
   ],
   "lastEventId": 42,                         // the chat's newest event when the runs were read; 0 for a chat with no events
-  "replayFrom": 30                           // first event of the unfinished runs, minus 1 (= lastEventId if they have none)
+  "replayFrom": 30                           // first event of the queued/running runs, minus 1 (= lastEventId if none)
 }
 ```
 
-Follow `/events?after={replayFrom}` to rebuild the unfinished runs (a reply's words so far, its tool lines and cards) and miss nothing after; `after={lastEventId}` gives only what happens next. Both come from the same SQL statement as the runs (a one-row subquery with `max(run_events.id)` and the unfinished runs' `min(run_events.id)`, left-joined to the runs), so they describe the same moment on Postgres. Indexes `ix_runs_thread_id_status` and `ix_run_events_thread_id_id` cover both. 404 unless you're in the chat.
+Follow `/events?after={replayFrom}` to rebuild the streaming runs (a reply's words so far and its tool lines) and miss nothing after; `after={lastEventId}` gives only what happens next. **Only `queued` and `running` runs move `replayFrom`.** A paused run can wait for days while the chat goes on, so replaying from its start would replay an ever-growing range on every page load; its state comes from `runs` (paused, with the needs-attention error) and the approvals list (its card), and the words it wrote before pausing come back in the saved reply when it finishes. Both numbers come from the same SQL statement as the runs (a one-row subquery with `max(run_events.id)` and the streaming runs' `min(run_events.id)`, left-joined to the runs), so they describe the same moment on Postgres. Indexes `ix_runs_thread_id_status` and `ix_run_events_thread_id_id` cover both. 404 unless you're in the chat.
 
 Error messages match the web app's wording, e.g. `401 "That email and password don't match."`.
 
@@ -386,11 +386,15 @@ Set the bot to *Autonomous* and `send_email` runs without asking; to *Read only*
 Bots remember with mem0 on pgvector, in the same Postgres database ([agents-and-plugins.md §9](../architecture/agents-and-plugins.md#9-memory)). It's on when `MEMORY_ENABLED=true`, the database is Postgres and `OPENAI_API_KEY` is set (mem0 uses OpenAI to pick what's worth keeping and to embed it); otherwise `NoMemory` remembers nothing and says why.
 
 - **Recall and remember:** before the model call the run recalls the top 5 memories for the message; after the reply it saves new ones in the background. Tainted runs save nothing, and neither does a bot whose `memoryEnabled` is off (Edit bot; on by default, read fresh at each step).
-- **Scope:** every memory is saved with `user_id = org:<org id>`, `agent_id = <bot id>` and a `member` tag: `shared` (learned in a group chat) or the member's id (learned in their DM). `runtime/memory.py` (`MemoryService`) is the only code that calls mem0, and it always sets those filters itself.
+- **Scope:** every memory is saved under mem0's three entity keys: `user_id = org:<org id>`, `agent_id = <bot id>` and `run_id` = `shared` (learned in a group chat) or the member's id (learned in their DM). `runtime/memory.py` (`MemoryService`) is the only code that calls mem0, and it always sets all three itself, on every call: `add`, `search`, the list, and `delete_all` (org + bot only: every scope).
+- **Why `run_id` and not metadata:** when mem0 extracts new memories it shows its model the scope's last 10 messages and its 10 closest existing memories, and it finds both by these entity keys only (`_build_session_scope` and the `search_filters` in `AsyncMemory._add_to_vector_store`). Metadata is ignored there, so with the member only in metadata, another member's DM messages and memories reached the extraction and could be restated into a shared memory. With `run_id`, a DM's extraction sees only that DM, and a group chat's only group chats (test: `test_a_dm_extraction_never_sees_another_members_dm`, real mem0 with a spy model).
+- **Recall in a DM** sees shared memories and that member's: mem0 can't OR across `run_id`s, so it's two searches (`shared`, the member) merged by score, top 5. A search on the memory screen works the same way.
+- **Older memories:** ones saved before `run_id` have the scope only in `metadata.member`. Migration `7d2c4e9a1b3f` copies `member` into `run_id` (a no-op when mem0's table doesn't exist yet). A row with neither was never scoped and stays out of every scope (forget everything still deletes it). Raw messages mem0 kept in its local history file under the old scopes are never read again, since every scope now includes `run_id`.
 - **Who sees and changes what** (`services/memory_service.py`): you see the bot's shared memories (`scope: "bot"`) and your own DM ones (`scope: "you"`); nobody sees another member's DM memories, owners included. Owners and admins can correct or forget any memory of the bot; members only their own DM ones (a shared one is 403, someone else's is 404). Forget everything is owners and admins only and also clears every member's DM memories of that bot.
 - **Isolation is ours, not the client's:** the bot must belong to the org in the URL (404 otherwise); mem0 is asked with the org, bot and allowed members; a memory fetched by id must carry this org and bot or it's 404; and the list is filtered again after mem0 answers.
 - **Off or failing:** with `NoMemory` the list is `[]`, forget everything is a no-op and the status says why. A mem0 error is a 503 `"Memory isn't answering right now. Try again in a moment."`.
-- **Correcting** uses mem0's `update(memory_id, text=…)`, which re-embeds the text and keeps the memory's scope.
+- **Correcting** uses mem0's `update(memory_id, text=…)`, which re-embeds the text and keeps the memory's scope. A memory deleted between the check and the change (mem0's `ValueError("… not found")`) is a 404, not a 503.
+- **Newest first:** mem0's pgvector `get_all` has no `ORDER BY`, so past `limit` it returns an arbitrary subset. Without `q`, the list reads mem0's `bot_memories` table directly (`newest_in_table`): the same scope keys, `ORDER BY` `updated_at` (else `created_at`) as `timestamptz`, `LIMIT`. One query; it scans the bot's rows, like mem0's own list does (mem0 makes no payload index).
 
 ```jsonc
 // GET /orgs/{id}/bots/{botId}/memories?q=fridays&limit=50   (no q: everything, newest first)
@@ -399,7 +403,7 @@ Bots remember with mem0 on pgvector, in the same Postgres database ([agents-and-
 { "enabled": false, "reason": "Memory is off on this server. Set MEMORY_ENABLED=true and add OPENAI_API_KEY to turn it on." }
 ```
 
-**Not yet:** memory doesn't use the org's OpenAI key from Models & keys. mem0 builds one client (LLM, embedder and a pgvector connection pool) at startup, so a per-org key would mean one cached `AsyncMemory` per org key, with its own pool, rebuilt when the key changes; that's left for later. Also not yet: `memory_audit`, tainted memories, removing a bot's memories when the bot is removed, and paging past `limit` (pgvector's list has no order, so with more than `limit` memories the newest-first list is of an arbitrary `limit` of them).
+**Not yet:** memory doesn't use the org's OpenAI key from Models & keys. mem0 builds one client (LLM, embedder and a pgvector connection pool) at startup, so a per-org key would mean one cached `AsyncMemory` per org key, with its own pool, rebuilt when the key changes; that's left for later. Also not yet: `memory_audit`, tainted memories, removing a bot's memories when the bot is removed, and paging past `limit` (the list shows the newest `limit`, at most 200).
 
 ## Usage and budgets
 

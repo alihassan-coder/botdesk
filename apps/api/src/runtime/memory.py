@@ -73,13 +73,13 @@ class Mem0Memory:
 def build_memory(settings: Settings) -> MemoryService:
     """mem0 when it's switched on and can work (Postgres + an OpenAI key for its model and
     embeddings); otherwise no memory."""
-    if not (settings.memory_enabled and settings.uses_postgres and settings.openai_api_key):
+    if not (settings.memory_enabled and settings.uses_postgres and settings.openai_api_key.get_secret_value()):
         return NoMemory()
     # mem0 reports usage to its makers unless told not to; this must be set before the import.
     os.environ["MEM0_TELEMETRY"] = "False"
     from mem0 import AsyncMemory
 
-    openai = {"api_key": settings.openai_api_key}
+    openai = {"api_key": settings.openai_api_key.get_secret_value()}
     memory = AsyncMemory.from_config(
         {
             "vector_store": {

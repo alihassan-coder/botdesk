@@ -29,7 +29,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from src.core.config import Settings
 from src.core.errors import AppError
 from src.core.secrets import SecretBox
-from src.core.url_guard import check_base_url
+from src.core.url_guard import GuardedTransport, check_base_url
 from src.model_providers import ProviderError, adapter_for, scrub
 from src.services import provider_service
 
@@ -173,17 +173,51 @@ class ModelResolver:
             if connection is None:
                 return stand_in_model(provider_id)
             base_url = connection.base_url
+            transport = None
             if connection.kind == "custom" and base_url:
-                base_url = await check_base_url(base_url, allow_private=self.settings.private_model_urls_allowed)
+                allow_private = self.settings.allow_private_model_urls
+                base_url = await check_base_url(base_url, allow_private=allow_private)
+                # The check above gives a clear error before the run starts; the transport
+                # checks again on every connection and connects to the checked address.
+                transport = GuardedTransport(allow_private=allow_private)
         except ProviderError as error:
             raise ModelUnavailable(f"{provider_id}: {error}") from error
         except AppError as error:
             raise ModelUnavailable(error.message) from error
-        return adapter_for(connection.kind).chat_model(model, connection.api_key, base_url)
+        return adapter_for(connection.kind).chat_model(model, connection.api_key, base_url, transport=transport)
 
 
-def describe_model_error(error: Exception) -> str:
-    """A model call failed mid-run: say why in words people can act on. Never includes a key."""
+# Request headers that carry a provider key: OpenAI-style bearer tokens, Anthropic, Azure-style.
+_KEY_HEADERS = ("authorization", "x-api-key", "api-key")
+
+
+def keys_in(error: BaseException) -> list[str]:
+    """The keys the failed request sent, read from the error itself.
+
+    The provider SDKs attach the request to their errors, and the request carries the key in a
+    header. Scrubbing by pattern alone misses keys of a format we don't know (a custom server's
+    key can be anything), so the exact key is taken out too. Follows `__cause__`/`__context__`,
+    since LangChain re-raises SDK errors as its own."""
+    found: list[str] = []
+    seen: set[int] = set()
+    current: BaseException | None = error
+    while current is not None and id(current) not in seen:
+        seen.add(id(current))
+        headers = getattr(getattr(current, "request", None), "headers", None)
+        if headers is not None:
+            for name in _KEY_HEADERS:
+                value = str(headers.get(name) or "")
+                value = value.removeprefix("Bearer ").removeprefix("bearer ").strip()
+                if value:
+                    found.append(value)
+        current = current.__cause__ or current.__context__
+    return found
+
+
+def describe_model_error(error: Exception, *secrets: str) -> str:
+    """A model call failed mid-run: say why in words people can act on. Never includes a key:
+    the key the request carried (and any in `secrets`) is removed exactly, whatever its format,
+    and anything else that looks like a key is removed by pattern."""
     status = getattr(error, "status_code", None)
     lowered = str(error).lower()
     if status in (401, 403) or "invalid api key" in lowered or "incorrect api key" in lowered:
@@ -194,4 +228,4 @@ def describe_model_error(error: Exception) -> str:
         return "The provider doesn't offer this model any more. Pick another one in the bot's settings."
     if status == 429:
         return "The model provider says we're over its rate limit or quota. Try again in a little while."
-    return f"The model couldn't reply: {scrub(str(error))}"
+    return f"The model couldn't reply: {scrub(str(error), *secrets, *keys_in(error))}"

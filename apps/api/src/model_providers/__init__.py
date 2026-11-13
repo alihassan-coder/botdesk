@@ -92,4 +92,5 @@ def env_key(settings: Settings, kind: str) -> str:
         "openrouter": settings.openrouter_api_key,
         "groq": settings.groq_api_key,
     }
-    return keys.get(kind, "")
+    key = keys.get(kind)
+    return key.get_secret_value() if key else ""

@@ -5,7 +5,9 @@ kept in the database. Fetching takes a second or so, and every bot editor asks, 
 organization's list per provider is kept for `ttl_seconds` (10 minutes). The cache key includes a
 fingerprint of the key and base URL, so replacing a key never serves the old key's list.
 
-One catalog per API process, created in the app's lifespan with the shared HTTP client.
+One catalog per API process, created in the app's lifespan with two HTTP clients: the shared
+one for the built-in providers (fixed public addresses), and one for custom servers whose
+`GuardedTransport` connects only to checked public addresses (see `core/url_guard.py`).
 """
 
 import asyncio
@@ -59,10 +61,12 @@ class ModelCatalog:
         http: httpx.AsyncClient,
         *,
         allow_private_urls: bool,
+        custom_http: httpx.AsyncClient | None = None,
         ttl_seconds: float = CACHE_SECONDS,
         clock: Callable[[], float] = time.monotonic,
     ) -> None:
         self.http = http
+        self.custom_http = custom_http or http
         self.allow_private_urls = allow_private_urls
         self.ttl_seconds = ttl_seconds
         self.clock = clock
@@ -72,9 +76,12 @@ class ModelCatalog:
         """Ask the provider now. This is also how a key is tested. Raises `ProviderError`, or
         `UnsafeUrl` for a custom server on an address this server may not call."""
         base_url = connection.base_url
-        if connection.kind == "custom" and base_url:
-            base_url = await check_base_url(base_url, allow_private=self.allow_private_urls)
-        return await adapter_for(connection.kind).list_models(self.http, connection.api_key, base_url)
+        http = self.http
+        if connection.kind == "custom":
+            http = self.custom_http
+            if base_url:
+                base_url = await check_base_url(base_url, allow_private=self.allow_private_urls)
+        return await adapter_for(connection.kind).list_models(http, connection.api_key, base_url)
 
     async def models(self, org_id: uuid.UUID, connection: Connection, *, refresh: bool = False) -> list[ModelInfo]:
         key = (org_id, connection.provider_id)

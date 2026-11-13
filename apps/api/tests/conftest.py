@@ -9,6 +9,7 @@
 """
 
 import asyncio
+import os
 from collections.abc import AsyncIterator, Callable, Mapping
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
@@ -19,13 +20,22 @@ import pytest
 from fastapi import FastAPI
 from sqlalchemy import text
 
+# `src.main` builds an app when imported, and without an explicit ENVIRONMENT that app refuses to
+# start without SECRET_KEY (it fails closed). Tests are a test environment; CI sets nothing.
+os.environ.setdefault("ENVIRONMENT", "test")
+
 from src.core.config import Settings
 from src.core.database import Base, create_engine
 from src.main import create_app
 from src.runtime.runner import RunManager
 from src.services.email_service import EmailMessage
 
-TEST_SETTINGS = Settings(environment="test", database_url="sqlite+aiosqlite://", _env_file=None)
+# Custom servers in these tests live on "localhost" (answered by FakeProviders, never the
+# network), so the SSRF guard is opted out of here, as on a developer's machine. The guard
+# itself is tested in test_model_providers.py and test_url_guard.py.
+TEST_SETTINGS = Settings(
+    environment="test", database_url="sqlite+aiosqlite://", allow_private_model_urls=True, _env_file=None
+)
 
 PASSWORD = "correct-horse-battery"
 

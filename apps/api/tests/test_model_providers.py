@@ -2,6 +2,7 @@
 key a run uses."""
 
 import uuid
+from typing import Any
 
 import httpx
 import pytest
@@ -14,6 +15,7 @@ from src.core.database import utcnow
 from src.core.secrets import SecretBox, SecretUnreadable, build_secret_box
 from src.core.url_guard import UnsafeUrl, check_base_url
 from src.model_providers import ModelInfo, Pricing, ProviderError, adapter_for, scrub
+from src.models import ProviderCredential
 from src.runtime.chat_model import ModelResolver, ModelUnavailable, StandInModel, describe_model_error
 from src.services import provider_service
 from src.services.model_catalog import ModelCatalog
@@ -34,11 +36,48 @@ def test_keys_round_trip_and_only_the_same_secret_reads_them() -> None:
     assert "secret" not in repr(box)
 
 
+STRONG_SECRET = "a-random-secret-of-at-least-32-characters"
+
+
 def test_production_refuses_to_start_without_a_secret_key() -> None:
-    with pytest.raises(RuntimeError, match="SECRET_KEY"):
+    with pytest.raises(RuntimeError, match="SECRET_KEY is not set"):
         build_secret_box(Settings(environment="production", _env_file=None))
     development = build_secret_box(Settings(environment="development", _env_file=None))
     assert development.decrypt(build_secret_box(Settings(environment="test", _env_file=None)).encrypt("x")) == "x"
+
+
+def test_an_unset_environment_fails_closed_without_a_secret_key(monkeypatch: pytest.MonkeyPatch) -> None:
+    """ENVIRONMENT left out reads as development, but a forgotten setting mustn't put a real
+    server on the public development key."""
+    monkeypatch.delenv("ENVIRONMENT", raising=False)
+    with pytest.raises(RuntimeError, match="SECRET_KEY is not set"):
+        build_secret_box(Settings(_env_file=None))
+    assert build_secret_box(Settings(secret_key=SecretStr(STRONG_SECRET), _env_file=None))
+
+
+def test_a_short_secret_key_is_refused_outside_development_and_test() -> None:
+    with pytest.raises(RuntimeError, match="too short"):
+        build_secret_box(Settings(environment="production", secret_key=SecretStr("short-secret"), _env_file=None))
+    assert build_secret_box(Settings(environment="production", secret_key=SecretStr(STRONG_SECRET), _env_file=None))
+    assert build_secret_box(Settings(environment="development", secret_key=SecretStr("short"), _env_file=None))
+
+
+def test_rotating_the_secret_key_keeps_saved_keys_readable() -> None:
+    old_secret = "the-old-secret-key-of-32-characters-or-more"
+    saved = SecretBox(old_secret).encrypt("sk-saved-before-rotation")
+    settings = Settings(
+        environment="production",
+        secret_key=SecretStr(STRONG_SECRET),
+        secret_key_old=SecretStr(f"an-even-older-one, {old_secret}"),
+        _env_file=None,
+    )
+    box = build_secret_box(settings)
+    assert box.decrypt(saved) == "sk-saved-before-rotation"
+    # Saving again encrypts with the new key: the old one alone can't read it any more.
+    resaved = box.encrypt(box.decrypt(saved))
+    assert SecretBox(STRONG_SECRET).decrypt(resaved) == "sk-saved-before-rotation"
+    with pytest.raises(SecretUnreadable):
+        SecretBox(old_secret).decrypt(resaved)
 
 
 # The SSRF guard
@@ -88,14 +127,13 @@ async def test_host_names_are_checked_by_what_they_resolve_to() -> None:
         await check_base_url("https://nowhere.example/v1", allow_private=False, resolve=missing)
 
 
-def test_production_allows_private_model_urls_only_when_asked() -> None:
-    assert Settings(environment="development", _env_file=None).private_model_urls_allowed
-    assert not Settings(environment="production", _env_file=None).private_model_urls_allowed
-    allowed = Settings(environment="production", allow_private_model_urls=True, _env_file=None)
-    assert allowed.private_model_urls_allowed
+def test_private_model_urls_are_refused_everywhere_unless_asked() -> None:
+    for environment in ("development", "test", "production"):
+        assert not Settings(environment=environment, _env_file=None).allow_private_model_urls
+    assert Settings(environment="development", allow_private_model_urls=True, _env_file=None).allow_private_model_urls
 
 
-async def test_a_custom_server_on_a_private_address_is_refused_in_production(providers: FakeProviders) -> None:
+async def test_a_custom_server_on_a_private_address_is_refused(providers: FakeProviders) -> None:
     catalog = ModelCatalog(httpx.AsyncClient(transport=httpx.MockTransport(providers.handle)), allow_private_urls=False)
     local = Connection("custom-1", "custom", "Ollama", "", base_url="http://127.0.0.1:11434/v1")
     with pytest.raises(UnsafeUrl):
@@ -162,6 +200,31 @@ def test_scrub_removes_key_like_text_and_keeps_messages_short() -> None:
     assert len(scrub("x " * 500)) == 200
 
 
+def test_run_errors_never_carry_the_key_whatever_its_format() -> None:
+    """A custom server's key can look like anything, so the pattern scrub can't be relied on:
+    the key the failed request sent is taken out exactly."""
+    key = "my-ollama-pass"  # matches no key pattern
+    headers = {"Authorization": f"Bearer {key}"}
+    request = httpx.Request("POST", "https://models.example/v1/chat/completions", headers=headers)
+
+    class ServerError(Exception):
+        def __init__(self, message: str) -> None:
+            super().__init__(message)
+            self.request = request
+
+    try:
+        try:
+            raise ServerError(f"upstream said: bad token {key}")
+        except ServerError as cause:
+            raise RuntimeError(f"wrapped: {cause}") from cause  # how LangChain re-raises
+    except RuntimeError as error:
+        message = describe_model_error(error)
+    assert key not in message
+    assert message == "The model couldn't reply: wrapped: upstream said: bad token [key]"
+    explicit = describe_model_error(Exception("echo hunter2-pass"), "hunter2-pass")
+    assert explicit == "The model couldn't reply: echo [key]"
+
+
 def test_run_errors_say_what_to_do() -> None:
     class AuthError(Exception):
         status_code = 401
@@ -205,7 +268,7 @@ def _key_of(model: ChatOpenAI) -> str:
 
 
 async def test_a_run_uses_the_org_key_then_the_server_key_then_the_stand_in(providers: FakeProviders) -> None:
-    settings = TEST_SETTINGS.model_copy(update={"openai_api_key": "sk-from-the-environment"})
+    settings = TEST_SETTINGS.model_copy(update={"openai_api_key": SecretStr("sk-from-the-environment")})
     async with api_client(settings, providers) as (app, client):
         me = await sign_up(client)
         org_id = uuid.UUID(me["organizations"][0]["id"])
@@ -244,3 +307,44 @@ async def test_a_run_uses_the_org_key_then_the_server_key_then_the_stand_in(prov
         other_box = ModelResolver(settings, app.state.sessionmaker, SecretBox("a different secret"))
         with pytest.raises(ModelUnavailable, match="can't be read"):
             await other_box(org_id, "openai:gpt-5.5")
+
+
+async def test_two_first_saves_at_once_end_as_one_key_not_a_500(
+    providers: FakeProviders, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Two admins save the first OpenAI key at the same moment: both look, find no row, and
+    insert. The second insert hits the unique index and becomes an update of the first row."""
+    async with api_client(TEST_SETTINGS, providers) as (app, client):
+        me = await sign_up(client)
+        org_id, user_id = uuid.UUID(me["organizations"][0]["id"]), uuid.UUID(me["user"]["id"])
+
+        async def save(key: str) -> ProviderCredential:
+            async with app.state.sessionmaker() as db:
+                saved = await provider_service.save_credential(
+                    db,
+                    org_id=org_id,
+                    user_id=user_id,
+                    connection=Connection("openai", "openai", "OpenAI", key),
+                    secrets=app.state.secrets,
+                    verified_at=utcnow(),
+                )
+                await db.commit()
+                return saved
+
+        await save("sk-first-admins-key-1111")
+        real_find = provider_service.find_credential
+        looks = 0
+
+        async def did_not_see_it_yet(*args: Any, **kwargs: Any) -> ProviderCredential | None:
+            nonlocal looks
+            looks += 1
+            return None if looks == 1 else await real_find(*args, **kwargs)  # the look before the insert
+
+        monkeypatch.setattr(provider_service, "find_credential", did_not_see_it_yet)
+        second = await save("sk-second-admins-key-2222")
+        assert looks == 2  # it did insert, hit the index, and looked again
+        assert second.key_hint == "2222"
+        async with app.state.sessionmaker() as db:
+            rows = await real_find(db, org_id, provider_service.Target("openai"))
+            assert rows is not None and rows.key_hint == "2222"
+            assert len(await provider_service.list_credentials(db, org_id)) == 1

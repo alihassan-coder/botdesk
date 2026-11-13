@@ -28,11 +28,16 @@ class ProviderOut(ApiModel):
 
 class ProviderKeyIn(ApiModel):
     """Add or replace a key. Custom servers also need a base URL (and a name, the first time);
-    their key is optional, since local servers like Ollama take none."""
+    their key is optional, since local servers like Ollama take none.
+
+    Editing a custom server: an empty `apiKey` keeps the saved key, as long as the base URL is
+    the same. A saved key is never sent to a new address, so changing the URL needs the key
+    again, or `noKey: true` to save the server without one."""
 
     api_key: str = Field(default="", max_length=500)
     base_url: str | None = Field(default=None, max_length=500)
     label: str | None = Field(default=None, max_length=80)
+    no_key: bool = False
 
 
 class ProviderTestOut(ApiModel):

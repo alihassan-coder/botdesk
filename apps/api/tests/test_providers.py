@@ -8,6 +8,7 @@ from typing import Any
 
 import httpx
 import pytest
+from pydantic import SecretStr
 from sqlalchemy import select
 
 from src.models import ProviderCredential
@@ -16,6 +17,7 @@ from tests.conftest import TEST_SETTINGS, FakeProviders, api_client, sign_up
 OPENAI_KEY = "sk-proj-TESTKEY0000000000000000abcd"
 ANTHROPIC_KEY = "sk-ant-api03-TESTKEY00000000000wxyz"
 GROQ_KEY = "gsk_TESTKEY000000000000000000groq"
+CUSTOM_KEY = "vllm-TESTKEY-0000000000-cust"
 
 OPENAI_MODELS = {
     "data": [
@@ -216,6 +218,56 @@ async def test_a_custom_server_gets_its_own_id_and_needs_no_key(
     assert (await client.put(f"{org}/providers/custom", json={"label": "No URL"})).status_code == 400
 
 
+async def _custom_server_with_key(client: httpx.AsyncClient, providers: FakeProviders, org: str) -> dict[str, Any]:
+    """A custom server that only answers with its key, saved with that key."""
+
+    def answer(request: httpx.Request) -> httpx.Response:
+        if request.headers.get("authorization") != f"Bearer {CUSTOM_KEY}":
+            return httpx.Response(401, json={"error": "a key is required"})
+        return httpx.Response(200, json={"data": [{"id": "qwen3:32b"}]})
+
+    providers.answer("localhost", handler=answer)
+    body = {"label": "vLLM", "baseUrl": "http://localhost:8001/v1", "apiKey": CUSTOM_KEY}
+    saved: dict[str, Any] = (await client.put(f"{org}/providers/custom", json=body)).json()
+    assert saved["keyHint"] == CUSTOM_KEY[-4:]
+    return saved
+
+
+async def test_editing_a_custom_server_with_the_key_left_empty_keeps_the_key(
+    client: httpx.AsyncClient, providers: FakeProviders
+) -> None:
+    org = await _org(client)
+    saved = await _custom_server_with_key(client, providers, org)
+
+    renamed = await client.put(f"{org}/providers/{saved['id']}", json={"label": "vLLM box", "apiKey": ""})
+    assert renamed.status_code == 200, renamed.text
+    assert (renamed.json()["name"], renamed.json()["keyHint"]) == ("vLLM box", CUSTOM_KEY[-4:])
+    assert providers.requests[-1].headers["authorization"] == f"Bearer {CUSTOM_KEY}"  # checked with the kept key
+    same_url = {"label": "vLLM box", "baseUrl": "http://localhost:8001/v1/", "apiKey": ""}
+    assert (await client.put(f"{org}/providers/{saved['id']}", json=same_url)).json()["keyHint"] == CUSTOM_KEY[-4:]
+
+
+async def test_a_saved_key_is_never_sent_to_a_new_base_url(client: httpx.AsyncClient, providers: FakeProviders) -> None:
+    org = await _org(client)
+    saved = await _custom_server_with_key(client, providers, org)
+    calls = len(providers.requests)
+
+    moved = {"label": "vLLM", "baseUrl": "http://localhost:9999/v1", "apiKey": ""}
+    refused = await client.put(f"{org}/providers/{saved['id']}", json=moved)
+    assert refused.status_code == 400
+    assert "paste the API key again" in refused.json()["detail"]
+    assert len(providers.requests) == calls  # the new address was never called with the old key
+
+    providers.answer("localhost", {"data": [{"id": "llama3.2"}]})
+    no_key = await client.put(f"{org}/providers/{saved['id']}", json={**moved, "noKey": True})
+    assert no_key.status_code == 200, no_key.text
+    assert (no_key.json()["baseUrl"], no_key.json()["keyHint"]) == ("http://localhost:9999/v1", None)
+    assert "authorization" not in providers.requests[-1].headers
+
+    new_key = await client.put(f"{org}/providers/{saved['id']}", json={**moved, "apiKey": "sk-a-brand-new-key-1234"})
+    assert new_key.json()["keyHint"] == "1234"
+
+
 async def test_a_bots_model_must_belong_to_a_connected_provider(
     client: httpx.AsyncClient, providers: FakeProviders
 ) -> None:
@@ -235,7 +287,7 @@ async def test_a_bots_model_must_belong_to_a_connected_provider(
 
 
 async def test_a_server_key_in_the_environment_counts_as_connected(providers: FakeProviders) -> None:
-    settings = TEST_SETTINGS.model_copy(update={"groq_api_key": GROQ_KEY})
+    settings = TEST_SETTINGS.model_copy(update={"groq_api_key": SecretStr(GROQ_KEY)})
     async with api_client(settings, providers) as (_, client):
         org = await _org(client)
         groq = next(p for p in (await client.get(f"{org}/providers")).json() if p["id"] == "groq")

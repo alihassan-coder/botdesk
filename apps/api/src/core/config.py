@@ -14,6 +14,8 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 
+    # Only an explicit ENVIRONMENT=development or test relaxes the secret rules (see
+    # `relaxed_secrets`); left unset it reads as development but is treated like production.
     environment: Literal["development", "test", "production"] = "development"
 
     # Postgres (Neon) in real use. The SQLite default lets the API start with no setup.
@@ -31,17 +33,22 @@ class Settings(BaseSettings):
     # keys. Organizations add their own keys in Settings → Models & keys; those come first, these
     # are the fallback for self-hosting. A provider with neither gets a stand-in model.
     default_model_id: str = "anthropic:claude-sonnet-4-5"
-    anthropic_api_key: str = ""
-    openai_api_key: str = ""
-    gemini_api_key: str = ""
-    openrouter_api_key: str = ""
-    groq_api_key: str = ""
+    # SecretStr, so a key never shows up in a repr, a log line or an error page by accident.
+    anthropic_api_key: SecretStr = SecretStr("")
+    openai_api_key: SecretStr = SecretStr("")
+    gemini_api_key: SecretStr = SecretStr("")
+    openrouter_api_key: SecretStr = SecretStr("")
+    groq_api_key: SecretStr = SecretStr("")
 
-    # Encrypts organizations' provider keys at rest. Required in production; in development an
-    # unset key falls back to a fixed development key (with a warning).
+    # Encrypts organizations' provider keys at rest: at least 32 characters, and required unless
+    # ENVIRONMENT is explicitly development or test (those fall back to a public development key).
     secret_key: SecretStr | None = None
-    # Custom model servers on private, loopback or link-local addresses. Always allowed outside
-    # production (so Ollama on localhost works); in production only when this is true.
+    # Earlier SECRET_KEYs, comma-separated, while rotating: keys saved under them still decrypt,
+    # and are encrypted with SECRET_KEY the next time they're saved.
+    secret_key_old: SecretStr | None = None
+    # Custom model servers on private, loopback or link-local addresses (the SSRF guard). Refused
+    # by default everywhere; set to true on a machine whose model server is on its own network
+    # (Ollama on localhost in development, a self-hosted vLLM next to the API).
     allow_private_model_urls: bool = False
 
     # Run limits (agents-and-plugins.md §4.2) and how many runs one bot may have going at once.
@@ -80,8 +87,11 @@ class Settings(BaseSettings):
         return self.environment == "production"
 
     @property
-    def private_model_urls_allowed(self) -> bool:
-        return self.allow_private_model_urls or not self.is_production
+    def relaxed_secrets(self) -> bool:
+        """True only when ENVIRONMENT was set to development or test on purpose. An unset
+        ENVIRONMENT defaults to development for everything else, but a server someone forgot to
+        configure must not run with the public development SECRET_KEY: it fails closed."""
+        return "environment" in self.model_fields_set and self.environment in ("development", "test")
 
     @property
     def sends_real_email(self) -> bool:

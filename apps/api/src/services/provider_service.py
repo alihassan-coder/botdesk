@@ -16,6 +16,7 @@ from datetime import datetime
 from typing import Literal
 
 from sqlalchemy import delete, select, update
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.core.config import Settings
@@ -36,6 +37,10 @@ from src.schemas.provider import ProviderKeyIn, ProviderOut
 
 UNKNOWN_PROVIDER = "We don't support that provider."
 NOT_CONNECTED = "That provider isn't connected."
+KEY_FOR_NEW_URL = (
+    "You changed the base URL, so paste the API key again (or choose No key). "
+    "A saved key is never sent to a new address."
+)
 
 
 @dataclass(frozen=True)
@@ -214,7 +219,9 @@ async def require_usable_model(db: AsyncSession, org_id: uuid.UUID, model_id: st
 # Changing
 
 
-def draft_connection(target: Target, body: ProviderKeyIn, existing: ProviderCredential | None) -> Connection:
+def draft_connection(
+    target: Target, body: ProviderKeyIn, existing: ProviderCredential | None, secrets: SecretBox
+) -> Connection:
     """What the request asks to save, checked for completeness (the live check comes next)."""
     api_key = body.api_key.strip()
     if target.kind != "custom":
@@ -228,8 +235,23 @@ def draft_connection(target: Target, body: ProviderKeyIn, existing: ProviderCred
         raise BadRequest("Give this server a name.")
     if not base_url:
         raise BadRequest("Add the server's base URL, like http://localhost:11434/v1.")
+    if not api_key and not body.no_key and existing is not None and existing.encrypted_key:
+        api_key = _kept_key(existing, base_url, secrets)
     credential_id = existing.id if existing else uuid.uuid4()
     return Connection(f"{CUSTOM_PREFIX}{credential_id}", "custom", label, api_key, base_url, "org", credential_id)
+
+
+def _kept_key(existing: ProviderCredential, base_url: str, secrets: SecretBox) -> str:
+    """Editing a custom server with the key field left empty keeps its saved key, so renaming a
+    server doesn't silently wipe it. Only for the same address, though: the key was given for
+    that server, and reusing it for a new URL would hand it to whoever runs the new one (an
+    admin could point the URL at their own server and collect the key)."""
+    if base_url != (existing.base_url or "").rstrip("/"):
+        raise BadRequest(KEY_FOR_NEW_URL)
+    try:
+        return secrets.decrypt(existing.encrypted_key)
+    except SecretUnreadable as error:
+        raise BadRequest("The saved key can't be read (did SECRET_KEY change?). Paste the key again.") from error
 
 
 async def save_credential(
@@ -241,12 +263,34 @@ async def save_credential(
     secrets: SecretBox,
     verified_at: datetime,
 ) -> ProviderCredential:
-    """Insert or replace the key. Call only after the key passed the live check."""
+    """Insert or replace the key. Call only after the key passed the live check.
+
+    Two admins can save the first key for the same built-in provider at the same moment: both
+    find no row, both insert, and the unique index (one key per built-in provider per
+    organization) refuses the second. That insert runs in a savepoint, so the loser rolls back
+    only the insert and updates the winner's row instead (last write wins, as with any replace)
+    rather than failing with a 500."""
     target = Target(connection.kind, connection.credential_id if connection.kind == "custom" else None)
     credential = await find_credential(db, org_id, target)
     if credential is None:
         credential = ProviderCredential(id=connection.credential_id or uuid.uuid4(), org_id=org_id, created_by=user_id)
-        db.add(credential)
+        _fill(credential, connection, secrets, verified_at)
+        try:
+            async with db.begin_nested():
+                db.add(credential)
+        except IntegrityError:
+            credential = await find_credential(db, org_id, target)
+            if credential is None:  # not the race we know how to settle
+                raise
+            _fill(credential, connection, secrets, verified_at)
+    else:
+        _fill(credential, connection, secrets, verified_at)
+    await db.flush()
+    return credential
+
+
+def _fill(credential: ProviderCredential, connection: Connection, secrets: SecretBox, verified_at: datetime) -> None:
+    """Every key is encrypted with the current SECRET_KEY, so saving also finishes a rotation."""
     credential.provider = connection.kind
     credential.label = connection.name if connection.kind == "custom" else ""
     credential.base_url = connection.base_url
@@ -254,8 +298,6 @@ async def save_credential(
     credential.key_hint = key_hint(connection.api_key)
     credential.status = "ok"
     credential.last_verified_at = verified_at
-    await db.flush()
-    return credential
 
 
 async def record_check(db: AsyncSession, credential_id: uuid.UUID, *, ok: bool) -> ProviderCredential | None:

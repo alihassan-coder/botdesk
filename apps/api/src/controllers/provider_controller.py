@@ -43,7 +43,7 @@ async def save_key(
     existing = await provider_service.find_credential(db, org_id, target)
     if target.custom_id and existing is None:
         raise NotFound(provider_service.NOT_CONNECTED)
-    draft = provider_service.draft_connection(target, body, existing)
+    draft = provider_service.draft_connection(target, body, existing, secrets)
     await db.commit()  # nothing held open while the provider answers
 
     try:

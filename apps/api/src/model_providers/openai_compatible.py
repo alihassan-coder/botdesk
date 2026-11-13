@@ -16,7 +16,15 @@ from langchain_core.language_models import BaseChatModel
 from langchain_openai import ChatOpenAI
 from pydantic import SecretStr
 
-from src.model_providers.base import ModelInfo, Pricing, ProviderError, get_json
+from src.model_providers.base import (
+    CHAT_TIMEOUT,
+    ModelInfo,
+    Pricing,
+    ProviderError,
+    chat_http_client,
+    get_json,
+    sync_chat_http_client,
+)
 
 # Local servers like Ollama take no key, but the OpenAI client insists on one.
 NO_KEY = "not-needed"
@@ -110,12 +118,19 @@ class OpenAICompatibleAdapter:
         models = [info for raw in rows if isinstance(raw, dict) and (info := self.read_model(raw))]
         return sorted(models, key=lambda m: m.name.lower()) if self.sort_by_name else models
 
-    def chat_model(self, model: str, api_key: str, base_url: str | None) -> BaseChatModel:
+    def chat_model(
+        self, model: str, api_key: str, base_url: str | None, *, transport: httpx.AsyncBaseTransport | None = None
+    ) -> BaseChatModel:
+        """Our own HTTP clients: they never follow redirects, time out, and send a custom
+        server's requests through `transport` (see `chat_http_client`)."""
         return ChatOpenAI(
             model_name=model,
             openai_api_key=SecretStr(api_key or NO_KEY),
             openai_api_base=self._base(base_url),
             max_retries=2,
+            timeout=CHAT_TIMEOUT,
+            http_client=sync_chat_http_client(transport),
+            http_async_client=chat_http_client(transport),
         )
 
 

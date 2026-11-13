@@ -14,6 +14,7 @@ from src.core.config import Settings, get_settings
 from src.core.database import Base, create_engine, create_sessionmaker, is_in_memory
 from src.core.errors import AppError
 from src.core.secrets import build_secret_box
+from src.core.url_guard import GuardedTransport
 from src.runtime.memory import build_memory
 from src.runtime.runner import run_manager
 from src.services.email_service import build_email_sender
@@ -48,12 +49,17 @@ def create_app(settings: Settings | None = None, *, outbound: httpx.AsyncBaseTra
                 await connection.run_sync(Base.metadata.create_all)
         app.state.engine = engine
         app.state.sessionmaker = create_sessionmaker(engine)
+        allow_private = settings.allow_private_model_urls
+        # Custom model servers are addresses people type in: their calls connect only to
+        # checked public addresses and never follow redirects (SSRF guard, core/url_guard.py).
+        custom_transport = outbound or GuardedTransport(allow_private=allow_private)
         async with (
             httpx.AsyncClient(timeout=OUTBOUND_TIMEOUT, transport=outbound) as http,
+            httpx.AsyncClient(timeout=OUTBOUND_TIMEOUT, transport=custom_transport, follow_redirects=False) as custom,
             run_manager(settings, app.state.sessionmaker, build_memory(settings), secrets) as runs,
         ):
             app.state.email = build_email_sender(settings, http)
-            app.state.models = ModelCatalog(http, allow_private_urls=settings.private_model_urls_allowed)
+            app.state.models = ModelCatalog(http, allow_private_urls=allow_private, custom_http=custom)
             app.state.runs = runs
             yield
         await engine.dispose()

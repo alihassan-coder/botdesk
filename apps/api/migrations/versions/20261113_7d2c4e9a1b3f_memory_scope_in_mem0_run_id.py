@@ -9,7 +9,7 @@ mem0 creates its `bot_memories` table itself the first time memory is used, so t
 nothing to migrate; this is a no-op then, and on SQLite.
 
 Revision ID: 7d2c4e9a1b3f
-Revises: 3e0c1566143b
+Revises: 3d438398cb88
 Create Date: 2026-11-13 18:00:00.000000
 
 """
@@ -21,7 +21,7 @@ from alembic import op
 
 # revision identifiers, used by Alembic.
 revision: str = "7d2c4e9a1b3f"
-down_revision: str | Sequence[str] | None = "3e0c1566143b"
+down_revision: str | Sequence[str] | None = "3d438398cb88"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

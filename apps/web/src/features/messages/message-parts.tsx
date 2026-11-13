@@ -20,7 +20,7 @@ export function MessageParts({ message, isOwn }: { message: Message; isOwn: bool
     const key = part.type === "approval" ? part.approvalId : part.type === "tool-call" ? part.toolExecutionId : `${message.id}-${index}`;
     switch (part.type) {
       case "text":
-        return <TextPart key={key} part={part} isOwn={isOwn} isStreaming={isStreaming} />;
+        return <TextPart key={key} part={part} isOwn={isOwn} isBot={message.author.type === "bot"} isStreaming={isStreaming} />;
       case "reasoning":
         return <ReasoningPart key={key} part={part} />;
       case "work-log":

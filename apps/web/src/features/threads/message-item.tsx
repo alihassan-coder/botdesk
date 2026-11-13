@@ -3,6 +3,7 @@ import { ClockTime } from "@/components/time-ago";
 import { useBot, useCurrentUser, useParticipantName } from "@/data/store";
 import type { Message } from "@/data/types";
 import { BotAvatar, MemberAvatar } from "@/features/bots/bot-avatar";
+import { MessageActions } from "@/features/messages/message-actions";
 import { MessageParts } from "@/features/messages/message-parts";
 import { BudgetStopNotice } from "./budget-stop-notice";
 
@@ -17,7 +18,7 @@ export function MessageItem({ message, isGroup }: { message: Message; isGroup: b
   const isThinking = message.status === "streaming" && message.parts.every((p) => p.type !== "text" || !p.text);
 
   return (
-    <div className={cn("flex gap-2.5", isOwn && "justify-end")}>
+    <div className={cn("group/message flex gap-2.5", isOwn && "justify-end")}>
       {showAuthor && <AuthorAvatar author={message.author} />}
 
       <div className={cn("flex min-w-0 flex-1 flex-col gap-2", isOwn && "items-end")}>
@@ -39,6 +40,7 @@ export function MessageItem({ message, isGroup }: { message: Message; isGroup: b
             ))}
           </div>
         ) : null}
+        <MessageActions message={message} isOwn={isOwn} showTime={!showAuthor} />
       </div>
     </div>
   );

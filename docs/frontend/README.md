@@ -104,7 +104,7 @@ On tablet and desktop the sidebar collapses to an icon rail. The app remembers t
 
 ## Look
 
-Light by default, dark mode from day one (toggle in the user menu). Black and white with one accent, ultramarine `#3B30FF` by default, plus status colours: amber = working, ultramarine = needs your approval, red = error, grey = sleeping. Geist font. Messenger-style chat: your messages on the right in a dark bubble, bot messages on the left in light grey, cards full width under the bot's message.
+Light by default, dark mode from day one (toggle in the user menu). Black and white with one accent, ultramarine `#3B30FF` by default, plus status colours: amber = working, ultramarine = needs your approval, red = error, grey = sleeping. Geist font. Messenger-style chat: your messages on the right in a dark bubble, bot messages on the left in light grey, cards full width under the bot's message. Bot replies are formatted markdown (`features/messages/markdown.tsx`: react-markdown + remark-gfm for lists, tables, task lists, links in a new tab, and code blocks in the UI kit's `CodeBlock` with a copy button and syntax colours from `useHighlightedCode`); raw HTML is never rendered and images show as links, so a reply can't load anything from unknown servers. People's messages show as typed. An @handle starts a word (`lib/mentions.ts`), so the @ in `sara@acme.dev` is not a mention. Under a finished message, Copy and its time show on hover or focus (always on touch). The chat list preview drops markdown marks (`lib/plain-text.ts`).
 
 Members can change the accent in Settings → Appearance: a preset or any custom colour. Text on the accent switches between black and white to stay readable (`src/lib/color.ts`). The choice is saved in this browser (`botdesk.accent`).
 

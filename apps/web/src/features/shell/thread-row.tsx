@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { markdownToPlain } from "@/lib/plain-text";
 import { cn } from "@/lib/utils";
 import { TimeAgo } from "@/components/time-ago";
 import { useBot } from "@/data/store";
@@ -14,8 +15,10 @@ export function ThreadRow({ thread, onNavigate }: { thread: Thread; onNavigate?:
   const isActive = usePathname() === `/chat/${thread.id}`;
   const bot = useBot(thread.botId);
 
-  const preview = bot && SHOW_STATUS_TEXT.has(bot.status) && bot.statusText ? bot.statusText : thread.lastMessagePreview;
-  const previewIsStatus = preview !== thread.lastMessagePreview;
+  const statusText = bot && SHOW_STATUS_TEXT.has(bot.status) ? bot.statusText : undefined;
+  const previewIsStatus = Boolean(statusText);
+  // Bots reply in markdown; the one-line preview shows the words without the marks.
+  const preview = statusText || markdownToPlain(thread.lastMessagePreview);
 
   return (
     <Link

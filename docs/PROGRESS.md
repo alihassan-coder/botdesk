@@ -2,6 +2,13 @@
 
 A short history of BotDesk, newest first. For one checklist of what is done and what is next, see [ROADMAP.md](ROADMAP.md).
 
+## 2026-11-13: formatted bot replies
+
+- **Markdown:** bot replies show bold, lists, headings, tables, task lists, links (new tab) and code blocks with syntax colours and a copy button, with react-markdown and remark-gfm (MIT). Raw HTML is never rendered and images show as links. People's messages stay as typed.
+- **Copy message:** under each finished message, with its time, on hover or keyboard focus (always on touch screens).
+- **@mentions:** an @ inside a word, like `sara@acme.dev`, is no longer a mention, in highlighting or in who a message pulls in.
+- **Chat list:** previews show the words without markdown marks.
+
 ## 2026-11-13: free and open source, no plans
 
 BotDesk is MIT and free forever: people bring their own AI keys and pay their provider directly ([ADR 0008](adr/0008-free-and-open-source.md)). Organizations no longer have a `plan` (migration `9f2d6c1b7a40` drops the column, `OrgOut` drops the field), and the sidebar and organization settings no longer show "Free plan" or "Team plan".

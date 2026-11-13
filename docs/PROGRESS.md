@@ -2,6 +2,17 @@
 
 A short history of BotDesk, newest first. For one checklist of what is done and what is next, see [ROADMAP.md](ROADMAP.md).
 
+## 2026-11-13: Models & keys hardened after a security review
+
+An independent review of Models & keys found eight problems; all are fixed, with tests. Details: [backend guide](backend/README.md#custom-servers-and-ssrf).
+
+- **No redirects on chat calls (high):** the OpenAI and Anthropic SDKs follow redirects, so a custom server could bounce a run's request (conversation and key) to `169.254.169.254`. Chat models now get BotDesk's own HTTP clients with `follow_redirects=False`.
+- **DNS rebinding closed:** calls to custom servers (model lists and chats) go through `GuardedTransport`, which resolves once, checks every address and connects to the checked IP, keeping the Host header and TLS name.
+- **Fails closed:** the SSRF guard is on in every environment (`ALLOW_PRIVATE_MODEL_URLS=true` opts out, e.g. for Ollama on localhost). The public development `SECRET_KEY` is used only with an explicit `ENVIRONMENT=development` or `test`; otherwise `SECRET_KEY` is required and must be 32+ characters. New `SECRET_KEY_OLD` rotates keys (`MultiFernet`).
+- **Editing a custom server** with the key left blank keeps its key; changing the base URL needs the key again or "This server needs no key" (the web form says so).
+- **Two first saves at once** end as one key instead of a 500.
+- **Chat timeouts** (10 s connect, 60 s between chunks); run errors remove the exact key the request carried, whatever its format; environment provider keys are `SecretStr`.
+
 ## 2026-11-13: the plugin SDK as its own package (build step 3)
 
 Plugins now build on a small, separate package instead of a file inside the API, as [ADR 0006](adr/0006-repo-structure-plugins-and-project.md) decided. Details: [backend guide](backend/README.md#plugins), [SDK README](../packages/plugin-sdk/README.md).

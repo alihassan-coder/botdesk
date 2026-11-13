@@ -36,10 +36,12 @@ Every setting is in [`apps/api/.env.example`](../../apps/api/.env.example). The 
 | `DATABASE_URL` | local SQLite | The app database. On Neon the **pooled** address is fine |
 | `DATABASE_URL_DIRECT` | = `DATABASE_URL` | The **direct** address (Neon: no `-pooler` in the host). Run checkpoints and mem0 keep their own connections here |
 | `TEST_DATABASE_URL` | empty | A **separate** database for the Postgres tests. They wipe it. Empty = those tests are skipped |
-| `SECRET_KEY` | empty | Encrypts the model keys organizations save. **Required in production** (the API refuses to start); in development an unset key falls back to a fixed development key with a warning. Generate: `python -c "import secrets; print(secrets.token_urlsafe(48))"`. Changing it makes saved keys unreadable (add them again) |
+| `ENVIRONMENT` | development | `development`, `test` or `production`. Only an **explicit** `development` or `test` relaxes the `SECRET_KEY` rules below; left unset, the API treats `SECRET_KEY` as production does (fails closed) |
+| `SECRET_KEY` | empty | Encrypts the model keys organizations save. **Required, at least 32 characters**, unless `ENVIRONMENT` is explicitly `development` or `test` (the API refuses to start otherwise); those fall back to a fixed, public development key with a warning. Generate: `python -c "import secrets; print(secrets.token_urlsafe(48))"`. To change it, rotate with `SECRET_KEY_OLD` |
+| `SECRET_KEY_OLD` | empty | Earlier `SECRET_KEY`s while rotating (comma-separated). Saved keys still decrypt and are re-encrypted with `SECRET_KEY` the next time they're saved. See [How keys are protected](#how-keys-are-protected) |
 | `DEFAULT_MODEL_ID` | `anthropic:claude-sonnet-4-5` | The model for bots that don't name one (`provider:model`) |
 | `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GEMINI_API_KEY`, `OPENROUTER_API_KEY`, `GROQ_API_KEY` | empty | Instance-wide provider keys, the fallback after an organization's own key (handy when self-hosting for one team). A bot whose provider has neither answers with a **stand-in reply**, so everything works offline |
-| `ALLOW_PRIVATE_MODEL_URLS` | false | Production only: let custom model servers live on private, loopback or link-local addresses (see [Models and keys](#models-and-keys)). Always allowed outside production |
+| `ALLOW_PRIVATE_MODEL_URLS` | false | Let custom model servers live on private, loopback or link-local addresses (see [Custom servers and SSRF](#custom-servers-and-ssrf)). Refused by default **everywhere**, development included; set it to `true` in your local `.env` to use Ollama on `localhost` |
 | `RUN_MAX_STEPS`, `RUN_MAX_SECONDS` | 25, 900 | Limits on every run; a run that hits one fails with a clear message |
 | `BOT_MAX_RUNNING_RUNS` | 2 | Runs one bot may have going at once (across chats) |
 | `PLUGINS` | `demo` | Allowlist of plugin ids to load (comma-separated), found through `botdesk.plugins` entry points. An id nobody provides stops startup; a broken plugin is skipped with a log line. `demo` = fake tools for trying approvals |
@@ -220,7 +222,7 @@ Settings → Models & keys. An organization's owners and admins add an API key p
 | Groq | `ChatOpenAI`, base `https://api.groq.com/openai/v1` | `GET …/models`; keeps `context_window`; drops whisper, tts, orpheus, guard models and inactive ones. Has a free tier |
 | Custom | `ChatOpenAI` with the server's base URL (e.g. Ollama `http://localhost:11434/v1`, LM Studio, vLLM); the key is optional | `GET {base}/models`, everything it lists |
 
-The code: `src/model_providers/` holds one small adapter per provider behind one interface (`list_models(http, key, base_url)`, which is also the key test, and `chat_model(model, key, base_url)`); `services/provider_service.py` stores keys and finds the one a run uses; `services/model_catalog.py` lists models live with an in-memory cache; `core/secrets.py` encrypts; `core/url_guard.py` checks custom addresses.
+The code: `src/model_providers/` holds one small adapter per provider behind one interface (`list_models(http, key, base_url)`, which is also the key test, and `chat_model(model, key, base_url, transport=…)`); `services/provider_service.py` stores keys and finds the one a run uses; `services/model_catalog.py` lists models live with an in-memory cache; `core/secrets.py` encrypts; `core/url_guard.py` checks custom addresses and pins their connections.
 
 ```jsonc
 // GET …/providers → a list of
@@ -229,7 +231,7 @@ The code: `src/model_providers/` holds one small adapter per provider behind one
  "keyHint": "abcd", "status": "ok",           // last 4 characters; "ok" | "invalid" from the last check
  "lastVerifiedAt": "2026-11-13T10:00:00Z", "baseUrl": null}   // baseUrl: custom servers only
 
-// PUT …/providers/{provider} body: {"apiKey": "…", "baseUrl": "http://…/v1", "label": "Ollama"}  → the provider, as above
+// PUT …/providers/{provider} body: {"apiKey": "…", "baseUrl": "http://…/v1", "label": "Ollama", "noKey": false}  → the provider, as above
 // POST …/providers/{provider}/test → {"ok": false, "error": "That key didn't work: 401: …", "provider": {…}}
 
 // GET …/models
@@ -241,7 +243,9 @@ The code: `src/model_providers/` holds one small adapter per provider behind one
 - **Model ids** are `provider:model`; a custom server's are `custom-<id>:<model>`. Only the first colon splits, so Ollama tags (`llama3.2:latest`) and OpenRouter slashes work.
 - **Which key a run uses:** the org's key for that provider, else the server's environment key, else the stand-in model. The key is decrypted inside the run, right before the model is built (`runtime/chat_model.py`, `ModelResolver`).
 - **Bots:** a bot's `modelId` must name a connected provider (org key or env key), or the bot isn't saved (400 `"OpenAI isn't connected. Add a key in Settings → Models & keys first."`). The model itself isn't checked against the live list, since lists change; a model that's gone fails its run with "The provider doesn't offer this model any more…".
-- **Run errors** are rewritten into something to act on: a refused key, a model that can't use tools ("This model can't use tools. Pick another model in the bot's settings."), a missing model, a rate limit. Anything else is shown scrubbed of key-like text.
+- **Run errors** are rewritten into something to act on: a refused key, a model that can't use tools ("This model can't use tools. Pick another model in the bot's settings."), a missing model, a rate limit. Anything else is shown scrubbed: the exact key the failed request carried (read from the error's request headers) and anything key-shaped become `[key]`.
+- **Editing a custom server:** an empty `apiKey` keeps the saved key while the base URL stays the same. A saved key is never sent to a new address, so a changed `baseUrl` needs the key again or `"noKey": true` (400 otherwise). Two admins saving the first key for the same provider at once end with one key (the second insert hits the unique index and becomes an update), not a 500.
+- **Timeouts:** chat calls connect within 10 s and fail if the provider sends nothing for 60 s (httpx's read timeout is per chunk, so a long streamed answer is fine).
 - **Speed:** the providers list is one query. Saving, testing and listing end the database transaction before calling a provider (calls time out after 8 s) and open a short new one to save the result. Model lists are cached per organization and provider for 10 minutes, keyed by a hash of the key and base URL, so a replaced key never serves the old list; saving a key fills the cache.
 
 ### How keys are protected
@@ -250,18 +254,20 @@ The code: `src/model_providers/` holds one small adapter per provider behind one
 - **In answers:** no route returns a key; only `keyHint`. Provider error messages are scrubbed: the key itself and anything key-shaped (`sk-…`, `gsk_…`, `AIza…`, long tokens) become `[key]`, and they're cut to 200 characters.
 - **In logs:** keys are never logged; a `Connection` (a decrypted key in memory) prints without it. A test checks the key appears in no response and no log line.
 - **Who:** owners and admins add, replace, test and remove keys; every member can see providers (without keys) and models.
-- **Production** refuses to start without `SECRET_KEY`.
+- **Fails closed:** without an explicit `ENVIRONMENT=development` or `test`, the API refuses to start without a `SECRET_KEY` of at least 32 characters, so a forgotten setting never puts a real server on the public development key.
+- **Rotation:** set the new `SECRET_KEY` and move the old one to `SECRET_KEY_OLD` (comma-separate several). `MultiFernet` encrypts with the new key and decrypts with any of them; each key is re-encrypted with the new one the next time it's saved. Once every key has been saved again (or re-added), drop `SECRET_KEY_OLD`.
+- **Environment keys** (`ANTHROPIC_API_KEY` …) are `SecretStr` in the settings, so they never show up in a repr or a log line.
 
 ### Custom servers and SSRF
 
-A custom base URL is an address the API itself will call, so it is checked (`core/url_guard.py`) when saved and before every call:
+A custom base URL is an address the API itself will call, so it goes through an SSRF guard (`core/url_guard.py`), on in every environment:
 
 - only `http` and `https`, and no user name or password in the URL;
-- in production, the host must resolve only to public addresses: private (10/8, 172.16/12, 192.168/16), loopback, link-local (169.254/16, where cloud metadata lives), shared (100.64/10) and reserved ones are refused, unless `ALLOW_PRIVATE_MODEL_URLS=true`;
-- outside production anything is allowed, so Ollama on `localhost` works;
-- redirects are never followed.
+- the host must resolve only to public addresses: private (10/8, 172.16/12, 192.168/16), loopback, link-local (169.254/16, where cloud metadata lives), shared (100.64/10) and reserved ones are refused, unless `ALLOW_PRIVATE_MODEL_URLS=true`. One private address among public ones is enough to refuse;
+- **redirects are never followed**, on model lists and on chat calls. The OpenAI and Anthropic SDKs follow redirects by default, so every chat model gets BotDesk's own HTTP client (`follow_redirects=False`, `model_providers/base.py`); otherwise a server could answer with a 307 to `169.254.169.254` and the SDK would re-send the conversation there. Sync calls to a custom server are refused, since only the async client is pinned (runs are async);
+- **DNS rebinding is closed:** checking a name and then letting httpx resolve it again leaves a gap (a short-TTL name can answer "public" to the check and `127.0.0.1` to the connection). Every call to a custom server (model lists and chat) goes through `GuardedTransport`: httpx's normal transport with a network backend that resolves the name once, checks every address, and opens the TCP connection to the checked IP. The Host header and TLS (SNI and the certificate check) still use the original name, because httpcore takes those from the URL. Environment proxies are ignored for these calls, since a proxy would choose the destination instead.
 
-DNS can change between the check and the call (rebinding); the check runs again before every call, which narrows but doesn't close that gap. Turn on `ALLOW_PRIVATE_MODEL_URLS` only on a server whose network you trust.
+`check_base_url` also runs when a key is saved and before a run starts, to turn a bad address into a message people can act on; the transport is what enforces it. Built-in providers have fixed public addresses and use httpx's own transport (still without redirects). Turn on `ALLOW_PRIVATE_MODEL_URLS` only on a machine whose network you trust.
 
 ## Tools and approvals
 
@@ -366,7 +372,7 @@ Follows the OWASP Forgot Password cheat sheet:
 - **Tenancy:** every `/orgs/{id}/…` route goes through `OrgAccess`. Non-members get 404, so they can't learn an org exists.
 - **CORS:** only `WEB_ORIGINS`, with credentials.
 - **Secrets:** only in `.env` (git-ignored). `.env.example` lists every setting.
-- **Model keys:** encrypted at rest with `SECRET_KEY`, never returned or logged; custom model server addresses pass an SSRF guard in production. See [Models and keys](#models-and-keys).
+- **Model keys:** encrypted at rest with `SECRET_KEY` (32+ characters, rotatable with `SECRET_KEY_OLD`), never returned or logged; custom model servers pass an SSRF guard in every environment (public addresses only, pinned at connect time, no redirects). See [Models and keys](#models-and-keys).
 
 ## Not yet (in order)
 

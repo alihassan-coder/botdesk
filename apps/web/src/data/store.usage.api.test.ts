@@ -104,3 +104,13 @@ describe("Usage & budgets on the API", () => {
     expect(state().usage.orgBudgetUsd).toBe(200);
   });
 });
+
+describe("starting in API mode", () => {
+  it("a store first loaded with the API set starts with no usage, waiting for the report", async () => {
+    vi.resetModules();
+    vi.stubEnv("NEXT_PUBLIC_API_URL", "http://api.test");
+    const fresh = await import("./store");
+    expect(fresh.getStoreSnapshot().usage).toEqual({ days: [], monthToDateUsd: 0, unpricedTokens: 0 });
+    expect(fresh.getStoreSnapshot().usageLoading).toBe(true);
+  });
+});

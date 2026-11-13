@@ -123,6 +123,9 @@ interface State {
   templates: typeof mock.templates;
 }
 
+/** No usage yet (API mode, before the report arrives). Defined here: the seeds below run at import. */
+const EMPTY_USAGE: UsageSummary = { days: [], monthToDateUsd: 0, unpricedTokens: 0 };
+
 function seed(): State {
   return {
     org: mock.org,
@@ -1124,7 +1127,6 @@ const modelActions = {
  * opens, and shortly after replies finish. A budget of 0 (bots) or none (the org) is no limit.
  */
 
-const EMPTY_USAGE: UsageSummary = { days: [], monthToDateUsd: 0, unpricedTokens: 0 };
 
 /** MOCK: the demo's 14 days, and this month as the sum of what the demo bots spent. */
 function mockUsage(): UsageSummary {

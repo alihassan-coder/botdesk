@@ -98,7 +98,7 @@ apps/api/
       prompt.py              instructions + memories + the chat → what the model sees
       token_batcher.py       streamed tokens → a few database writes, not one per token
       limits.py              steps and time per run
-      memory.py              MemoryService: NoMemory, or mem0 when switched on
+      memory.py              MemoryService: NoMemory (with the reason), or mem0 when switched on
       event_bus.py           wakes a chat's live streams when new events are saved
       reporter.py            saves a run's events
     model_providers/         one small adapter per model provider: list models (= test a key), build a chat model
@@ -172,6 +172,11 @@ A service raises `NotFound("…")`, `Conflict("…")` and so on. `main.py` turns
 | `GET /api/v1/orgs/{id}/bots/{botId}` | One bot |
 | `PATCH /api/v1/orgs/{id}/bots/{botId}` | Edit a bot (only the fields you send) |
 | `DELETE /api/v1/orgs/{id}/bots/{botId}` | Remove a bot (owners and admins); its chats go too |
+| `GET /api/v1/orgs/{id}/memory/status` | `{enabled, reason}`: whether bots can remember on this server, and if not, what to set |
+| `GET /api/v1/orgs/{id}/bots/{botId}/memories?q=&limit=` | What the bot remembers that you may see: its shared memories and your own DM ones. With `q`, closest first. See [Memory](#memory) |
+| `PATCH /api/v1/orgs/{id}/bots/{botId}/memories/{memoryId}` | `{text}`: correct a memory (owners and admins: any; members: their own DM ones) |
+| `DELETE /api/v1/orgs/{id}/bots/{botId}/memories/{memoryId}` | Forget one memory (same rule) |
+| `DELETE /api/v1/orgs/{id}/bots/{botId}/memories` | Forget everything the bot remembers, from every chat (owners and admins) |
 | `GET /api/v1/orgs/{id}/threads` | Your chats, most recent first, with a preview of the last message |
 | `POST /api/v1/orgs/{id}/threads/dm` | Your chat with a bot (`{botId}`): the existing one or a new one. Private to you |
 | `POST /api/v1/orgs/{id}/threads/groups` | Group chat with you plus the people and bots you pick |
@@ -373,6 +378,26 @@ The stand-in model (no key for the bot's provider, from the org or the environme
 
 Set the bot to *Autonomous* and `send_email` runs without asking; to *Read only* and it is refused. Demo notes and "sent" emails live in memory only; their results are in `tool_executions`.
 
+## Memory
+
+Bots remember with mem0 on pgvector, in the same Postgres database ([agents-and-plugins.md §9](../architecture/agents-and-plugins.md#9-memory)). It's on when `MEMORY_ENABLED=true`, the database is Postgres and `OPENAI_API_KEY` is set (mem0 uses OpenAI to pick what's worth keeping and to embed it); otherwise `NoMemory` remembers nothing and says why.
+
+- **Recall and remember:** before the model call the run recalls the top 5 memories for the message; after the reply it saves new ones in the background. Tainted runs save nothing, and neither does a bot whose `memoryEnabled` is off (Edit bot; on by default, read fresh at each step).
+- **Scope:** every memory is saved with `user_id = org:<org id>`, `agent_id = <bot id>` and a `member` tag: `shared` (learned in a group chat) or the member's id (learned in their DM). `runtime/memory.py` (`MemoryService`) is the only code that calls mem0, and it always sets those filters itself.
+- **Who sees and changes what** (`services/memory_service.py`): you see the bot's shared memories (`scope: "bot"`) and your own DM ones (`scope: "you"`); nobody sees another member's DM memories, owners included. Owners and admins can correct or forget any memory of the bot; members only their own DM ones (a shared one is 403, someone else's is 404). Forget everything is owners and admins only and also clears every member's DM memories of that bot.
+- **Isolation is ours, not the client's:** the bot must belong to the org in the URL (404 otherwise); mem0 is asked with the org, bot and allowed members; a memory fetched by id must carry this org and bot or it's 404; and the list is filtered again after mem0 answers.
+- **Off or failing:** with `NoMemory` the list is `[]`, forget everything is a no-op and the status says why. A mem0 error is a 503 `"Memory isn't answering right now. Try again in a moment."`.
+- **Correcting** uses mem0's `update(memory_id, text=…)`, which re-embeds the text and keeps the memory's scope.
+
+```jsonc
+// GET /orgs/{id}/bots/{botId}/memories?q=fridays&limit=50   (no q: everything, newest first)
+[{ "id": "9f1c…", "text": "The team ships on Fridays", "createdAt": "…", "updatedAt": "…", "scope": "bot" }]
+// GET /orgs/{id}/memory/status
+{ "enabled": false, "reason": "Memory is off on this server. Set MEMORY_ENABLED=true and add OPENAI_API_KEY to turn it on." }
+```
+
+**Not yet:** memory doesn't use the org's OpenAI key from Models & keys. mem0 builds one client (LLM, embedder and a pgvector connection pool) at startup, so a per-org key would mean one cached `AsyncMemory` per org key, with its own pool, rebuilt when the key changes; that's left for later. Also not yet: `memory_audit`, tainted memories, removing a bot's memories when the bot is removed, and paging past `limit` (pgvector's list has no order, so with more than `limit` memories the newest-first list is of an arbitrary `limit` of them).
+
 ## Email
 
 Emails go through [Brevo](https://www.brevo.com)'s transactional API (`POST https://api.brevo.com/v3/smtp/email`), from `services/email_service.py`:
@@ -407,5 +432,5 @@ Follows the OWASP Forgot Password cheat sheet:
 1. Wire the web app's sign-in to this API (replace the mock in `apps/web/src/data/store.ts`).
 2. Approval follow-ups: an expiry sweeper (needs the job queue), *retry / skip* for `needs_attention` runs, saved rules ("always allow"), org ceiling and routine levels, per-call risk raising, `run_steps` audit rows, a tool-calls-per-run limit, an org-wide approvals stream. Then the rest of step 3: `plugins/_template`, a generated and CI-checked `manifest.json`, import rules in CI, release-please for the SDK. Full order: [agents-and-plugins.md §14](../architecture/agents-and-plugins.md#14-build-order-each-step-small-tested-and-usable).
 3. The job queue (procrastinate) and a separate worker, deferred by [ADR 0007](../adr/0007-runs-in-the-api-process-for-now.md); then the Postgres `LISTEN/NOTIFY` bus for several API copies.
-4. Memory screens (see, edit, delete) and `memory_audit`; trimming old `run_events` and checkpoints.
+4. Memory: the org's OpenAI key for memory, `memory_audit`, tainted memories; trimming old `run_events` and checkpoints.
 5. Email verification, rate limiting on sign-in and forgot-password.

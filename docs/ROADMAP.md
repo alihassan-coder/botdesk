@@ -81,7 +81,7 @@ When you finish something, tick it here in the same pull request.
 - [ ] Connect with your own Google client; read, label, draft, and send only after approval
 
 ### Memory, routines, handoffs (steps 6–7)
-- [ ] Memory screen: see and delete what a bot remembers
+- [x] Memory screen: see, search, correct and forget what a bot remembers; a memory switch per bot
 - [ ] Routines: bots work on a schedule
 - [ ] Handoffs: one bot passes work to another
 

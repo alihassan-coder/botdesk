@@ -2,6 +2,15 @@
 
 A short history of BotDesk, newest first. For one checklist of what is done and what is next, see [ROADMAP.md](ROADMAP.md).
 
+## 2026-11-13: the memory screen
+
+See, search, correct and forget what a bot remembers, on the API and the web. Details: [backend guide](backend/README.md#memory).
+
+- **API:** `GET /orgs/{id}/memory/status`, and under `/orgs/{id}/bots/{botId}/memories`: list or search (`?q=`), `PATCH` to correct, `DELETE` one, `DELETE` all. Built on mem0's `get_all`, `search`, `get`, `update`, `delete` and `delete_all`, always with the org and bot filters set by the API.
+- **Privacy:** you see a bot's shared memories and your own DM ones, never another member's, owners included. Members change only their own; owners and admins change any and can make a bot forget everything. A memory id from another org or bot is 404. With memory off, the routes answer empty lists and a status with the reason.
+- **Per-bot switch:** bots have `memory_enabled` (on by default; migration `3e0c1566143b`). Off, the bot neither recalls nor saves memories. It's in Edit bot.
+- **Web:** Settings → Memory (pick a bot) and the bot's Memory tab share one list with search, inline correct, forget, and "Forget everything" behind a confirm.
+- **Follow-up:** memory still needs `OPENAI_API_KEY` on the server; using the org's own OpenAI key from Models & keys needs one mem0 client per key and is left for later.
 ## 2026-11-13: live run state on open, race fixes from a review
 
 An independent review of "a chat opened later sees what's going on" found six problems; all are fixed, with tests.

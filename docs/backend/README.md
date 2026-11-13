@@ -136,7 +136,9 @@ POST /threads/{id}/messages       one transaction: the message, a queued run per
 GET /threads/{id}/events          SSE: replays run_events after Last-Event-ID, then follows new ones
 ```
 
-A chat opened later (or in a second tab) first asks `GET /threads/{id}/runs?active=true`: the runs still going and the chat's newest event id, read in one statement. It then follows `/events?after={lastEventId}`, so nothing between the two is missed, and loads the messages.
+A chat opened later (or in a second tab) first asks `GET /threads/{id}/runs?active=true`: the runs still going, the chat's newest event id (`lastEventId`) and `replayFrom` (just before the unfinished runs' first events), read in one statement. It then follows `/events?after={replayFrom}`, which replays those runs from their start (their words so far, tool lines and cards) and carries on live, and loads the messages.
+
+**Event ids become visible in order.** On Postgres an id is taken when the row is inserted but seen only when its transaction commits, so two transactions writing to one chat (a run's words, someone's message or decision) could commit id 8 before id 7, and a stream that had seen 8 would never send 7. So before any new `run_events` row is flushed, the transaction takes that chat's advisory lock (`pg_advisory_xact_lock`, keyed by the thread id, released on commit; a `before_flush` hook in `run_event_service`). Within a chat, ids are then taken and committed one transaction at a time. Event transactions are short (the token batcher already groups words into a few events a second), so the lock is cheap. SQLite writes one at a time anyway, so it's skipped there.
 
 The web app reads one stream per open chat. Tokens arrive in batches (about every 50 ms) as `message_delta`; when the reply is saved, `message_saved` carries the whole message, which replaces the streamed text.
 
@@ -176,7 +178,7 @@ A service raises `NotFound("…")`, `Conflict("…")` and so on. `main.py` turns
 | `GET /api/v1/orgs/{id}/threads/{threadId}` | One chat (404 unless you're in it) |
 | `GET /api/v1/orgs/{id}/threads/{threadId}/messages` | Messages oldest first; `limit` (1–200) and `before` to page back |
 | `POST /api/v1/orgs/{id}/threads/{threadId}/messages` | Send a message (`{text}`). In a DM the bot replies; in a group, the @mentioned bots in it do. Returns the message plus `runIds` |
-| `GET /api/v1/orgs/{id}/threads/{threadId}/runs` | The chat's runs, newest first (max 100). `?active=true`: only `queued`, `running`, `waiting_approval` and `needs_attention`. Returns `{runs, lastEventId}` (see below) |
+| `GET /api/v1/orgs/{id}/threads/{threadId}/runs` | The chat's runs, newest first (max 100). `?active=true`: only `queued`, `running`, `waiting_approval` and `needs_attention`. Returns `{runs, lastEventId, replayFrom}` (see below) |
 | `GET /api/v1/orgs/{id}/threads/{threadId}/events` | Live updates (SSE). Resumes after the `Last-Event-ID` header, or `?after=`; otherwise from now. `?follow=false` sends what's saved and closes |
 | `GET /api/v1/orgs/{id}/runs/{runId}` | One run: status, steps used, limits, error |
 | `POST /api/v1/orgs/{id}/runs/{runId}/cancel` | Stop a run (queued or paused: at once, and its pending approval expires; running: within moments) |
@@ -226,11 +228,12 @@ Run `status` values: `queued`, `running`, `waiting_approval`, `needs_attention`,
       "createdAt": "…", "startedAt": "…", "finishedAt": null
     }
   ],
-  "lastEventId": 42                          // follow /events?after=42 from here; 0 for a chat with no events
+  "lastEventId": 42,                         // the chat's newest event when the runs were read; 0 for a chat with no events
+  "replayFrom": 30                           // first event of the unfinished runs, minus 1 (= lastEventId if they have none)
 }
 ```
 
-`lastEventId` comes from the same SQL statement as the runs (a one-row `max(run_events.id)` subquery, left-joined to the runs), so the two describe the same moment on Postgres. Indexes `ix_runs_thread_id_status` and `ix_run_events_thread_id_id` cover both. 404 unless you're in the chat.
+Follow `/events?after={replayFrom}` to rebuild the unfinished runs (a reply's words so far, its tool lines and cards) and miss nothing after; `after={lastEventId}` gives only what happens next. Both come from the same SQL statement as the runs (a one-row subquery with `max(run_events.id)` and the unfinished runs' `min(run_events.id)`, left-joined to the runs), so they describe the same moment on Postgres. Indexes `ix_runs_thread_id_status` and `ix_run_events_thread_id_id` cover both. 404 unless you're in the chat.
 
 Error messages match the web app's wording, e.g. `401 "That email and password don't match."`.
 

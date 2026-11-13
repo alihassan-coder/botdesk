@@ -2,6 +2,17 @@
 
 A short history of BotDesk, newest first. For one checklist of what is done and what is next, see [ROADMAP.md](ROADMAP.md).
 
+## 2026-11-13: live run state on open, race fixes from a review
+
+An independent review of "a chat opened later sees what's going on" found six problems; all are fixed, with tests.
+
+- **A run that starts while a chat loads keeps going** (Stop shows, the bot is busy). Each run remembers the newest event id the chat applied; the active-runs list ends only runs it doesn't list that weren't heard on the stream after its `lastEventId`. A run the stream already knows is left to the stream.
+- **Stand-in replies survive the page load.** A reply still being written (with its cards and tool lines) is kept beside the loaded page whatever its time; other messages are kept if they're newer than the page's oldest one.
+- **A reply opened midway shows all its words.** The active-runs list now also returns `replayFrom` (just before the unfinished runs' first events, in the same statement), and the web follows the stream from there. Replayed events are idempotent; words already applied, or for a saved reply, are skipped. Chosen over a `partialText` field because the replay also brings back the reply's tool lines and cards, and needs no second way of building a reply.
+- **Event ids become visible in order on Postgres.** A transaction adding events to a chat first takes that chat's advisory lock (until it commits), so a stream at id N can't miss a smaller id committed later.
+- **Approval card:** when someone else decides while your edit is open, the form closes and focus moves to the decision line once, not again on later renders.
+- **Edit form:** clearing an optional field the bot sent sends `null` if the schema allows it, else leaves it out, never `""`.
+
 ## 2026-11-13: approvals follow-ups: live state for chats opened later, saved tool lines
 
 Gaps found while building approvals, fixed on the API and the web.

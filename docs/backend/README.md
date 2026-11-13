@@ -36,8 +36,10 @@ Every setting is in [`apps/api/.env.example`](../../apps/api/.env.example). The 
 | `DATABASE_URL` | local SQLite | The app database. On Neon the **pooled** address is fine |
 | `DATABASE_URL_DIRECT` | = `DATABASE_URL` | The **direct** address (Neon: no `-pooler` in the host). Run checkpoints and mem0 keep their own connections here |
 | `TEST_DATABASE_URL` | empty | A **separate** database for the Postgres tests. They wipe it. Empty = those tests are skipped |
+| `SECRET_KEY` | empty | Encrypts the model keys organizations save. **Required in production** (the API refuses to start); in development an unset key falls back to a fixed development key with a warning. Generate: `python -c "import secrets; print(secrets.token_urlsafe(48))"`. Changing it makes saved keys unreadable (add them again) |
 | `DEFAULT_MODEL_ID` | `anthropic:claude-sonnet-4-5` | The model for bots that don't name one (`provider:model`) |
-| `ANTHROPIC_API_KEY`, `OPENAI_API_KEY` | empty | Provider keys. A bot whose provider has no key answers with a **stand-in reply**, so everything works offline |
+| `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GEMINI_API_KEY`, `OPENROUTER_API_KEY`, `GROQ_API_KEY` | empty | Instance-wide provider keys, the fallback after an organization's own key (handy when self-hosting for one team). A bot whose provider has neither answers with a **stand-in reply**, so everything works offline |
+| `ALLOW_PRIVATE_MODEL_URLS` | false | Production only: let custom model servers live on private, loopback or link-local addresses (see [Models and keys](#models-and-keys)). Always allowed outside production |
 | `RUN_MAX_STEPS`, `RUN_MAX_SECONDS` | 25, 900 | Limits on every run; a run that hits one fails with a clear message |
 | `BOT_MAX_RUNNING_RUNS` | 2 | Runs one bot may have going at once (across chats) |
 | `PLUGINS` | `demo` | Allowlist of built-in plugins to load (comma-separated). `demo` = fake tools for trying approvals |
@@ -75,6 +77,8 @@ apps/api/
       config.py              Settings from env / .env
       database.py            Base model class, engine, one session per request
       security.py            password hashing, session and reset tokens
+      secrets.py             SecretBox: encrypts saved model keys (Fernet, key from SECRET_KEY)
+      url_guard.py           checks custom model server addresses (SSRF guard)
       errors.py              AppError → NotFound, Conflict, Unauthorized, Forbidden
       handles.py             names → handles and slugs
     models/                  SQLAlchemy tables (one file per area)
@@ -88,13 +92,14 @@ apps/api/
       graph.py               the LangGraph graph: model ↔ tool pipeline loop, approval_gate (interrupt), save_reply
       tool_pipeline.py       one door for every tool call: validate → risk → policy → record → execute at most once
       policy.py              security level × risk class → auto / ask / deny, plus taint (pure)
-      chat_model.py          a bot's model_id → a LangChain chat model, or the stand-in (which obeys `/tool …`)
+      chat_model.py          ModelResolver: a bot's model_id → a chat model with the org's key (or env key), or the stand-in (which obeys `/tool …`)
       prompt.py              instructions + memories + the chat → what the model sees
       token_batcher.py       streamed tokens → a few database writes, not one per token
       limits.py              steps and time per run
       memory.py              MemoryService: NoMemory, or mem0 when switched on
       event_bus.py           wakes a chat's live streams when new events are saved
       reporter.py            saves a run's events
+    model_providers/         one small adapter per model provider: list models (= test a key), build a chat model
     plugins/                 what bots can do
       sdk.py                 the plugin seam: ToolSpec, PluginManifest, ToolContext, RiskClass (becomes packages/plugin-sdk)
       registry.py            ToolRegistry: allowlisted plugins' tools by full name (`demo.send_email`)
@@ -173,6 +178,11 @@ A service raises `NotFound("…")`, `Conflict("…")` and so on. `main.py` turns
 | `POST /api/v1/orgs/{id}/runs/{runId}/cancel` | Stop a run (queued or paused: at once, and its pending approval expires; running: within moments) |
 | `GET /api/v1/orgs/{id}/approvals` | Approvals in chats you're in, newest first, max 100. `status` = `pending` (default) / `approved` / `denied` / `edited` / `expired` / `all`; filter with `botId`, `threadId` |
 | `GET /api/v1/orgs/{id}/approvals/{approvalId}` | One approval (404 unless you're in its chat) |
+| `GET /api/v1/orgs/{id}/providers` | Every supported model provider: connected or not, where the key comes from, its last 4 characters, last check. Never the key. Any member |
+| `PUT /api/v1/orgs/{id}/providers/{provider}` | `{apiKey, baseUrl?, label?}`: add or replace a key (owners and admins). Checked live first; a bad one is 400 `"That key didn't work: …"`. `provider` = `anthropic` / `openai` / `gemini` / `openrouter` / `groq`, `custom` for a new server, `custom-<id>` to change one |
+| `POST /api/v1/orgs/{id}/providers/{provider}/test` | Check a saved key again; saves the result (owners and admins) |
+| `DELETE /api/v1/orgs/{id}/providers/{provider}` | Remove the org's key or custom server (owners and admins) |
+| `GET /api/v1/orgs/{id}/models` | Live models of every connected provider, merged; `?provider=` for one, `?refresh=true` skips the 10 minute cache. A provider that's down is listed in `errors`, the rest still come back. Any member |
 | `POST /api/v1/orgs/{id}/approvals/{approvalId}/decide` | `{decision: "approve" or "deny", editedArgs?}`. Decides once and resumes the run. 409 if already decided or expired, 400 if `editedArgs` don't fit the tool |
 
 #### Live events
@@ -196,6 +206,62 @@ Each SSE message has `id:` (a growing number), `event:` (the kind) and `data:` J
 Run `status` values: `queued`, `running`, `waiting_approval`, `needs_attention`, `succeeded`, `failed`, `cancelled`.
 
 Error messages match the web app's wording, e.g. `401 "That email and password don't match."`.
+
+## Models and keys
+
+Settings → Models & keys. An organization's owners and admins add an API key per **model provider**; the app then lists that provider's models live, members pick one per bot, and runs use the org's key.
+
+| Provider | Calls | Model list |
+|---|---|---|
+| Anthropic | native (`langchain-anthropic`) | `GET https://api.anthropic.com/v1/models` (`x-api-key`, `anthropic-version: 2023-06-01`); `display_name`, `max_input_tokens`; deprecated and retired models left out |
+| OpenAI | `ChatOpenAI` | `GET https://api.openai.com/v1/models`; only chat families (`gpt-*`, `o1`/`o3`/`o4…`, `chatgpt-*`), no embeddings, tts, whisper, dall-e, moderation, audio, realtime, image |
+| Google Gemini | `ChatOpenAI` on Google's OpenAI-compatible endpoint `https://generativelanguage.googleapis.com/v1beta/openai` | `GET …/v1beta/openai/models` (Bearer key). Ids come as `models/gemini-…`; the prefix is dropped. Only `gemini*`/`gemma*` chat models (no embedding, tts, image, live, imagen, veo, aqa). No context sizes on this endpoint |
+| OpenRouter | `ChatOpenAI`, base `https://openrouter.ai/api/v1` | `GET …/models`; keeps `name`, `context_length` and prices (dollars per token → per million) |
+| Groq | `ChatOpenAI`, base `https://api.groq.com/openai/v1` | `GET …/models`; keeps `context_window`; drops whisper, tts, orpheus, guard models and inactive ones. Has a free tier |
+| Custom | `ChatOpenAI` with the server's base URL (e.g. Ollama `http://localhost:11434/v1`, LM Studio, vLLM); the key is optional | `GET {base}/models`, everything it lists |
+
+The code: `src/model_providers/` holds one small adapter per provider behind one interface (`list_models(http, key, base_url)`, which is also the key test, and `chat_model(model, key, base_url)`); `services/provider_service.py` stores keys and finds the one a run uses; `services/model_catalog.py` lists models live with an in-memory cache; `core/secrets.py` encrypts; `core/url_guard.py` checks custom addresses.
+
+```jsonc
+// GET …/providers → a list of
+{"id": "openai", "kind": "openai", "name": "OpenAI", "hint": "GPT and o-series models. …",
+ "connected": true, "source": "org",          // "org" (saved here), "env" (server's key) or null
+ "keyHint": "abcd", "status": "ok",           // last 4 characters; "ok" | "invalid" from the last check
+ "lastVerifiedAt": "2026-11-13T10:00:00Z", "baseUrl": null}   // baseUrl: custom servers only
+
+// PUT …/providers/{provider} body: {"apiKey": "…", "baseUrl": "http://…/v1", "label": "Ollama"}  → the provider, as above
+// POST …/providers/{provider}/test → {"ok": false, "error": "That key didn't work: 401: …", "provider": {…}}
+
+// GET …/models
+{"models": [{"id": "openrouter:x-ai/grok-4.5", "provider": "openrouter", "name": "xAI: Grok 4.5",
+             "contextWindow": 256000, "pricing": {"inputPerMtok": 3.0, "outputPerMtok": 15.0}}],   // null when unknown
+ "errors": [{"provider": "groq", "message": "Groq: 503: Service unavailable"}]}
+```
+
+- **Model ids** are `provider:model`; a custom server's are `custom-<id>:<model>`. Only the first colon splits, so Ollama tags (`llama3.2:latest`) and OpenRouter slashes work.
+- **Which key a run uses:** the org's key for that provider, else the server's environment key, else the stand-in model. The key is decrypted inside the run, right before the model is built (`runtime/chat_model.py`, `ModelResolver`).
+- **Bots:** a bot's `modelId` must name a connected provider (org key or env key), or the bot isn't saved (400 `"OpenAI isn't connected. Add a key in Settings → Models & keys first."`). The model itself isn't checked against the live list, since lists change; a model that's gone fails its run with "The provider doesn't offer this model any more…".
+- **Run errors** are rewritten into something to act on: a refused key, a model that can't use tools ("This model can't use tools. Pick another model in the bot's settings."), a missing model, a rate limit. Anything else is shown scrubbed of key-like text.
+- **Speed:** the providers list is one query. Saving, testing and listing end the database transaction before calling a provider (calls time out after 8 s) and open a short new one to save the result. Model lists are cached per organization and provider for 10 minutes, keyed by a hash of the key and base URL, so a replaced key never serves the old list; saving a key fills the cache.
+
+### How keys are protected
+
+- **At rest:** Fernet (AES-128-CBC + HMAC-SHA256, `cryptography`), with a key derived from `SECRET_KEY` by HKDF-SHA256. The database holds the token and `key_hint` (last 4 characters, only for keys of 12+ characters).
+- **In answers:** no route returns a key; only `keyHint`. Provider error messages are scrubbed: the key itself and anything key-shaped (`sk-…`, `gsk_…`, `AIza…`, long tokens) become `[key]`, and they're cut to 200 characters.
+- **In logs:** keys are never logged; a `Connection` (a decrypted key in memory) prints without it. A test checks the key appears in no response and no log line.
+- **Who:** owners and admins add, replace, test and remove keys; every member can see providers (without keys) and models.
+- **Production** refuses to start without `SECRET_KEY`.
+
+### Custom servers and SSRF
+
+A custom base URL is an address the API itself will call, so it is checked (`core/url_guard.py`) when saved and before every call:
+
+- only `http` and `https`, and no user name or password in the URL;
+- in production, the host must resolve only to public addresses: private (10/8, 172.16/12, 192.168/16), loopback, link-local (169.254/16, where cloud metadata lives), shared (100.64/10) and reserved ones are refused, unless `ALLOW_PRIVATE_MODEL_URLS=true`;
+- outside production anything is allowed, so Ollama on `localhost` works;
+- redirects are never followed.
+
+DNS can change between the check and the call (rebinding); the check runs again before every call, which narrows but doesn't close that gap. Turn on `ALLOW_PRIVATE_MODEL_URLS` only on a server whose network you trust.
 
 ## Tools and approvals
 
@@ -251,7 +317,7 @@ The bot's final reply starts with one `{"type": "approval", "approvalId"}` part 
 
 ### Try it without an API key
 
-The stand-in model (no `ANTHROPIC_API_KEY` / `OPENAI_API_KEY`) calls a tool when your message contains `/tool <name> key=value …` (quote values with spaces, or pass one JSON object). With a real key the model gets the same tools through `bind_tools` and decides for itself.
+The stand-in model (no key for the bot's provider, from the org or the environment) calls a tool when your message contains `/tool <name> key=value …` (quote values with spaces, or pass one JSON object). With a real key the model gets the same tools through `bind_tools` and decides for itself.
 
 | Message to a bot at *Ask before acting* (the default) | What happens |
 |---|---|
@@ -290,6 +356,7 @@ Follows the OWASP Forgot Password cheat sheet:
 - **Tenancy:** every `/orgs/{id}/…` route goes through `OrgAccess`. Non-members get 404, so they can't learn an org exists.
 - **CORS:** only `WEB_ORIGINS`, with credentials.
 - **Secrets:** only in `.env` (git-ignored). `.env.example` lists every setting.
+- **Model keys:** encrypted at rest with `SECRET_KEY`, never returned or logged; custom model server addresses pass an SSRF guard in production. See [Models and keys](#models-and-keys).
 
 ## Not yet (in order)
 

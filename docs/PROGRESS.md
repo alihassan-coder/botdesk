@@ -11,6 +11,7 @@ See, search, correct and forget what a bot remembers, on the API and the web. De
 - **Per-bot switch:** bots have `memory_enabled` (on by default; migration `3e0c1566143b`). Off, the bot neither recalls nor saves memories. It's in Edit bot.
 - **Web:** Settings → Memory (pick a bot) and the bot's Memory tab share one list with search, inline correct, forget, and "Forget everything" behind a confirm.
 - **Follow-up:** memory still needs `OPENAI_API_KEY` on the server; using the org's own OpenAI key from Models & keys needs one mem0 client per key and is left for later.
+
 ## 2026-11-13: live run state on open, race fixes from a review
 
 An independent review of "a chat opened later sees what's going on" found six problems; all are fixed, with tests.

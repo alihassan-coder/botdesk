@@ -1,19 +1,34 @@
 """Usage and budgets on SQLite: prices, costs, month boundaries, budget checks and the usage routes.
 Runs that record usage and stop for budget are in test_usage_postgres.py."""
 
+import asyncio
 import uuid
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
+from typing import Any, cast
 
 import httpx
 import pytest
 from fastapi import FastAPI
+from langchain_core.messages import AIMessageChunk
+from langchain_core.messages.ai import UsageMetadata
+from langchain_core.runnables import RunnableBinding
 
 from src.model_providers import ModelInfo, Pricing
 from src.models import UsageRecord
-from src.runtime.chat_model import ModelResolver
-from src.services import pricing, usage_service
+from src.runtime.chat_model import (
+    MIN_OUTPUT_CAP,
+    PRICE_RETRY_SECONDS,
+    ModelPrice,
+    ModelResolver,
+    StandInModel,
+    cap_output,
+    output_cap,
+)
+from src.runtime.graph import Streamed, TokensUsed, usage_of
+from src.services import pricing, provider_service, usage_service
+from src.services.model_catalog import ModelCatalog
 from src.services.provider_service import Connection
 from tests.conftest import TEST_SETTINGS, FakeProviders, api_client, sign_up
 
@@ -277,3 +292,170 @@ async def test_removing_a_bot_keeps_its_spend_in_the_organization(acme: Org) -> 
     usage = (await acme.client.get(f"{acme.path}/usage")).json()
     assert usage["monthToDateUsd"] == pytest.approx(3.0)
     assert [bot["name"] for bot in usage["bots"]] == ["Inbox Manager"]
+
+
+# A failure fetching OpenRouter's prices is remembered, and one fetch serves every waiting run
+
+
+class SlowCatalog:
+    """Stands in for `ModelCatalog`: counts fetches, which fail or answer after a short wait."""
+
+    def __init__(self, *, fail: bool) -> None:
+        self.fail = fail
+        self.fetches = 0
+        self.list: list[ModelInfo] | None = None
+
+    def cached(self, _org_id: uuid.UUID, _provider_id: str) -> list[ModelInfo] | None:
+        return self.list
+
+    async def models(self, _org_id: uuid.UUID, _connection: Connection) -> list[ModelInfo]:
+        self.fetches += 1
+        await asyncio.sleep(0.01)
+        if self.fail:
+            raise httpx.ConnectTimeout("too slow")
+        self.list = [ModelInfo("meta/llama-4", "Llama 4", pricing=Pricing(0.2, 0.6))]
+        return self.list
+
+
+def _resolver(acme: Org, catalog: SlowCatalog, monkeypatch: pytest.MonkeyPatch, clock: list[float]) -> ModelResolver:
+    async def connection_for(*_args: object) -> Connection:
+        return Connection("openrouter", "openrouter", "OpenRouter", "sk-or-test")
+
+    monkeypatch.setattr(provider_service, "connection_for", connection_for)
+    sessionmaker, secrets = acme.app.state.sessionmaker, acme.app.state.secrets
+    return ModelResolver(TEST_SETTINGS, sessionmaker, secrets, cast(ModelCatalog, catalog), clock=lambda: clock[0])
+
+
+async def test_a_failed_price_lookup_is_not_retried_for_a_minute(acme: Org, monkeypatch: pytest.MonkeyPatch) -> None:
+    catalog, clock = SlowCatalog(fail=True), [1000.0]
+    resolver = _resolver(acme, catalog, monkeypatch, clock)
+
+    assert (await resolver.price(acme.id, "openrouter:meta/llama-4")).pricing is None
+    clock[0] += PRICE_RETRY_SECONDS - 1
+    assert (await resolver.price(acme.id, "openrouter:meta/llama-4")).pricing is None
+    assert catalog.fetches == 1  # the second run didn't wait for OpenRouter again
+
+    catalog.fail = False
+    clock[0] += 2  # the minute is up
+    assert (await resolver.price(acme.id, "openrouter:meta/llama-4")).pricing == Pricing(0.2, 0.6)
+    assert catalog.fetches == 2
+
+
+async def test_runs_starting_together_fetch_openrouters_prices_once(acme: Org, monkeypatch: pytest.MonkeyPatch) -> None:
+    catalog = SlowCatalog(fail=False)
+    resolver = _resolver(acme, catalog, monkeypatch, [0.0])
+
+    prices = await asyncio.gather(*(resolver.price(acme.id, "openrouter:meta/llama-4") for _ in range(5)))
+
+    assert catalog.fetches == 1
+    assert {price.pricing for price in prices} == {Pricing(0.2, 0.6)}
+
+
+async def test_saving_a_bot_with_an_openrouter_model_looks_up_its_price(acme: Org, providers: FakeProviders) -> None:
+    looked_up: list[str] = []
+
+    async def price_for(_org_id: uuid.UUID, model_id: str) -> ModelPrice:
+        looked_up.append(model_id)
+        return ModelPrice(model_id, "openrouter", None)
+
+    acme.app.state.runs.price_for = price_for
+    providers.answer("openrouter.ai", {"data": []})
+    saved = await acme.client.put(f"{acme.path}/providers/openrouter", json={"apiKey": "sk-or-test"})
+    assert saved.status_code == 200, saved.text
+    scout = f"{acme.path}/bots/{acme.bots['Scout']}"
+
+    response = await acme.client.patch(scout, json={"modelId": "openrouter:meta/llama-4"})
+
+    assert response.status_code == 200, response.text
+    assert looked_up == ["openrouter:meta/llama-4"]
+    await acme.client.patch(scout, json={"name": "Scout 2"})  # the model didn't change: no lookup
+    assert looked_up == ["openrouter:meta/llama-4"]
+
+
+# Each call's output is capped by what the budget has left
+
+
+def test_the_output_cap_is_what_the_rest_of_the_budget_pays_for() -> None:
+    price = Pricing(input_per_mtok=2.0, output_per_mtok=10.0)
+    # $0.03 left; 4,000 prompt characters ≈ 1,000 input tokens = $0.002, so $0.028 buys 2,800 tokens.
+    assert output_cap(0.03, price, 4_000) == 2_800
+    assert output_cap(0.0001, price, 4_000) == MIN_OUTPUT_CAP  # never less than a short answer
+    assert output_cap(500.0, price, 4_000) is None  # plenty left: the model's own limit applies
+    assert output_cap(None, price, 4_000) is None  # no budget
+    assert output_cap(0.03, None, 4_000) is None  # unknown price
+
+
+class HeldModel(StandInModel):
+    """A model with its own output limit, as ChatAnthropic has."""
+
+    max_tokens: int = 1024
+
+
+def test_the_cap_is_passed_as_max_tokens_unless_the_model_is_held_lower_already() -> None:
+    model = StandInModel()
+    capped = cap_output(model, model, 900)
+    assert isinstance(capped, RunnableBinding) and capped.kwargs == {"max_tokens": 900}
+    assert cap_output(model, model, None) is model
+
+    held = HeldModel()
+    assert cap_output(held, held, 2_000) is held  # 1,024 is lower already
+    assert cast(RunnableBinding[Any, Any], cap_output(held, held, 500)).kwargs == {"max_tokens": 500}
+
+
+# What a call records, finished or not
+
+
+def _streamed(*chunks: AIMessageChunk, complete: bool) -> Streamed:
+    streamed = Streamed()
+    for chunk in chunks:
+        streamed.add(chunk)
+    streamed.complete = complete
+    return streamed
+
+
+def test_a_finished_call_records_what_the_provider_reported() -> None:
+    usage = UsageMetadata(input_tokens=1200, output_tokens=300, total_tokens=1500)
+    done = _streamed(AIMessageChunk(content="Hi"), AIMessageChunk(content="", usage_metadata=usage), complete=True)
+    assert usage_of(done, 4_000) == TokensUsed(1200, 300)
+    assert usage_of(_streamed(AIMessageChunk(content="Hi"), complete=True), 4_000) is None  # nothing reported
+
+
+def test_a_call_cut_short_records_an_estimate_of_what_it_streamed() -> None:
+    cut = _streamed(AIMessageChunk(content="x" * 41), complete=False)
+    assert usage_of(cut, 4_000) == TokensUsed(1_000, 11, estimated=True)
+    assert usage_of(_streamed(complete=False), 4_000) is None  # failed before anything came back
+
+    # Input reported at the start, output not yet: the output counts at least what streamed.
+    started = UsageMetadata(input_tokens=900, output_tokens=1, total_tokens=901)
+    cut = _streamed(
+        AIMessageChunk(content="", usage_metadata=started), AIMessageChunk(content="x" * 40), complete=False
+    )
+    assert usage_of(cut, 4_000) == TokensUsed(900, 10, estimated=True)
+
+
+# Budgets are money: only owners and admins set them
+
+
+async def test_a_member_cant_change_a_bots_budget_but_an_admin_can(acme: Org) -> None:
+    invite = await acme.client.post(f"{acme.path}/invitations", json={"email": "sara@acme.dev", "role": "member"})
+    token = invite.json()["inviteUrl"].rsplit("/", 1)[1]
+    scout = f"{acme.path}/bots/{acme.bots['Scout']}"
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=acme.app), base_url="http://test") as sara:
+        await sign_up(sara, name="Sara", email="sara@acme.dev")
+        assert (await sara.post("/api/v1/invitations/accept", json={"token": token})).status_code == 200
+
+        refused = await sara.patch(scout, json={"monthlyBudgetUsd": 500})
+        assert refused.status_code == 403
+        assert refused.json()["detail"] == "Only owners and admins can change budgets."
+        # The same budget sent back (as the edit form does) is fine, and so is the rest of the bot.
+        kept = await sara.patch(scout, json={"monthlyBudgetUsd": 40, "role": "Researcher"})
+        assert kept.status_code == 200, kept.text
+        assert (await sara.post(f"{acme.path}/bots", json={"name": "Rich", "monthlyBudgetUsd": 900})).status_code == 403
+        assert (
+            await sara.post(f"{acme.path}/bots", json={"name": "No limit", "monthlyBudgetUsd": 0})
+        ).status_code == 403
+        # Up to the default is fine when hiring (templates come with smaller budgets).
+        assert (await sara.post(f"{acme.path}/bots", json={"name": "Plain"})).status_code == 201
+        assert (await sara.post(f"{acme.path}/bots", json={"name": "Small", "monthlyBudgetUsd": 20})).status_code == 201
+
+    assert (await acme.client.patch(scout, json={"monthlyBudgetUsd": 500})).json()["monthlyBudgetUsd"] == 500

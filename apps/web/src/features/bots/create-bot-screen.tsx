@@ -8,13 +8,16 @@ import { Field, FieldDescription, FieldError, FieldGroup, FieldLabel } from "@/c
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
-import { actions, isDemoMode, useTemplates, type NewBotInput } from "@/data/store";
+import { actions, isDemoMode, useCurrentUser, useTemplates, type NewBotInput } from "@/data/store";
 import { PageHeader } from "@/features/shell/page-header";
 import { BotAvatar } from "./bot-avatar";
 import { BotPreview } from "./bot-preview";
 import { ColorPicker } from "./color-picker";
 import { ModelPicker } from "./model-picker";
 import { SecurityLevelPicker } from "./security-level-picker";
+
+/** The most a member may give a new bot; owners and admins can set any budget (the API checks too). */
+const MEMBER_MAX_BUDGET_USD = 50;
 
 const BLANK: NewBotInput = {
   name: "", role: "", description: "", avatarColor: "indigo", instructions: "",
@@ -28,6 +31,7 @@ export function CreateBotScreen() {
   const [bot, setBot] = useState(BLANK);
   const [showErrors, setShowErrors] = useState(false);
   const [creating, startCreating] = useTransition();
+  const budgetLimit = useCurrentUser().role === "member" ? MEMBER_MAX_BUDGET_USD : undefined;
   const update = <K extends keyof NewBotInput>(key: K, value: NewBotInput[K]) => setBot((b) => ({ ...b, [key]: value }));
 
   const missing = { name: !bot.name.trim(), role: !bot.role.trim() };
@@ -112,8 +116,12 @@ export function CreateBotScreen() {
               <SecurityLevelPicker value={bot.securityLevel} onChange={(l) => update("securityLevel", l)} />
               <Field>
                 <FieldLabel htmlFor="bot-budget">Monthly budget (USD)</FieldLabel>
-                <Input id="bot-budget" type="number" min={0} step={5} value={bot.monthlyBudgetUsd} onChange={(e) => update("monthlyBudgetUsd", Math.max(0, Number(e.target.value)))} className="max-w-40" />
-                <FieldDescription>The bot pauses when it reaches this, and tells you.</FieldDescription>
+                <Input id="bot-budget" type="number" min={budgetLimit ? 1 : 0} max={budgetLimit} step={5} value={bot.monthlyBudgetUsd} className="max-w-40"
+                  onChange={(e) => update("monthlyBudgetUsd", Math.min(budgetLimit ?? Infinity, Math.max(budgetLimit ? 1 : 0, Number(e.target.value))))} />
+                <FieldDescription>
+                  The bot pauses when it reaches this, and tells you.
+                  {budgetLimit ? ` Up to $${budgetLimit}: only owners and admins can set more.` : null}
+                </FieldDescription>
               </Field>
             </Section>
           </div>

@@ -2,6 +2,13 @@
 
 A short history of BotDesk, newest first. For one checklist of what is done and what is next, see [ROADMAP.md](ROADMAP.md).
 
+## 2026-11-13: usage and budgets, fixes from a review
+
+- **Stopped and failed calls are billed:** usage is recorded in a `finally`, as its own task that Stop and shutdown can't cancel. Without the provider's numbers, tokens are estimated from characters and the row is marked `estimated` (new column).
+- **Budgets overshoot less:** each model call gets a `max_tokens` cap from what's left of the budget. Budgets are documented as a soft limit (about calls at once × one call's cost).
+- **OpenRouter prices:** one fetch per org at a time, a failure isn't retried for 60 s, and saving a bot with an OpenRouter model fetches the list ahead of its first run.
+- **Bot budgets are for owners and admins:** members get 403 changing one (they may hire a bot with up to $50); the Edit dialog shows it read-only for them.
+
 ## 2026-11-13: memory privacy and run-event fixes from a review
 
 An independent review of the memory screen and the run-event lock found seven problems; all are fixed, with tests. Details: [backend guide](backend/README.md#memory).

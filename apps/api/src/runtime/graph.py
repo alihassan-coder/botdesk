@@ -14,6 +14,7 @@ pause. Side effects happen only in `execute_tool`, after the decision is saved.
 """
 
 import logging
+import math
 import time
 import uuid
 from collections.abc import Awaitable, Callable, Coroutine
@@ -43,7 +44,14 @@ from src.core.database import utcnow
 from src.models.bot import Bot, SecurityLevel
 from src.plugins.registry import ToolRegistry
 from src.runtime import tool_pipeline
-from src.runtime.chat_model import ModelPrice, ModelUnavailable, describe_model_error
+from src.runtime.chat_model import (
+    ModelPrice,
+    ModelUnavailable,
+    StandInModel,
+    cap_output,
+    describe_model_error,
+    output_cap,
+)
 from src.runtime.limits import RunLimits, limit_reached
 from src.runtime.memory import MemoryScope, MemoryService
 from src.runtime.policy import LEVELS
@@ -121,6 +129,9 @@ class RunDeps:
     model_for: Callable[[str], Awaitable[BaseChatModel]]  # model id → chat model, with this org's keys
     price_for: Callable[[str], Awaitable[ModelPrice]]  # model id → its price, for budgets and usage
     in_background: Callable[[Coroutine[Any, Any, None]], None]
+    # Work that must finish even if the run is stopped or the API shuts down (usage records):
+    # it runs as its own tracked task, and the run waits for it without being able to cancel it.
+    unstoppable: Callable[[Coroutine[Any, Any, None]], Awaitable[None]]
     registry: ToolRegistry
     tool_timeout_seconds: float
     approval_expiry: timedelta
@@ -201,8 +212,9 @@ async def call_model(state: RunState, runtime: Runtime[RunDeps]) -> RunState:
     )
     turns = state.get("turns", [])
     messages = [*prompt, *messages_from_dict(turns)]
+    prompt_chars = sum(len(str(message.content)) for message in messages)
     price = await deps.price_for(state["model_id"])
-    await _check_budget(deps, price, messages)
+    remaining_usd = await _check_budget(deps, price, prompt_chars)
     # The reply's id is chosen at the first step, so every streamed piece and the saved message share it.
     message_id = state.get("reply_message_id") or str(uuid.uuid4())
     earlier = state.get("reply", "")
@@ -210,9 +222,19 @@ async def call_model(state: RunState, runtime: Runtime[RunDeps]) -> RunState:
         chat_model = await deps.model_for(state["model_id"])
     except ModelUnavailable as error:
         raise RunError(str(error)) from error
-    model = _with_tools(chat_model, deps.registry)
-    answer = await _stream_reply(deps, model, messages, message_id, separator=STEP_SEPARATOR if earlier else "")
-    await _record_usage(deps, price, answer)
+    # Each call may pass the budget by at most this many output tokens (budgets are soft, §4.2).
+    cap = output_cap(remaining_usd, price.pricing, prompt_chars)
+    model = cap_output(_with_tools(chat_model, deps.registry), chat_model, cap)
+    streamed = Streamed()
+    try:
+        answer = await _stream_reply(
+            deps, model, messages, message_id, streamed, separator=STEP_SEPARATOR if earlier else ""
+        )
+    finally:
+        # Recorded however the call ended: tokens a failed or stopped call used are billed too.
+        tokens = usage_of(streamed, prompt_chars)
+        if tokens and not isinstance(chat_model, StandInModel):  # the stand-in costs nothing
+            await deps.unstoppable(_record_usage(deps, price, tokens))
     text = answer.text
     calls = [{"id": call["id"], "name": call["name"], "args": call["args"]} for call in answer.tool_calls]
     return {
@@ -223,25 +245,67 @@ async def call_model(state: RunState, runtime: Runtime[RunDeps]) -> RunState:
     }
 
 
-async def _check_budget(deps: RunDeps, price: ModelPrice, messages: list[BaseMessage]) -> None:
+async def _check_budget(deps: RunDeps, price: ModelPrice, prompt_chars: int) -> float | None:
     """Before each model call (§4.2): stop if this month's spend plus a small estimate of this call
-    would pass the bot's or the organization's budget."""
-    estimate = pricing.estimate_usd(price.pricing, sum(len(str(message.content)) for message in messages))
+    would pass the bot's or the organization's budget. Returns what's left (None = no limit)."""
+    estimate = pricing.estimate_usd(price.pricing, prompt_chars)
     async with deps.sessionmaker() as db:
-        reason = await usage_service.budget_stop(
+        check = await usage_service.check_budget(
             db, org_id=deps.org_id, bot_id=deps.bot_id, estimate_usd=estimate, now=utcnow()
         )
-    if reason:
-        raise BudgetReached(reason)
+    if check.stop:
+        raise BudgetReached(check.stop)
+    return check.remaining_usd
 
 
-async def _record_usage(deps: RunDeps, price: ModelPrice, answer: AIMessage) -> None:
-    """After each model call: one short insert with its tokens and cost. Models that don't report
-    tokens (the stand-in, some custom servers) record nothing."""
-    usage = answer.usage_metadata
-    if not usage:
-        return
-    input_tokens, output_tokens = int(usage.get("input_tokens", 0)), int(usage.get("output_tokens", 0))
+@dataclass
+class Streamed:
+    """What one model call has sent back so far. The caller holds it, so a call that fails or is
+    stopped partway still shows what it used."""
+
+    answer: AIMessageChunk | None = None
+    output_chars: int = 0  # reply text and tool call arguments streamed so far
+    complete: bool = False  # the stream ended normally
+
+    def add(self, chunk: AIMessageChunk) -> None:
+        self.answer = chunk if self.answer is None else self.answer + chunk
+        args = sum(len(call.get("args") or "") for call in chunk.tool_call_chunks)
+        self.output_chars += len(chunk.text) + args
+
+
+@dataclass(frozen=True)
+class TokensUsed:
+    input_tokens: int
+    output_tokens: int
+    estimated: bool = False  # guessed from characters, not reported by the provider
+
+
+def usage_of(streamed: Streamed, prompt_chars: int) -> TokensUsed | None:
+    """The tokens to record for one call, or None to record nothing.
+
+    - A finished call records what the provider reported (a model that reports nothing records nothing).
+    - A call that failed or was stopped records what was reported so far. Providers often report
+      output tokens only at the end, so its output counts at least the streamed characters / 4.
+    - With nothing reported, a call that streamed something records an estimate: the prompt's
+      characters / 4 in, the streamed characters / 4 out. One that streamed nothing records nothing.
+    """
+    usage = streamed.answer.usage_metadata if streamed.answer is not None else None
+    reported = (int(usage.get("input_tokens", 0)), int(usage.get("output_tokens", 0))) if usage else None
+    if streamed.complete:
+        return TokensUsed(*reported) if reported else None
+    guessed_output = math.ceil(streamed.output_chars / pricing.CHARS_PER_TOKEN)
+    if reported:
+        input_tokens, output_tokens = reported
+        if guessed_output > output_tokens:
+            return TokensUsed(input_tokens, guessed_output, estimated=True)
+        return TokensUsed(input_tokens, output_tokens)
+    if not streamed.output_chars:
+        return None
+    return TokensUsed(prompt_chars // pricing.CHARS_PER_TOKEN, guessed_output, estimated=True)
+
+
+async def _record_usage(deps: RunDeps, price: ModelPrice, tokens: TokensUsed) -> None:
+    """After each model call: one short insert with its tokens and cost."""
     try:
         async with deps.sessionmaker() as db:
             usage_service.record(
@@ -251,9 +315,10 @@ async def _record_usage(deps: RunDeps, price: ModelPrice, answer: AIMessage) -> 
                 run_id=deps.run_id,
                 provider=price.provider,
                 model_id=price.model_id,
-                input_tokens=input_tokens,
-                output_tokens=output_tokens,
-                cost_usd=pricing.cost_usd(price.pricing, input_tokens, output_tokens),
+                input_tokens=tokens.input_tokens,
+                output_tokens=tokens.output_tokens,
+                cost_usd=pricing.cost_usd(price.pricing, tokens.input_tokens, tokens.output_tokens),
+                estimated=tokens.estimated,
             )
             await db.commit()
     except Exception:  # the reply matters more than its bookkeeping
@@ -272,20 +337,26 @@ def _with_tools(model: BaseChatModel, registry: ToolRegistry) -> Runnable[Any, A
 
 
 async def _stream_reply(
-    deps: RunDeps, model: Runnable[Any, Any], prompt: list[BaseMessage], message_id: str, *, separator: str
+    deps: RunDeps,
+    model: Runnable[Any, Any],
+    prompt: list[BaseMessage],
+    message_id: str,
+    streamed: Streamed,
+    *,
+    separator: str,
 ) -> AIMessage:
     """Send the reply's text to the chat in small batches as it arrives, and return the whole
-    answer (text and tool calls). `separator` goes before the first piece, when there is one."""
+    answer (text and tool calls). `separator` goes before the first piece, when there is one.
+    The answer builds up in `streamed`, which the caller reads even when this fails."""
 
     async def save_delta(text: str) -> None:
         await deps.reporter.send("message_delta", {"messageId": message_id, "botId": str(deps.bot_id), "text": text})
 
     batcher = TokenBatcher()
-    answer: AIMessageChunk | None = None
     async with BackgroundSender(save_delta) as sender:
         try:
             async for chunk in model.astream(prompt):
-                answer = chunk if answer is None else answer + chunk
+                streamed.add(chunk)
                 if token := str(chunk.text):
                     if separator:
                         token, separator = separator + token, ""
@@ -293,11 +364,12 @@ async def _stream_reply(
                         sender.send(batch)
         except Exception as error:
             raise RunError(describe_model_error(error)) from error
+        streamed.complete = True
         if rest := batcher.flush():
             sender.send(rest)
-    if answer is None:
+    if streamed.answer is None:
         return AIMessage(content="")
-    return cast(AIMessage, message_chunk_to_message(answer))
+    return cast(AIMessage, message_chunk_to_message(streamed.answer))
 
 
 def after_model(state: RunState) -> Literal["prepare_call", "save_reply"]:

@@ -1,5 +1,6 @@
 """Runs record usage after each model call and stop before one that would pass a budget (real Postgres)."""
 
+import asyncio
 import uuid
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime
@@ -9,13 +10,14 @@ from langchain_core.callbacks import AsyncCallbackManagerForLLMRun
 from langchain_core.messages import AIMessageChunk, BaseMessage
 from langchain_core.messages.ai import UsageMetadata
 from langchain_core.outputs import ChatGenerationChunk
+from pydantic import Field
 from sqlalchemy import select
 
 from src.model_providers import Pricing
 from src.models import UsageRecord
-from src.runtime.chat_model import ModelPrice
+from src.runtime.chat_model import ModelPrice, output_cap
 from tests.conftest import Postgres
-from tests.test_runs_postgres import ScriptedModel, _bot_chat, _events, _send, use_model
+from tests.test_runs_postgres import ScriptedModel, _bot_chat, _events, _send, _wait_for_status, use_model
 
 
 class CountingModel(ScriptedModel):
@@ -169,3 +171,99 @@ async def test_a_run_inside_its_budget_carries_on(pg: Postgres) -> None:
     await pg.runs.wait_until_idle()
 
     assert (await pg.client.get(f"{org}/runs/{run_id}")).json()["status"] == "succeeded"
+
+
+class BrokenModel(ScriptedModel):
+    """Streams its tokens, then the connection drops, before the provider says how many tokens it used."""
+
+    async def _astream(
+        self,
+        messages: list[BaseMessage],
+        stop: list[str] | None = None,
+        run_manager: AsyncCallbackManagerForLLMRun | None = None,
+        **kwargs: Any,
+    ) -> AsyncIterator[ChatGenerationChunk]:
+        async for chunk in super()._astream(messages, stop, run_manager, **kwargs):
+            yield chunk
+        raise RuntimeError("connection reset")
+
+
+async def test_a_model_call_that_fails_partway_records_an_estimate(pg: Postgres) -> None:
+    use_model(pg, BrokenModel(tokens=["x" * 40, "y" * 40]))
+    use_price(pg, Pricing(input_per_mtok=2.0, output_per_mtok=10.0))
+    org, thread = await _bot_chat(pg.client)
+
+    run_id = await _send(pg.client, thread, "Hello")
+    await pg.runs.wait_until_idle()
+
+    assert (await pg.client.get(f"{org}/runs/{run_id}")).json()["status"] == "failed"
+    [record] = await _records(pg)
+    assert str(record.run_id) == run_id
+    assert record.estimated and record.output_tokens == 20  # 80 characters streamed / 4
+    assert record.input_tokens > 0 and record.cost_usd is not None and record.cost_usd > 0
+
+
+async def test_stopping_a_run_mid_reply_records_what_streamed(pg: Postgres) -> None:
+    use_model(pg, ScriptedModel(tokens=["word "] * 200, delay=0.02))
+    use_price(pg, Pricing(input_per_mtok=2.0, output_per_mtok=10.0))
+    org, thread = await _bot_chat(pg.client)
+    run_id = await _send(pg.client, thread, "Write a novel")
+    await _wait_for_status(pg.client, org, run_id, "running")
+    for _ in range(100):  # wait until some of the reply has streamed
+        if any(e["event"] == "message_delta" for e in await _events(pg.client, thread)):
+            break
+        await asyncio.sleep(0.05)
+
+    assert (await pg.client.post(f"{org}/runs/{run_id}/cancel")).status_code == 200
+    await pg.runs.wait_until_idle()
+
+    assert (await pg.client.get(f"{org}/runs/{run_id}")).json()["status"] == "cancelled"
+    [record] = await _records(pg)
+    assert record.estimated and 0 < record.output_tokens < 250  # part of the 1,000 characters
+
+
+class RecordingModel(CountingModel):
+    """Remembers the extra arguments each call was made with."""
+
+    calls: list[dict[str, Any]] = Field(default_factory=list)
+
+    async def _astream(
+        self,
+        messages: list[BaseMessage],
+        stop: list[str] | None = None,
+        run_manager: AsyncCallbackManagerForLLMRun | None = None,
+        **kwargs: Any,
+    ) -> AsyncIterator[ChatGenerationChunk]:
+        self.calls.append(kwargs)
+        async for chunk in super()._astream(messages, stop, run_manager, **kwargs):
+            yield chunk
+
+
+async def test_a_call_near_the_budget_is_capped_to_what_is_left(pg: Postgres) -> None:
+    model = RecordingModel(usage=USAGE)
+    use_model(pg, model)
+    use_price(pg, Pricing(input_per_mtok=2.0, output_per_mtok=10.0))
+    org, thread = await _bot_chat(pg.client)
+    bot_id = await _bot_id(pg, org)
+    await pg.client.patch(f"{org}/bots/{bot_id}", json={"monthlyBudgetUsd": 40})
+    await _spend(pg, org, bot_id, 39.97)  # $0.03 left
+
+    await _send(pg.client, thread, "Hello")
+    await pg.runs.wait_until_idle()
+
+    prompt_chars = sum(len(str(message.content)) for message in model.prompts[0])
+    expected = output_cap(0.03, Pricing(2.0, 10.0), prompt_chars)
+    assert expected is not None and 2_000 < expected < 3_000
+    assert model.calls[0]["max_tokens"] == expected
+
+
+async def test_a_call_far_from_any_budget_is_not_capped(pg: Postgres) -> None:
+    model = RecordingModel(usage=USAGE)
+    use_model(pg, model)
+    use_price(pg, Pricing(input_per_mtok=2.0, output_per_mtok=10.0))
+    _org, thread = await _bot_chat(pg.client)  # $50 default budget, nothing spent
+
+    await _send(pg.client, thread, "Hello")
+    await pg.runs.wait_until_idle()
+
+    assert "max_tokens" not in model.calls[0]

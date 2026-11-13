@@ -11,9 +11,11 @@ streaming, tools, approvals) works offline and in tests. The stand-in is determi
 - anything else gets a canned reply.
 """
 
+import asyncio
 import json
 import logging
 import shlex
+import time
 import uuid
 from collections.abc import AsyncIterator, Callable, Iterator, Sequence
 from dataclasses import dataclass
@@ -32,7 +34,7 @@ from src.core.config import Settings
 from src.core.errors import AppError
 from src.core.secrets import SecretBox
 from src.core.url_guard import GuardedTransport, check_base_url
-from src.model_providers import BUILT_IN, Pricing, ProviderError, adapter_for, scrub
+from src.model_providers import BUILT_IN, ModelInfo, Pricing, ProviderError, adapter_for, scrub
 from src.services import pricing, provider_service
 from src.services.model_catalog import ModelCatalog
 
@@ -170,6 +172,41 @@ class ModelPrice:
     pricing: Pricing | None
 
 
+# Output caps from the budget (see `output_cap`): never fewer tokens than this, and no cap at all
+# when the budget leaves room for more (the model's own limit applies then).
+MIN_OUTPUT_CAP = 256
+MAX_OUTPUT_CAP = 16_000
+
+
+def output_cap(remaining_usd: float | None, price: Pricing | None, prompt_chars: int) -> int | None:
+    """How many output tokens the budget left over pays for, after this call's prompt: what one
+    call may add on top of the budget. None when there's no budget, no price, or plenty left."""
+    if remaining_usd is None or price is None or price.output_per_mtok <= 0:
+        return None
+    prompt_usd = pricing.cost_usd(price, prompt_chars // pricing.CHARS_PER_TOKEN, 0) or 0.0
+    tokens = int(round(max(remaining_usd - prompt_usd, 0.0) * 1_000_000 / price.output_per_mtok, 6))
+    if tokens >= MAX_OUTPUT_CAP:
+        return None
+    return max(tokens, MIN_OUTPUT_CAP)
+
+
+def cap_output(model: Runnable[Any, Any], chat_model: BaseChatModel, cap: int | None) -> Runnable[Any, Any]:
+    """`model` (the chat model, maybe with tools bound) limited to `cap` output tokens. Both
+    LangChain classes we use take `max_tokens`: ChatAnthropic sends it as is, and ChatOpenAI sends
+    it as `max_completion_tokens` (the newer name). A model already limited to fewer is left alone."""
+    if cap is None:
+        return model
+    own = getattr(chat_model, "max_tokens", None)
+    if isinstance(own, int) and own <= cap:
+        return model
+    return model.bind(max_tokens=cap)
+
+
+# After OpenRouter's model list can't be fetched, prices for that organization stay unknown this
+# long before trying again, so runs don't each wait for a list that isn't coming.
+PRICE_RETRY_SECONDS = 60.0
+
+
 class ModelResolver:
     """The chat model for one run: org key > environment key > stand-in."""
 
@@ -179,11 +216,15 @@ class ModelResolver:
         sessionmaker: async_sessionmaker[AsyncSession],
         secrets: SecretBox,
         catalog: ModelCatalog | None = None,
+        clock: Callable[[], float] = time.monotonic,
     ) -> None:
         self.settings = settings
         self.sessionmaker = sessionmaker
         self.secrets = secrets
         self.catalog = catalog
+        self.clock = clock
+        self._price_failed_at: dict[uuid.UUID, float] = {}  # org id → when its list last failed
+        self._price_locks: dict[uuid.UUID, asyncio.Lock] = {}  # one fetch per org at a time
 
     async def price(self, org_id: uuid.UUID, model_id: str) -> ModelPrice:
         """The model's price: OpenRouter's from its model list, the built-in providers' from
@@ -202,6 +243,21 @@ class ModelResolver:
             return None
         models = self.catalog.cached(org_id, "openrouter")
         if models is None:  # not listed since the API started: fetch the list once (it's cached)
+            models = await self._fetch_openrouter_prices(org_id, self.catalog)
+        if models is None:
+            return None
+        return next((info.pricing for info in models if info.model == model), None)
+
+    async def _fetch_openrouter_prices(self, org_id: uuid.UUID, catalog: ModelCatalog) -> list[ModelInfo] | None:
+        """OpenRouter's model list for this org, fetched by one caller at a time: the others wait
+        and read the cache. After a failure, None for `PRICE_RETRY_SECONDS` without asking again."""
+        lock = self._price_locks.setdefault(org_id, asyncio.Lock())
+        async with lock:
+            if (models := catalog.cached(org_id, "openrouter")) is not None:
+                return models  # fetched while this call waited
+            failed_at = self._price_failed_at.get(org_id)
+            if failed_at is not None and self.clock() - failed_at < PRICE_RETRY_SECONDS:
+                return None
             try:
                 async with self.sessionmaker() as db:
                     connection = await provider_service.connection_for(
@@ -209,11 +265,13 @@ class ModelResolver:
                     )
                 if connection is None:
                     return None
-                models = await self.catalog.models(org_id, connection)
+                models = await catalog.models(org_id, connection)
             except Exception as error:  # a price is never worth failing a run for
                 logger.warning("OpenRouter prices unavailable for org %s: %s", org_id, type(error).__name__)
+                self._price_failed_at[org_id] = self.clock()
                 return None
-        return next((info.pricing for info in models if info.model == model), None)
+            self._price_failed_at.pop(org_id, None)
+            return models
 
     async def __call__(self, org_id: uuid.UUID, model_id: str) -> BaseChatModel:
         """`model_id` is "provider:model" (e.g. "groq:llama-3.3-70b-versatile"). Empty = DEFAULT_MODEL_ID."""

@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime
 
-from sqlalchemy import Float, ForeignKey, Index, String
+from sqlalchemy import Float, ForeignKey, Index, String, sql
 from sqlalchemy.orm import Mapped, mapped_column
 
 from src.core.database import Base, IdMixin, utcnow
@@ -31,4 +31,7 @@ class UsageRecord(IdMixin, Base):
     input_tokens: Mapped[int] = mapped_column(default=0)
     output_tokens: Mapped[int] = mapped_column(default=0)
     cost_usd: Mapped[float | None] = mapped_column(Float)
+    # True when the provider never said how many tokens were used (the call failed or was stopped
+    # partway): the tokens are guessed from the characters sent and streamed back.
+    estimated: Mapped[bool] = mapped_column(default=False, server_default=sql.false())
     created_at: Mapped[datetime] = mapped_column(default=utcnow)

@@ -7,7 +7,7 @@ import { Field, FieldContent, FieldDescription, FieldError, FieldGroup, FieldLab
 import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
-import { actions, type NewBotInput } from "@/data/store";
+import { actions, useCurrentUser, type NewBotInput } from "@/data/store";
 import type { Bot } from "@/data/types";
 import { ColorPicker } from "./color-picker";
 import { ModelPicker } from "./model-picker";
@@ -41,6 +41,7 @@ function EditBotForm({ bot, onDone }: { bot: Bot; onDone: () => void }) {
     modelId: bot.modelId, securityLevel: bot.securityLevel, monthlyBudgetUsd: bot.monthlyBudgetUsd, memoryEnabled: bot.memoryEnabled,
   }));
   const [saving, startSaving] = useTransition();
+  const canChangeBudget = useCurrentUser().role !== "member";
   const update = <K extends keyof Editable>(key: K, value: Editable[K]) => setDraft((d) => ({ ...d, [key]: value }));
   const nameMissing = !draft.name.trim();
 
@@ -94,7 +95,9 @@ function EditBotForm({ bot, onDone }: { bot: Bot; onDone: () => void }) {
         <Field>
           <FieldLabel htmlFor="edit-bot-budget">Monthly budget (USD)</FieldLabel>
           <Input id="edit-bot-budget" type="number" min={0} step={5} className="max-w-40" value={draft.monthlyBudgetUsd}
+            readOnly={!canChangeBudget} aria-describedby={canChangeBudget ? undefined : "edit-bot-budget-hint"}
             onChange={(e) => update("monthlyBudgetUsd", Math.max(0, Number(e.target.value)))} />
+          {!canChangeBudget && <FieldDescription id="edit-bot-budget-hint">Only owners and admins can change budgets.</FieldDescription>}
         </Field>
         <Field orientation="horizontal">
           <FieldContent>

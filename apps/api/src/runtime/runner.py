@@ -113,6 +113,8 @@ class RunManager:
         # garbage-collected mid-run just vanishes.
         self._runs: dict[uuid.UUID, asyncio.Task[None]] = {}
         self._background: set[asyncio.Task[None]] = set()
+        # Writes that must land even when their run is stopped or the API shuts down (usage).
+        self._unstoppable: set[asyncio.Task[None]] = set()
         self._chat_locks: dict[uuid.UUID, asyncio.Lock] = {}
         self._chat_lock_users: Counter[uuid.UUID] = Counter()
 
@@ -150,11 +152,27 @@ class RunManager:
         self._background.add(task)
         task.add_done_callback(self._background.discard)
 
+    async def unstoppable(self, work: Coroutine[Any, Any, None]) -> None:
+        """Run `work` to the end even if the caller is cancelled (Stop, shutdown): it runs as its
+        own task, which `close` waits for instead of cancelling. Keep such work short."""
+        task = asyncio.create_task(self._log_failure(work))
+        self._unstoppable.add(task)
+        task.add_done_callback(self._unstoppable.discard)
+        await asyncio.shield(task)
+
+    async def warm_price(self, org_id: uuid.UUID, model_id: str) -> None:
+        """Look up a model's price now (a bot was saved with it), so its first run doesn't wait for
+        OpenRouter's model list. Never fails."""
+        try:
+            await self.price_for(org_id, model_id)
+        except Exception:
+            logger.warning("Couldn't look up the price of %s", model_id)
+
     async def wait_until_idle(self) -> None:
         """Wait for every run and background task to finish (tests use this). A run that pauses
         for approval counts as finished: its task has ended."""
-        while self._runs or self._background:
-            await asyncio.gather(*self._runs.values(), *self._background, return_exceptions=True)
+        while self._runs or self._background or self._unstoppable:
+            await asyncio.gather(*self._runs.values(), *self._background, *self._unstoppable, return_exceptions=True)
 
     async def recover_after_restart(self) -> None:
         """At startup: runs a crash or restart left half done fail with a clear message, or wait
@@ -174,6 +192,8 @@ class RunManager:
         for task in [*self._runs.values(), *self._background]:
             task.cancel()
         await asyncio.gather(*self._runs.values(), *self._background, return_exceptions=True)
+        # Stopped runs record what their model calls used: let those writes finish.
+        await asyncio.gather(*self._unstoppable, return_exceptions=True)
 
     # The life of one run
 
@@ -238,6 +258,7 @@ class RunManager:
             model_for=partial(self.model_for, ticket.org_id),
             price_for=partial(self.price_for, ticket.org_id),
             in_background=self.in_background,
+            unstoppable=self.unstoppable,
             registry=self.registry,
             tool_timeout_seconds=self.settings.tool_timeout_seconds,
             approval_expiry=timedelta(hours=self.settings.approval_expiry_hours),

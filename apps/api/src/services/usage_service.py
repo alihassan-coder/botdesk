@@ -44,8 +44,10 @@ def record(
     input_tokens: int,
     output_tokens: int,
     cost_usd: float | None,
+    estimated: bool = False,
 ) -> UsageRecord:
-    """Add one model call's usage. The caller commits (one short insert, outside any long transaction)."""
+    """Add one model call's usage. The caller commits (one short insert, outside any long transaction).
+    `estimated` marks tokens guessed from characters, for calls the provider never reported."""
     row = UsageRecord(
         org_id=org_id,
         bot_id=bot_id,
@@ -56,6 +58,7 @@ def record(
         input_tokens=input_tokens,
         output_tokens=output_tokens,
         cost_usd=cost_usd,
+        estimated=estimated,
     )
     db.add(row)
     return row
@@ -100,10 +103,16 @@ def _over(spent: float, estimate: float, budget: int) -> bool:
     return spent >= budget or spent + estimate > budget
 
 
-async def budget_stop(
+@dataclass(frozen=True)
+class BudgetCheck:
+    stop: str | None  # why the run must stop for money, or None to carry on
+    remaining_usd: float | None  # the least left under the bot's and the org's budgets; None = no limit
+
+
+async def check_budget(
     db: AsyncSession, *, org_id: uuid.UUID, bot_id: uuid.UUID, estimate_usd: float, now: datetime
-) -> str | None:
-    """Checked before each model call. Why the run must stop for money, or None to carry on."""
+) -> BudgetCheck:
+    """Checked before each model call: stop, or carry on with this much left to spend."""
     limits = (
         await db.execute(
             select(Bot.name, Bot.monthly_budget_usd, Organization.name, Organization.monthly_budget_usd)
@@ -112,16 +121,25 @@ async def budget_stop(
         )
     ).first()
     if limits is None:
-        return None
+        return BudgetCheck(None, None)
     bot_name, bot_budget, org_name, org_budget = limits
     if not bot_budget and not org_budget:
-        return None  # no limits: skip the sum
+        return BudgetCheck(None, None)  # no limits: skip the sum
     spent = await month_spend(db, org_id, bot_id, now)
     if bot_budget and _over(spent.bot_usd, estimate_usd, bot_budget):
-        return bot_budget_message(bot_name, bot_budget)
+        return BudgetCheck(bot_budget_message(bot_name, bot_budget), 0.0)
     if org_budget and _over(spent.org_usd, estimate_usd, org_budget):
-        return org_budget_message(org_name, org_budget)
-    return None
+        return BudgetCheck(org_budget_message(org_name, org_budget), 0.0)
+    left = [budget - used for budget, used in ((bot_budget, spent.bot_usd), (org_budget, spent.org_usd)) if budget]
+    return BudgetCheck(None, min(left))
+
+
+async def budget_stop(
+    db: AsyncSession, *, org_id: uuid.UUID, bot_id: uuid.UUID, estimate_usd: float, now: datetime
+) -> str | None:
+    """Why the run must stop for money, or None to carry on."""
+    check = await check_budget(db, org_id=org_id, bot_id=bot_id, estimate_usd=estimate_usd, now=now)
+    return check.stop
 
 
 # Reports

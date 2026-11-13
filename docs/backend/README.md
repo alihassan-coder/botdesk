@@ -168,9 +168,9 @@ A service raises `NotFound("…")`, `Conflict("…")` and so on. `main.py` turns
 | `DELETE /api/v1/orgs/{id}/invitations/{invId}` | Revoke an invite |
 | `POST /api/v1/invitations/accept` | Join from an invite link (signed in with the invited email) |
 | `GET /api/v1/orgs/{id}/bots` | The organization's bots |
-| `POST /api/v1/orgs/{id}/bots` | Hire a bot (any member); @handle comes from the name |
+| `POST /api/v1/orgs/{id}/bots` | Hire a bot (any member); @handle comes from the name. Members may set `monthlyBudgetUsd` from 1 up to the default ($50); more, or 0 (no limit), is 403 for them |
 | `GET /api/v1/orgs/{id}/bots/{botId}` | One bot |
-| `PATCH /api/v1/orgs/{id}/bots/{botId}` | Edit a bot (only the fields you send) |
+| `PATCH /api/v1/orgs/{id}/bots/{botId}` | Edit a bot (only the fields you send). Changing `monthlyBudgetUsd` takes an owner or admin (403 "Only owners and admins can change budgets."); sending the current value is fine |
 | `DELETE /api/v1/orgs/{id}/bots/{botId}` | Remove a bot (owners and admins); its chats go too |
 | `GET /api/v1/orgs/{id}/memory/status` | `{enabled, reason}`: whether bots can remember on this server, and if not, what to set |
 | `GET /api/v1/orgs/{id}/bots/{botId}/memories?q=&limit=` | What the bot remembers that you may see: its shared memories and your own DM ones. With `q`, closest first. See [Memory](#memory) |
@@ -409,19 +409,23 @@ Bots remember with mem0 on pgvector, in the same Postgres database ([agents-and-
 
 Settings → Usage & budgets, and each bot's "Budget this month" ([agents-and-plugins.md §4.2](../architecture/agents-and-plugins.md)).
 
-**Recording.** After every model call, `call_model` adds one `usage_records` row in its own short transaction: org, bot, run, provider id (`anthropic`, `openrouter`, `custom-<id>`…), model id (`provider:model`), input and output tokens, and `cost_usd`. Tokens come from the LangChain answer's `usage_metadata`, which streaming fills in too: Anthropic always reports it, and the OpenAI-compatible adapters ask for it with `stream_usage` (`stream_options.include_usage`) for the built-in providers. Custom servers aren't asked (some refuse the field), so they record tokens only if they send them anyway. A model that reports no tokens (the stand-in) records nothing. A failed insert is logged and the reply goes on. `bot_id` and `run_id` become null when those are deleted, so the organization's spend stays right. Indexes: `(org_id, created_at)` and `(bot_id, created_at)`.
+**Recording.** After every model call, `call_model` adds one `usage_records` row in its own short transaction: org, bot, run, provider id (`anthropic`, `openrouter`, `custom-<id>`…), model id (`provider:model`), input and output tokens, and `cost_usd`. Tokens come from the LangChain answer's `usage_metadata`, which streaming fills in too: Anthropic always reports it, and the OpenAI-compatible adapters ask for it with `stream_usage` (`stream_options.include_usage`) for the built-in providers. Custom servers aren't asked (some refuse the field), so they record tokens only if they send them anyway. A finished call that reports no tokens records nothing, and the stand-in never records. The row is written in a `finally`, so a call that **fails or is stopped partway** records too: what the provider reported so far, with the output counted as at least the streamed characters ÷ 4; with nothing reported, an estimate (prompt characters ÷ 4 in, streamed characters ÷ 4 out) if anything streamed. Rows with guessed tokens have `estimated = true` (stored only; the report doesn't show it yet). The insert runs as its own task through `RunManager.unstoppable`: Stop or a timeout cancelling the run can't cancel it, and shutdown (`close`) waits for it. A failed insert is logged and the reply goes on. `bot_id` and `run_id` become null when those are deleted, so the organization's spend stays right. Indexes: `(org_id, created_at)` and `(bot_id, created_at)`.
 
 **Cost** = `input_tokens × input price + output_tokens × output price`, prices in US dollars per million tokens (`services/pricing.py`):
 
 | Provider | Price from |
 |---|---|
-| OpenRouter | its model list (`ModelCatalog`, the same cache Models & keys uses; fetched once if the API hasn't listed it yet) |
+| OpenRouter | its model list (`ModelCatalog`, the same cache Models & keys uses). If the API hasn't listed it yet, `ModelResolver` fetches it once per org (an `asyncio.Lock`, so runs starting together share one fetch); after a failure the price is unknown for 60 s without trying again. Saving a bot with an OpenRouter model fetches the list after the response (`RunManager.warm_price`), so its first run doesn't wait |
 | Anthropic, OpenAI, Gemini, Groq | `PRICE_TABLE` in `services/pricing.py`, dated by `PRICES_CHECKED`. Standard rates, no caching or batch discounts. Exact model ids only, after dropping a date suffix (`-20250929`, `-2024-08-06`, `-latest`), so `gpt-4o` never prices `gpt-4o-mini`. Edit the table when prices change |
 | Custom servers | no price |
 
 A model with no price records its tokens and `cost_usd = null`. The web shows those tokens as "without a known price" instead of guessing, and budgets can't stop them.
 
 **Budgets.** Before each model call, `call_model` checks the bot's `monthlyBudgetUsd` and the organization's `monthlyBudgetUsd`. A month is the calendar month in UTC. The run stops when this month's spend is already at the budget, or when spend plus a small estimate of this call (prompt characters ÷ 4 as input tokens, plus 500 output tokens, at the model's price) would pass it. A bot budget of 0 and an org budget of null mean no limit; with neither set, nothing is summed. The spend is one SUM over the `(org_id, created_at)` index for both the bot and the org. A stopped run fails with a message such as `"Inbox Manager reached its $40 monthly budget. Raise it in the bot's settings."` (or `"<Org> reached its $200 monthly budget for all its bots. An owner or admin can raise it in Settings → Usage & budgets."`), and its `run_failed` event carries `code: "budget"`.
+
+**Each call is capped.** When the bot or org has a budget and the model has a price, `call_model` passes `max_tokens` = what's left of the tighter budget, minus the prompt's estimated cost, ÷ the output price per token (`chat_model.output_cap`). It is at least 256, and not passed at all when it would be 16,000 or more (the model's own limit applies then), nor when the model is already held lower (ChatAnthropic's own `max_tokens`). Both LangChain classes take `max_tokens`: ChatAnthropic sends it as is, ChatOpenAI as `max_completion_tokens`.
+
+**Budgets are a soft limit.** The check reads what was spent before the call, and calls already under way aren't counted until they finish. So a budget can be passed by roughly **(calls running at once for that bot or org) × (one call's cost)**, each call's output bounded by the cap above. Once passed, the next call stops.
 
 **Routes** (any member):
 

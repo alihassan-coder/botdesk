@@ -65,6 +65,47 @@ export type ApiBotInput = Pick<
   "name" | "role" | "description" | "instructions" | "avatarColor" | "modelId" | "securityLevel" | "monthlyBudgetUsd"
 >;
 
+/* ---------- Models & keys ---------- */
+
+export interface ApiModelProvider {
+  id: string;
+  kind: "anthropic" | "openai" | "gemini" | "openrouter" | "groq" | "custom";
+  name: string;
+  hint: string;
+  connected: boolean;
+  source: "org" | "env" | null;
+  keyHint: string | null;
+  status: "ok" | "invalid" | null;
+  lastVerifiedAt: string | null;
+  baseUrl: string | null;
+}
+
+/** Add or replace a key. Custom servers also send a base URL and a name; their key may be "". */
+export interface ApiProviderKeyInput {
+  apiKey: string;
+  baseUrl?: string;
+  label?: string;
+}
+
+export interface ApiProviderTest {
+  ok: boolean;
+  error: string | null;
+  provider: ApiModelProvider;
+}
+
+export interface ApiModel {
+  id: string;
+  provider: string;
+  name: string;
+  contextWindow: number | null;
+  pricing: { inputPerMtok: number; outputPerMtok: number } | null;
+}
+
+export interface ApiModelList {
+  models: ApiModel[];
+  errors: { provider: string; message: string }[];
+}
+
 /* ---------- Chats ---------- */
 
 export interface ApiThread {

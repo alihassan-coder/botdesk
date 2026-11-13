@@ -10,8 +10,12 @@ import {
   type ApiMe,
   type ApiMember,
   type ApiMessage,
+  type ApiModelList,
+  type ApiModelProvider,
   type ApiNewInvitation,
   type ApiOrg,
+  type ApiProviderKeyInput,
+  type ApiProviderTest,
   type ApiRole,
   type ApiRunEvent,
   type ApiSentMessage,
@@ -122,4 +126,19 @@ export const approvalApi = {
 export const runApi = {
   /** The Stop button: a queued or paused run stops at once, a running one within moments. */
   cancel: (orgId: string, runId: string) => apiFetch<unknown>(`/api/v1/orgs/${orgId}/runs/${runId}/cancel`, { method: "POST" }),
+};
+
+/** Settings → Models & keys. Everyone may read; owners and admins change keys. Keys go in, never come back out. */
+export const modelApi = {
+  providers: (orgId: string) => apiFetch<ApiModelProvider[]>(`/api/v1/orgs/${orgId}/providers`),
+  /** Checked live before it's saved; a key that doesn't work comes back as a 400 saying why. "custom" adds a new server. */
+  saveKey: (orgId: string, providerId: string, input: ApiProviderKeyInput) =>
+    apiFetch<ApiModelProvider>(`/api/v1/orgs/${orgId}/providers/${providerId}`, { method: "PUT", body: input }),
+  testKey: (orgId: string, providerId: string) =>
+    apiFetch<ApiProviderTest>(`/api/v1/orgs/${orgId}/providers/${providerId}/test`, { method: "POST" }),
+  removeKey: (orgId: string, providerId: string) =>
+    apiFetch<void>(`/api/v1/orgs/${orgId}/providers/${providerId}`, { method: "DELETE" }),
+  /** Every connected provider's models, live (cached ~10 minutes on the API unless `refresh`). */
+  models: (orgId: string, refresh = false) =>
+    apiFetch<ApiModelList>(`/api/v1/orgs/${orgId}/models${refresh ? "?refresh=true" : ""}`),
 };

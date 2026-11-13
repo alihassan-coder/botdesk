@@ -305,24 +305,43 @@ export interface Routine {
   enabled: boolean;
 }
 
+/** A model a bot can use, from a connected provider's live list. */
 export interface Model {
+  /** "provider:model", e.g. "anthropic:claude-opus-5-5" or "custom-<id>:llama3.2:latest". What a bot's modelId holds. */
   id: ID;
+  /** The provider's id: "anthropic", "openai", "gemini", "openrouter", "groq" or "custom-<id>". */
   provider: string;
   name: string;
-  capabilities: ("vision" | "tools" | "reasoning" | "computer-use")[];
-  priceInPerMTok: number;
-  priceOutPerMTok: number;
-  contextWindow: number;
+  contextWindow?: number;
+  /** US dollars per million tokens, when the provider says (OpenRouter does). */
+  pricing?: { inputPerMTok: number; outputPerMTok: number };
 }
 
-export interface ProviderCredential {
+export type ModelProviderKind = "anthropic" | "openai" | "gemini" | "openrouter" | "groq" | "custom";
+
+/** A model provider and whether the org has a key for it (Settings → Models & keys). The key itself never reaches the browser. */
+export interface ModelProvider {
+  /** The kind for built-in providers; "custom-<id>" for an OpenAI-compatible server. */
   id: ID;
-  provider: string;
-  label: string;
-  owner: "user" | "org";
+  kind: ModelProviderKind;
+  /** The provider's name, or what people called their custom server. */
+  name: string;
+  hint: string;
+  connected: boolean;
+  /** "org": a key saved in Settings. "env": a key set on the server, for everyone on it. */
+  source?: "org" | "env";
+  /** The key's last 4 characters. */
+  keyHint?: string;
+  /** How the key's last check went. */
+  status?: "ok" | "invalid";
+  lastVerifiedAt?: ISODate;
   baseUrl?: string;
-  lastUsedAt?: ISODate;
-  maskedKey: string;
+}
+
+/** A connected provider whose model list couldn't be fetched just now. */
+export interface ModelListProblem {
+  provider: string;
+  message: string;
 }
 
 export interface MemoryItem {

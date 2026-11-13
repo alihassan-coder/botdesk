@@ -6,25 +6,24 @@ import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Field, FieldDescription, FieldError, FieldGroup, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
-import { actions, isDemoMode, useModels, useTemplates, type NewBotInput } from "@/data/store";
+import { actions, isDemoMode, useTemplates, type NewBotInput } from "@/data/store";
 import { PageHeader } from "@/features/shell/page-header";
 import { BotAvatar } from "./bot-avatar";
 import { BotPreview } from "./bot-preview";
 import { ColorPicker } from "./color-picker";
+import { ModelPicker } from "./model-picker";
 import { SecurityLevelPicker } from "./security-level-picker";
 
 const BLANK: NewBotInput = {
   name: "", role: "", description: "", avatarColor: "indigo", instructions: "",
-  modelId: "m_claude", securityLevel: "ask-before-acting", computerMode: "own", monthlyBudgetUsd: 25,
+  modelId: "", securityLevel: "ask-before-acting", computerMode: "own", monthlyBudgetUsd: 25,
 };
 
 /** /bots/new — build a bot from scratch (or start from a template), with a live preview. */
 export function CreateBotScreen() {
   const router = useRouter();
-  const models = useModels();
   const templates = useTemplates();
   const [bot, setBot] = useState(BLANK);
   const [showErrors, setShowErrors] = useState(false);
@@ -95,12 +94,7 @@ export function CreateBotScreen() {
               </Field>
               <Field>
                 <FieldLabel htmlFor="bot-model">Model</FieldLabel>
-                <Select value={bot.modelId} onValueChange={(v) => update("modelId", v)}>
-                  <SelectTrigger id="bot-model" className="w-full"><SelectValue /></SelectTrigger>
-                  <SelectContent>
-                    {models.map((m) => <SelectItem key={m.id} value={m.id}>{m.name} <span className="text-muted-foreground">· {m.provider}</span></SelectItem>)}
-                  </SelectContent>
-                </Select>
+                <ModelPicker id="bot-model" value={bot.modelId} onChange={(v) => update("modelId", v)} />
               </Field>
               {/* Computers aren't on the API yet, so only the demo offers one. */}
               {isDemoMode() && <Field>

@@ -18,22 +18,22 @@ describe("API → web shapes", () => {
     createdAt: "2026-11-12T08:00:00Z",
   } as const;
 
-  it("a bot gets safe defaults for what the API doesn't have yet, and the web's model id", () => {
+  it("a bot gets safe defaults for what the API doesn't have yet, and keeps its model id", () => {
     expect(toBot(apiBot)).toEqual({
       id: "b1", name: "Scout", handle: "scout", role: "Research", description: "Finds things.", instructions: "Be brief.",
-      avatarColor: "sky", modelId: "m_gpt", securityLevel: "read-only", monthlyBudgetUsd: 30, status: "idle",
+      avatarColor: "sky", modelId: "openai:gpt-5.5", securityLevel: "read-only", monthlyBudgetUsd: 30, status: "idle",
       createdAt: "2026-11-12T08:00:00Z", computerMode: "none", connectionIds: [], spentThisMonthUsd: 0,
     });
   });
 
   it("an empty or unknown model id passes through, so the screen can say 'Default model'", () => {
     expect(toBot({ ...apiBot, modelId: "" }).modelId).toBe("");
-    expect(toBot({ ...apiBot, modelId: "acme:custom-1" }).modelId).toBe("acme:custom-1");
+    expect(toBot({ ...apiBot, modelId: "custom-1:llama3.2:latest" }).modelId).toBe("custom-1:llama3.2:latest");
   });
 
   it("sending a bot keeps only the fields the API takes, with whole-dollar budgets", () => {
-    expect(toApiBot({ name: "Scout", modelId: "m_claude", monthlyBudgetUsd: 12.6, computerMode: "own" })).toEqual({
-      name: "Scout", modelId: "anthropic:claude-sonnet-5.5", monthlyBudgetUsd: 13,
+    expect(toApiBot({ name: "Scout", modelId: "anthropic:claude-opus-5-5", monthlyBudgetUsd: 12.6, computerMode: "own" })).toEqual({
+      name: "Scout", modelId: "anthropic:claude-opus-5-5", monthlyBudgetUsd: 13,
     });
   });
 

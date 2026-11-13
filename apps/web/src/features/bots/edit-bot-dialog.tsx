@@ -5,11 +5,11 @@ import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { Field, FieldError, FieldGroup, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
-import { actions, useModels, type NewBotInput } from "@/data/store";
+import { actions, type NewBotInput } from "@/data/store";
 import type { Bot } from "@/data/types";
 import { ColorPicker } from "./color-picker";
+import { ModelPicker } from "./model-picker";
 import { SecurityLevelPicker } from "./security-level-picker";
 
 type Editable = Omit<NewBotInput, "computerMode">;
@@ -35,7 +35,6 @@ export function EditBotDialog({ bot }: { bot: Bot }) {
 }
 
 function EditBotForm({ bot, onDone }: { bot: Bot; onDone: () => void }) {
-  const models = useModels();
   const [draft, setDraft] = useState<Editable>(() => ({
     name: bot.name, role: bot.role, description: bot.description, avatarColor: bot.avatarColor, instructions: bot.instructions,
     modelId: bot.modelId, securityLevel: bot.securityLevel, monthlyBudgetUsd: bot.monthlyBudgetUsd,
@@ -85,12 +84,7 @@ function EditBotForm({ bot, onDone }: { bot: Bot; onDone: () => void }) {
         </Field>
         <Field>
           <FieldLabel htmlFor="edit-bot-model">Model</FieldLabel>
-          <Select value={draft.modelId} onValueChange={(v) => update("modelId", v)}>
-            <SelectTrigger id="edit-bot-model" className="w-full"><SelectValue placeholder="Organization default" /></SelectTrigger>
-            <SelectContent>
-              {models.map((m) => <SelectItem key={m.id} value={m.id}>{m.name} <span className="text-muted-foreground">· {m.provider}</span></SelectItem>)}
-            </SelectContent>
-          </Select>
+          <ModelPicker id="edit-bot-model" value={draft.modelId} onChange={(v) => update("modelId", v)} />
         </Field>
         <Field>
           <FieldLabel>Security level</FieldLabel>

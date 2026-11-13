@@ -25,7 +25,7 @@ const UNREACHABLE = "Can't reach botdesk right now. Check your connection and tr
 const SERVER_TROUBLE = "Something went wrong on our side. Try again in a moment.";
 
 interface RequestOptions {
-  method?: "GET" | "POST" | "PATCH" | "DELETE";
+  method?: "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
   body?: unknown;
 }
 

@@ -11,8 +11,8 @@ import type {
   MemoryItem,
   Message,
   Model,
+  ModelProvider,
   Org,
-  ProviderCredential,
   Routine,
   Template,
   Thread,
@@ -50,12 +50,14 @@ export const mockPasswords: Record<string, string> = {
 };
 
 export const models: Model[] = [
-  { id: "m_grok", provider: "xAI", name: "Grok 4.5", capabilities: ["vision", "tools", "reasoning"], priceInPerMTok: 3, priceOutPerMTok: 15, contextWindow: 256_000 },
-  { id: "m_claude", provider: "Anthropic", name: "Claude Sonnet 5.5", capabilities: ["vision", "tools", "reasoning", "computer-use"], priceInPerMTok: 3, priceOutPerMTok: 15, contextWindow: 1_000_000 },
-  { id: "m_gpt", provider: "OpenAI", name: "GPT-5.5", capabilities: ["vision", "tools", "reasoning", "computer-use"], priceInPerMTok: 2.5, priceOutPerMTok: 10, contextWindow: 400_000 },
-  { id: "m_gemini", provider: "Google", name: "Gemini 3 Pro", capabilities: ["vision", "tools", "reasoning"], priceInPerMTok: 2, priceOutPerMTok: 12, contextWindow: 1_000_000 },
-  { id: "m_deepseek", provider: "DeepSeek", name: "DeepSeek V4", capabilities: ["tools", "reasoning"], priceInPerMTok: 0.3, priceOutPerMTok: 1.2, contextWindow: 128_000 },
-  { id: "m_llama", provider: "Ollama (local)", name: "Llama 4 Scout", capabilities: ["tools"], priceInPerMTok: 0, priceOutPerMTok: 0, contextWindow: 128_000 },
+  { id: "anthropic:claude-sonnet-5-5", provider: "anthropic", name: "Claude Sonnet 5.5", contextWindow: 1_000_000 },
+  { id: "anthropic:claude-opus-5-5", provider: "anthropic", name: "Claude Opus 5.5", contextWindow: 1_000_000 },
+  { id: "openai:gpt-5.5", provider: "openai", name: "gpt-5.5" },
+  { id: "openai:o4-mini", provider: "openai", name: "o4-mini" },
+  { id: "gemini:gemini-3-pro", provider: "gemini", name: "gemini-3-pro" },
+  { id: "openrouter:x-ai/grok-4.5", provider: "openrouter", name: "xAI: Grok 4.5", contextWindow: 256_000, pricing: { inputPerMTok: 3, outputPerMTok: 15 } },
+  { id: "openrouter:deepseek/deepseek-v4", provider: "openrouter", name: "DeepSeek: V4", contextWindow: 128_000, pricing: { inputPerMTok: 0.3, outputPerMTok: 1.2 } },
+  { id: "custom-gpu-box:llama-4-scout", provider: "custom-gpu-box", name: "llama-4-scout" },
 ];
 
 export const bots: Bot[] = [
@@ -63,7 +65,7 @@ export const bots: Bot[] = [
     id: "b_chief", name: "Chief", handle: "chief", role: "Chief of staff", isChief: true,
     description: "Runs the team. Splits work, assigns it to the right bot, and only pulls you in for judgment calls.",
     avatarColor: "indigo", status: "working", statusText: "Coordinating 3 handoffs",
-    modelId: "m_claude", securityLevel: "ask-before-acting", computerMode: "own", connectionIds: ["c_gmail"],
+    modelId: "anthropic:claude-sonnet-5-5", securityLevel: "ask-before-acting", computerMode: "own", connectionIds: ["c_gmail"],
     instructions: "You coordinate the other bots. Keep Ali's day clear. Batch questions.", createdAt: ago(60 * 24 * 20),
     monthlyBudgetUsd: 80, spentThisMonthUsd: 31.4,
   },
@@ -71,7 +73,7 @@ export const bots: Bot[] = [
     id: "b_inbox", name: "Inbox Manager", handle: "inbox", role: "Email triage",
     description: "Keeps your inbox at zero. Drafts replies in your voice and parks anything that needs you.",
     avatarColor: "violet", status: "waiting-approval", statusText: "2 replies waiting for you",
-    modelId: "m_gpt", securityLevel: "ask-before-acting", computerMode: "none", connectionIds: ["c_gmail"],
+    modelId: "openai:gpt-5.5", securityLevel: "ask-before-acting", computerMode: "none", connectionIds: ["c_gmail"],
     instructions: "Triage the inbox every morning. Never send without approval.", createdAt: ago(60 * 24 * 18),
     monthlyBudgetUsd: 40, spentThisMonthUsd: 18.9,
   },
@@ -79,7 +81,7 @@ export const bots: Bot[] = [
     id: "b_sales", name: "Sales Outbound", handle: "sales", role: "Outbound sales",
     description: "Finds leads, writes personal openers, and queues follow-ups.",
     avatarColor: "sky", status: "idle", statusText: "Next run tonight at 11 PM",
-    modelId: "m_grok", securityLevel: "ask-before-acting", computerMode: "own", connectionIds: ["c_gmail"],
+    modelId: "openrouter:x-ai/grok-4.5", securityLevel: "ask-before-acting", computerMode: "own", connectionIds: ["c_gmail"],
     instructions: "Target seed-stage dev-tool founders.", createdAt: ago(60 * 24 * 12),
     monthlyBudgetUsd: 60, spentThisMonthUsd: 44.2,
   },
@@ -87,7 +89,7 @@ export const bots: Bot[] = [
     id: "b_talent", name: "Talent Scout", handle: "talent", role: "Recruiting",
     description: "Sources candidates, drafts intros, and books screens.",
     avatarColor: "emerald", status: "sleeping", statusText: "Sleeping until Monday 9 AM",
-    modelId: "m_gemini", securityLevel: "read-only", computerMode: "own", connectionIds: [],
+    modelId: "gemini:gemini-3-pro", securityLevel: "read-only", computerMode: "own", connectionIds: [],
     instructions: "Hiring: senior TypeScript engineers, remote.", createdAt: ago(60 * 24 * 9),
     monthlyBudgetUsd: 30, spentThisMonthUsd: 6.1,
   },
@@ -95,7 +97,7 @@ export const bots: Bot[] = [
     id: "b_expense", name: "Expense Manager", handle: "expenses", role: "Finance ops",
     description: "Pulls receipts from email, files expenses, and flags anything odd.",
     avatarColor: "amber", status: "idle", statusText: "Filed 9 receipts today",
-    modelId: "m_deepseek", securityLevel: "ask-before-acting", computerMode: "none", connectionIds: ["c_gmail"],
+    modelId: "openrouter:deepseek/deepseek-v4", securityLevel: "ask-before-acting", computerMode: "none", connectionIds: ["c_gmail"],
     instructions: "Anything above $500 needs approval.", createdAt: ago(60 * 24 * 6),
     monthlyBudgetUsd: 15, spentThisMonthUsd: 2.3,
   },
@@ -103,7 +105,7 @@ export const bots: Bot[] = [
     id: "b_bugs", name: "Bug Fixer", handle: "bugs", role: "Engineering",
     description: "Reproduces bugs on its computer, files tickets, and hands off fixes.",
     avatarColor: "rose", status: "error", statusText: "Lost access to staging",
-    modelId: "m_claude", securityLevel: "autonomous", computerMode: "own", connectionIds: [],
+    modelId: "anthropic:claude-sonnet-5-5", securityLevel: "autonomous", computerMode: "own", connectionIds: [],
     instructions: "Repro first, then file. Never push to main.", createdAt: ago(60 * 24 * 3),
     monthlyBudgetUsd: 50, spentThisMonthUsd: 12.7,
   },
@@ -293,11 +295,14 @@ export const routines: Routine[] = [
   { id: "r_3", botId: "b_expense", name: "Weekly expenses", description: "Find receipts and file the report.", schedule: "Fridays at 5 PM", source: "recording", steps: ["Search Gmail for receipts", "Extract amounts", "File the report", "Flag anything over $500"], lastRunAt: ago(400), lastOutcome: "success", enabled: true },
 ];
 
-export const credentials: ProviderCredential[] = [
-  { id: "k_1", provider: "Anthropic", label: "Org key", owner: "org", maskedKey: "sk-ant-…4f2a", lastUsedAt: ago(4) },
-  { id: "k_2", provider: "OpenAI", label: "Ali's key", owner: "user", maskedKey: "sk-…9c1d", lastUsedAt: ago(20) },
-  { id: "k_3", provider: "xAI", label: "Org key", owner: "org", maskedKey: "xai-…77b0", lastUsedAt: ago(120) },
-  { id: "k_4", provider: "Custom (OpenAI-compatible)", label: "Local vLLM", owner: "org", baseUrl: "http://gpu-box:8000/v1", maskedKey: "none" },
+/** The demo org's model providers: four with keys, Groq not yet, and a GPU box in the office. */
+export const modelProviders: ModelProvider[] = [
+  { id: "anthropic", kind: "anthropic", name: "Anthropic", hint: "Claude models. Get a key at console.anthropic.com.", connected: true, source: "org", keyHint: "4f2a", status: "ok", lastVerifiedAt: ago(4) },
+  { id: "openai", kind: "openai", name: "OpenAI", hint: "GPT and o-series models. Get a key at platform.openai.com.", connected: true, source: "org", keyHint: "9c1d", status: "ok", lastVerifiedAt: ago(20) },
+  { id: "gemini", kind: "gemini", name: "Google Gemini", hint: "Gemini models. Get a key at aistudio.google.com.", connected: true, source: "env" },
+  { id: "openrouter", kind: "openrouter", name: "OpenRouter", hint: "Hundreds of models behind one key, with prices.", connected: true, source: "org", keyHint: "77b0", status: "ok", lastVerifiedAt: ago(120) },
+  { id: "groq", kind: "groq", name: "Groq", hint: "Fast open models, and it has a free tier. Get a key at console.groq.com.", connected: false },
+  { id: "custom-gpu-box", kind: "custom", name: "GPU box (vLLM)", hint: "Any OpenAI-compatible server: Ollama, LM Studio, vLLM.", connected: true, source: "org", status: "ok", baseUrl: "http://gpu-box:8000/v1", lastVerifiedAt: ago(60) },
 ];
 
 export const memories: MemoryItem[] = [

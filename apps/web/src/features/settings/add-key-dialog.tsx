@@ -1,77 +1,103 @@
 import { useState } from "react";
 import { toast } from "sonner";
-import { Plus } from "lucide-react";
+import { Eye, EyeOff } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
-import { Field, FieldDescription, FieldGroup, FieldLabel } from "@/components/ui/field";
+import { Field, FieldDescription, FieldError, FieldGroup, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
+import { InputGroup, InputGroupAddon, InputGroupButton, InputGroupInput } from "@/components/ui/input-group";
 import { actions } from "@/data/store";
+import type { ModelProvider } from "@/data/types";
 
-const PROVIDERS = ["Anthropic", "OpenAI", "Google", "xAI", "Mistral", "DeepSeek", "OpenRouter", "Custom (OpenAI-compatible)"];
+/** Which provider the dialog is for; `undefined` adds a new custom (OpenAI-compatible) server. */
+interface AddKeyDialogProps {
+  provider?: ModelProvider;
+  trigger: React.ReactNode;
+}
 
-/** "Add key": a model provider's API key, for you or for the whole org. The key is shown masked afterwards. */
-export function AddKeyDialog() {
+/**
+ * Add or replace a provider's API key. The API tries the key against the provider before it's
+ * saved, so this shows "Checking…" and then either closes or says why the key didn't work.
+ * Once saved, a key is never shown again: only its last 4 characters.
+ */
+export function AddKeyDialog({ provider, trigger }: AddKeyDialogProps) {
   const [open, setOpen] = useState(false);
-  const [provider, setProvider] = useState(PROVIDERS[0]);
-  const [key, setKey] = useState("");
-  const [owner, setOwner] = useState<"user" | "org">("user");
-  const [baseUrl, setBaseUrl] = useState("");
-  const isCustom = provider.startsWith("Custom");
-  const valid = key.trim().length >= 8 && (!isCustom || /^https?:\/\//.test(baseUrl));
-
-  function save() {
-    actions.addCredential({ provider, key: key.trim(), owner, label: owner === "org" ? "Org key" : "My key", baseUrl: isCustom ? baseUrl : undefined });
-    toast.success(`${provider} key added`);
-    setKey("");
-    setOpen(false);
-  }
+  const isCustom = !provider || provider.kind === "custom";
+  const title = !provider ? "Add a custom server" : provider.connected && provider.source === "org" ? `Replace the ${provider.name} key` : `Add a ${provider.name} key`;
 
   return (
     <Dialog open={open} onOpenChange={setOpen}>
-      <DialogTrigger asChild>
-        <Button size="sm"><Plus /> Add key</Button>
-      </DialogTrigger>
+      <DialogTrigger asChild>{trigger}</DialogTrigger>
       <DialogContent>
         <DialogHeader>
-          <DialogTitle>Add an API key</DialogTitle>
-          <DialogDescription>Keys are encrypted and never shown again in full.</DialogDescription>
+          <DialogTitle>{title}</DialogTitle>
+          <DialogDescription>
+            {isCustom ? "Any server that speaks OpenAI's API: Ollama, LM Studio, vLLM." : provider.hint}{" "}
+            Keys are encrypted and never shown again in full.
+          </DialogDescription>
         </DialogHeader>
-        <form onSubmit={(e) => { e.preventDefault(); if (valid) save(); }}>
-          <FieldGroup>
-            <Field>
-              <FieldLabel htmlFor="key-provider">Provider</FieldLabel>
-              <Select value={provider} onValueChange={setProvider}>
-                <SelectTrigger id="key-provider" className="w-full"><SelectValue /></SelectTrigger>
-                <SelectContent>{PROVIDERS.map((p) => <SelectItem key={p} value={p}>{p}</SelectItem>)}</SelectContent>
-              </Select>
-            </Field>
-            {isCustom && (
-              <Field>
-                <FieldLabel htmlFor="key-url">Base URL</FieldLabel>
-                <Input id="key-url" value={baseUrl} onChange={(e) => setBaseUrl(e.target.value)} placeholder="http://gpu-box:8000/v1" />
-              </Field>
-            )}
-            <Field>
-              <FieldLabel htmlFor="key-value">API key</FieldLabel>
-              <Input id="key-value" type="password" autoComplete="off" value={key} onChange={(e) => setKey(e.target.value)} placeholder="sk-…" />
-            </Field>
-            <Field>
-              <FieldLabel>Who uses it</FieldLabel>
-              <ToggleGroup type="single" variant="outline" value={owner} onValueChange={(v) => v && setOwner(v as "user" | "org")} className="w-full">
-                <ToggleGroupItem value="user" className="flex-1">Just me</ToggleGroupItem>
-                <ToggleGroupItem value="org" className="flex-1">Whole org</ToggleGroupItem>
-              </ToggleGroup>
-              <FieldDescription>Org keys are paid by the org and usable by everyone&apos;s bots.</FieldDescription>
-            </Field>
-          </FieldGroup>
-          <DialogFooter className="mt-6">
-            <Button type="button" variant="ghost" onClick={() => setOpen(false)}>Cancel</Button>
-            <Button type="submit" disabled={!valid}>Add key</Button>
-          </DialogFooter>
-        </form>
+        {/* Mounted only while open, so it starts empty each time. */}
+        {open && <KeyForm provider={provider} isCustom={isCustom} onDone={() => setOpen(false)} />}
       </DialogContent>
     </Dialog>
+  );
+}
+
+function KeyForm({ provider, isCustom, onDone }: { provider?: ModelProvider; isCustom: boolean; onDone: () => void }) {
+  const [label, setLabel] = useState(provider?.kind === "custom" ? provider.name : "");
+  const [baseUrl, setBaseUrl] = useState(provider?.baseUrl ?? "");
+  const [apiKey, setApiKey] = useState("");
+  const [showKey, setShowKey] = useState(false);
+  const [checking, setChecking] = useState(false);
+  const [error, setError] = useState("");
+  const valid = isCustom ? label.trim() !== "" && /^https?:\/\/\S+$/.test(baseUrl.trim()) : apiKey.trim() !== "";
+
+  async function save() {
+    setChecking(true);
+    setError("");
+    const input = isCustom ? { apiKey: apiKey.trim(), baseUrl: baseUrl.trim(), label: label.trim() } : { apiKey: apiKey.trim() };
+    const result = await actions.saveProviderKey(provider?.id ?? "custom", input);
+    setChecking(false);
+    if (!result.ok) return setError(result.error);
+    toast.success(`${isCustom ? label.trim() : provider?.name} is connected`);
+    onDone();
+  }
+
+  return (
+    <form noValidate onSubmit={(e) => { e.preventDefault(); if (valid && !checking) void save(); }}>
+      <FieldGroup>
+        {isCustom && (
+          <>
+            <Field>
+              <FieldLabel htmlFor="key-label">Name</FieldLabel>
+              <Input id="key-label" value={label} onChange={(e) => setLabel(e.target.value)} placeholder="Ollama on my laptop" />
+            </Field>
+            <Field>
+              <FieldLabel htmlFor="key-url">Base URL</FieldLabel>
+              <Input id="key-url" inputMode="url" value={baseUrl} onChange={(e) => setBaseUrl(e.target.value)} placeholder="http://localhost:11434/v1" />
+              <FieldDescription>The address that ends in /v1. Hosted BotDesk can&apos;t reach private networks.</FieldDescription>
+            </Field>
+          </>
+        )}
+        <Field data-invalid={error !== ""}>
+          <FieldLabel htmlFor="key-value">{isCustom ? "API key (optional)" : "API key"}</FieldLabel>
+          <InputGroup>
+            <InputGroupInput id="key-value" type={showKey ? "text" : "password"} autoComplete="off" spellCheck={false}
+              value={apiKey} onChange={(e) => setApiKey(e.target.value)} placeholder={isCustom ? "Leave empty if it needs none" : "Paste your key"}
+              aria-invalid={error !== ""} />
+            <InputGroupAddon align="inline-end">
+              <InputGroupButton size="icon-xs" onClick={() => setShowKey((s) => !s)} aria-label={showKey ? "Hide key" : "Show key"}>
+                {showKey ? <EyeOff /> : <Eye />}
+              </InputGroupButton>
+            </InputGroupAddon>
+          </InputGroup>
+          {error && <FieldError>{error}</FieldError>}
+        </Field>
+      </FieldGroup>
+      <DialogFooter className="mt-6">
+        <Button type="button" variant="ghost" onClick={onDone}>Cancel</Button>
+        <Button type="submit" disabled={!valid || checking}>{checking ? "Checking…" : "Check and save"}</Button>
+      </DialogFooter>
+    </form>
   );
 }

@@ -101,11 +101,12 @@ test.describe("Settings", () => {
 
   test("an added API key is only ever shown masked", async ({ page }) => {
     await page.goto("/settings/models");
-    await page.getByRole("button", { name: "Add key" }).click();
-    await page.getByLabel("API key", { exact: true }).fill("sk-test-1234567890abcd");
-    await page.getByRole("dialog").getByRole("button", { name: "Add key" }).click();
-    await expect(page.getByText("sk-t…abcd")).toBeVisible();
-    await expect(page.getByText("sk-test-1234567890abcd")).toHaveCount(0);
+    const groq = page.getByRole("listitem").filter({ hasText: "Fast open models" });
+    await groq.getByRole("button", { name: "Add key" }).click();
+    await page.getByLabel("API key", { exact: true }).fill("gsk_test_1234567890abcd");
+    await page.getByRole("dialog").getByRole("button", { name: "Check and save" }).click();
+    await expect(groq.getByText(/••••abcd/)).toBeVisible();
+    await expect(page.getByText("gsk_test_1234567890abcd")).toHaveCount(0);
   });
 
   test("inviting a member", async ({ page }) => {

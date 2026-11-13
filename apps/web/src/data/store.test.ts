@@ -225,16 +225,6 @@ describe("smaller actions", () => {
     expect(state().users.find((u) => u.id === "u_omar")?.role).toBe("admin");
   });
 
-  it("addCredential stores only a masked key; removeCredential deletes it", () => {
-    actions.addCredential({ provider: "Mistral", label: "My key", owner: "user", key: "mst-1234567890abcd" });
-    const key = state().credentials.at(-1)!;
-    expect(key.maskedKey).toBe("mst-…abcd");
-    expect(JSON.stringify(key)).not.toContain("1234567890");
-
-    actions.removeCredential(key.id);
-    expect(state().credentials.some((k) => k.id === key.id)).toBe(false);
-  });
-
   it("connectApp and disconnectApp manage connections", () => {
     actions.connectApp("mcp", "https://mcp.acme.dev/sse");
     const connection = state().connections.at(-1)!;

@@ -8,8 +8,9 @@
  *   organizations, their members, invitations and bots, and your chats: the chat list,
  *   each bot's DM, message history, sending, and bot replies streamed live over the
  *   chat's event stream (with a Stop button), and approvals: cards in the chat, live from
- *   the stream, and the Approvals page from the list. Routines, memories, apps, models and
- *   usage aren't on the API yet, so they start empty or stay mock.
+ *   the stream, and the Approvals page from the list; and Models & keys: providers, their
+ *   keys and live model lists. Routines, memories, apps and usage aren't on the API yet,
+ *   so they start empty or stay mock.
  * - Not set (tests, e2e, demos): everything is the in-memory mock, with fake bot replies.
  * Guest mode ("Explore the demo") uses the mock in either case, so people can look
  * around without an account; it never calls the API.
@@ -19,13 +20,15 @@ import { useCallback, useRef, useSyncExternalStore } from "react";
 import { makeHandle } from "@/lib/handle";
 import { parseMentions } from "@/lib/mentions";
 import { previewFromArgs } from "@/lib/args-form";
-import { approvalApi, authApi, botApi, inviteApi, orgApi, runApi, threadApi } from "./api/botdesk";
+import { approvalApi, authApi, botApi, inviteApi, modelApi, orgApi, runApi, threadApi } from "./api/botdesk";
 import { ApiError, apiBaseUrl } from "./api/client";
-import { toApiBot, toApproval, toBot, toInvitation, toMessage, toOrg, toThread, toUser } from "./api/map";
+import { toApiBot, toApproval, toBot, toInvitation, toMessage, toModel, toModelProvider, toOrg, toThread, toUser } from "./api/map";
 import { applyRunEvent, upsertApproval, withPreview, withWaitingApprovals, type ActiveRun } from "./api/run-events";
 import type { ApiMe, ApiRunEvent, ApiThread } from "./api/types";
 import * as mock from "./mock/fixtures";
-import type { Approval, ApprovalStatus, Bot, Invitation, Membership, Message, Org, Participant, ProviderCredential, Routine, Thread, User } from "./types";
+import type {
+  Approval, ApprovalStatus, Bot, Invitation, Membership, Message, Model, ModelListProblem, ModelProvider, Org, Participant, Routine, Thread, User,
+} from "./types";
 
 /** What you fill in to create a bot; the rest (id, handle, status…) is filled in for you. */
 export type NewBotInput = Pick<
@@ -91,8 +94,13 @@ interface State {
   connectors: typeof mock.connectors;
   connections: typeof mock.connections;
   routines: typeof mock.routines;
-  models: typeof mock.models;
-  credentials: typeof mock.credentials;
+  /** Models & keys: the live model list of every connected provider, and the providers themselves. */
+  models: Model[];
+  modelProviders: ModelProvider[];
+  /** Connected providers whose model list couldn't be fetched last time. */
+  modelProblems: ModelListProblem[];
+  /** API only: true while providers and models are on their way. */
+  modelsLoading: boolean;
   memories: typeof mock.memories;
   usage: typeof mock.usage;
   templates: typeof mock.templates;
@@ -119,7 +127,9 @@ function seed(): State {
     connections: mock.connections,
     routines: mock.routines,
     models: mock.models,
-    credentials: mock.credentials,
+    modelProviders: mock.modelProviders,
+    modelProblems: [],
+    modelsLoading: false,
     memories: mock.memories,
     usage: mock.usage,
     templates: mock.templates,
@@ -250,12 +260,17 @@ function enterOrg(org: Membership) {
     threadLoads: {},
     runs: [],
     approvals: [],
+    models: [],
+    modelProviders: [],
+    modelProblems: [],
+    modelsLoading: true,
     routines: [],
     memories: [],
     botsLoading: true,
   }));
   void loadOrgPeople(org);
   void loadBotsAndChats(org);
+  void loadModelCatalog(org.id);
 }
 
 /**
@@ -863,11 +878,145 @@ function decideMockApproval(approvalId: string, decision: "approve" | "deny", ed
   later(() => pushBotMessage(before.threadId, before.botId, [{ type: "text", text }]), 700);
 }
 
+/* ---------- Models & keys ----------
+ * Model providers, their keys, and the live list of models bots can pick from
+ * (Settings → Models & keys, the bot model picker). On the API a key goes in and never
+ * comes back: the store only ever holds its last 4 characters. In the demo a key "works"
+ * unless it starts with "bad", so the error path can be tried too.
+ */
+
+/** What you type to connect a provider. Custom servers add a name and a base URL; their key may be empty. */
+export interface ProviderKeyInput {
+  apiKey: string;
+  baseUrl?: string;
+  label?: string;
+}
+
+/** The org's providers and every connected provider's models, fetched together. */
+async function loadModelCatalog(orgId: string, refresh = false) {
+  set((st) => ({ ...st, modelsLoading: true }));
+  const [providers, list] = await Promise.all([
+    modelApi.providers(orgId).catch(() => null),
+    modelApi.models(orgId, refresh).catch(() => null),
+  ]);
+  set((st) => {
+    if (st.org.id !== orgId) return st; // switched org while loading
+    return {
+      ...st,
+      modelProviders: providers?.map(toModelProvider) ?? st.modelProviders,
+      models: list?.models.map(toModel) ?? st.models,
+      modelProblems: list ? list.errors : [{ provider: "", message: "Couldn't load the models. Try again in a moment." }],
+      modelsLoading: false,
+    };
+  });
+}
+
+function withProvider(providers: ModelProvider[], saved: ModelProvider) {
+  return providers.some((p) => p.id === saved.id) ? providers.map((p) => (p.id === saved.id ? saved : p)) : [...providers, saved];
+}
+
+const keyHintOf = (key: string) => (key.length >= 12 ? key.slice(-4) : undefined);
+const CUSTOM_HINT = "Any OpenAI-compatible server: Ollama, LM Studio, vLLM.";
+/** MOCK: what a newly connected provider offers in the demo. */
+const MOCK_NEW_MODELS: Record<string, Model[]> = {
+  groq: [{ id: "groq:llama-3.3-70b-versatile", provider: "groq", name: "llama-3.3-70b-versatile", contextWindow: 131_072 }],
+};
+
+/** MOCK: "checks" the key, then connects the provider (or adds a custom server). */
+function saveMockKey(providerId: string, { apiKey, baseUrl, label }: ProviderKeyInput): ActionResult {
+  const key = apiKey.trim();
+  if (key.startsWith("bad")) return { ok: false, error: "That key didn't work: 401: Incorrect API key provided." };
+  const existing = state.modelProviders.find((p) => p.id === providerId);
+  const isNewCustom = providerId === "custom";
+  if (!existing && !isNewCustom) return { ok: false, error: "We don't support that provider." };
+  const kind = existing?.kind ?? "custom";
+  if (kind !== "custom" && !key) return { ok: false, error: "Paste the API key." };
+  const hint = keyHintOf(key);
+  const saved: ModelProvider = {
+    id: isNewCustom ? `custom-${id()}` : providerId,
+    kind,
+    name: label?.trim() || existing?.name || "Custom",
+    hint: existing?.hint ?? CUSTOM_HINT,
+    connected: true, source: "org", status: "ok", lastVerifiedAt: now(),
+    ...(hint ? { keyHint: hint } : {}),
+    ...(kind === "custom" ? { baseUrl: baseUrl?.trim().replace(/\/+$/, "") || existing?.baseUrl } : {}),
+  };
+  const added = (MOCK_NEW_MODELS[saved.id] ?? []).filter((m) => !state.models.some((known) => known.id === m.id));
+  set((st) => ({ ...st, modelProviders: withProvider(st.modelProviders, saved), models: [...st.models, ...added] }));
+  return { ok: true };
+}
+
+/** A built-in provider goes back to "Add key"; a custom server goes away. Its models go with it. */
+function forgetProviderKey(providerId: string) {
+  set((st) => ({
+    ...st,
+    modelProviders: st.modelProviders.flatMap((p) => {
+      if (p.id !== providerId) return [p];
+      return p.kind === "custom" ? [] : [{ id: p.id, kind: p.kind, name: p.name, hint: p.hint, connected: false }];
+    }),
+    models: st.models.filter((m) => m.provider !== providerId),
+  }));
+}
+
+const modelActions = {
+  /** Fetch providers and models again. `refresh` skips the API's ~10 minute cache. */
+  loadModels({ refresh = false }: { refresh?: boolean } = {}): Promise<void> {
+    if (isDemoMode()) return Promise.resolve();
+    return loadModelCatalog(state.org.id, refresh);
+  },
+
+  /** Add or replace a provider's key (owners and admins). The API checks it live first. "custom" adds a server. */
+  async saveProviderKey(providerId: string, input: ProviderKeyInput): Promise<ActionResult> {
+    if (isDemoMode()) return saveMockKey(providerId, input);
+    const orgId = state.org.id;
+    try {
+      const saved = toModelProvider(await modelApi.saveKey(orgId, providerId, input));
+      set((st) => (st.org.id === orgId ? { ...st, modelProviders: withProvider(st.modelProviders, saved) } : st));
+    } catch (error) {
+      return failure(error);
+    }
+    void loadModelCatalog(orgId);
+    return { ok: true };
+  },
+
+  /** Check a saved key again. `ok: false` carries the provider's reason. */
+  async testProviderKey(providerId: string): Promise<ActionResult> {
+    if (isDemoMode()) {
+      set((st) => ({ ...st, modelProviders: st.modelProviders.map((p) => (p.id === providerId ? { ...p, status: "ok", lastVerifiedAt: now() } : p)) }));
+      return { ok: true };
+    }
+    try {
+      const result = await modelApi.testKey(state.org.id, providerId);
+      set((st) => ({ ...st, modelProviders: withProvider(st.modelProviders, toModelProvider(result.provider)) }));
+      return result.ok ? { ok: true } : { ok: false, error: result.error ?? "That key didn't work." };
+    } catch (error) {
+      return failure(error);
+    }
+  },
+
+  /** Remove the org's key. On the API, a key set on the server may still keep the provider connected. */
+  async removeProviderKey(providerId: string): Promise<ActionResult> {
+    if (isDemoMode()) {
+      forgetProviderKey(providerId);
+      return { ok: true };
+    }
+    try {
+      await modelApi.removeKey(state.org.id, providerId);
+    } catch (error) {
+      return failure(error);
+    }
+    forgetProviderKey(providerId); // at once; the reload below says whether a server key takes over
+    void loadModelCatalog(state.org.id);
+    return { ok: true };
+  },
+};
+
 export const actions = {
   ...authActions,
   ...orgActions,
   ...chatActions,
   ...approvalActions,
+  ...modelActions,
 
   /** Sends your message. Bots reply in a moment: in a DM that bot, in a group the ones you @mention. */
   sendMessage(threadId: string, text: string) {
@@ -1054,16 +1203,6 @@ export const actions = {
     } catch (error) {
       return failure(error);
     }
-  },
-
-  addCredential(input: Pick<ProviderCredential, "provider" | "label" | "owner" | "baseUrl"> & { key: string }) {
-    const { key, ...rest } = input;
-    const maskedKey = key.length > 8 ? `${key.slice(0, 4)}…${key.slice(-4)}` : "••••";
-    set((st) => ({ ...st, credentials: [...st.credentials, { ...rest, id: `k_${id()}`, maskedKey }] }));
-  },
-
-  removeCredential(credentialId: string) {
-    set((st) => ({ ...st, credentials: st.credentials.filter((k) => k.id !== credentialId) }));
   },
 
   /** MOCK: connecting an app (OAuth for Gmail, a URL for MCP) succeeds at once. */
@@ -1253,7 +1392,11 @@ export const useBotsLoading = () => useStore(useCallback((s: State) => s.botsLoa
 export const useUsers = () => useStore(useCallback((s: State) => s.users, []));
 export const useInvitations = () => useStore(useCallback((s: State) => s.invitations, []));
 export const useModels = () => useStore(useCallback((s: State) => s.models, []));
-export const useCredentials = () => useStore(useCallback((s: State) => s.credentials, []));
+export const useModelProviders = () => useStore(useCallback((s: State) => s.modelProviders, []));
+/** Connected providers whose models couldn't be listed just now. */
+export const useModelProblems = () => useStore(useCallback((s: State) => s.modelProblems, []));
+/** API only: true while providers and models are on their way. */
+export const useModelsLoading = () => useStore(useCallback((s: State) => s.modelsLoading, []));
 export const useTemplates = () => useStore(useCallback((s: State) => s.templates, []));
 export const useRoutines = () => useStore(useCallback((s: State) => s.routines, []));
 export const useMemories = () => useStore(useCallback((s: State) => s.memories, []));

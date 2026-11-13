@@ -21,6 +21,7 @@ class BotIn(ApiModel):
     model_id: str = Field(default="", max_length=MODEL_ID_MAX, pattern=MODEL_ID_PATTERN)
     security_level: SecurityLevel = "ask-before-acting"
     monthly_budget_usd: int = Field(default=50, ge=0, le=100_000)
+    memory_enabled: bool = True
 
     @field_validator("name")
     @classmethod
@@ -41,6 +42,7 @@ class BotUpdate(ApiModel):
     model_id: str | None = Field(default=None, max_length=MODEL_ID_MAX, pattern=MODEL_ID_PATTERN)
     security_level: SecurityLevel | None = None
     monthly_budget_usd: int | None = Field(default=None, ge=0, le=100_000)
+    memory_enabled: bool | None = None
 
 
 class BotOut(ApiModel):
@@ -54,6 +56,7 @@ class BotOut(ApiModel):
     model_id: str
     security_level: SecurityLevel
     monthly_budget_usd: int
+    memory_enabled: bool
     # Live status comes with bot runs; until then every bot is idle.
     status: Literal["idle", "working", "waiting-approval", "sleeping", "error"] = "idle"
     created_at: datetime

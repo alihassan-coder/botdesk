@@ -8,6 +8,7 @@ from src.api.v1.routes import (
     bots,
     health,
     invitations,
+    memories,
     organizations,
     plugins,
     providers,
@@ -26,3 +27,4 @@ api_router.include_router(runs.router)
 api_router.include_router(approvals.router)
 api_router.include_router(providers.router)
 api_router.include_router(plugins.router)
+api_router.include_router(memories.router)

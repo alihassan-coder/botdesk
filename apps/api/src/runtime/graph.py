@@ -39,7 +39,7 @@ from langgraph.runtime import Runtime
 from langgraph.types import interrupt
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from src.models.bot import SecurityLevel
+from src.models.bot import Bot, SecurityLevel
 from src.plugins.registry import ToolRegistry
 from src.runtime import tool_pipeline
 from src.runtime.chat_model import ModelUnavailable, describe_model_error
@@ -126,6 +126,13 @@ def _memory_scope(state: RunState, deps: RunDeps) -> MemoryScope:
     return MemoryScope(org_id=deps.org_id, bot_id=deps.bot_id, member_id=uuid.UUID(member) if member else None)
 
 
+async def _bot_memory_on(deps: RunDeps) -> bool:
+    """The bot's own memory switch (Edit bot). Read fresh, so turning it off applies at once."""
+    async with deps.sessionmaker() as db:
+        bot = await db.get(Bot, deps.bot_id)
+    return bot is not None and bot.memory_enabled
+
+
 def _last_human_text(state: RunState) -> str:
     """The message the bot is answering: the newest one not written by this bot."""
     return next((line["text"] for line in reversed(state["history"]) if not line["fromThisBot"]), "")
@@ -157,6 +164,8 @@ async def load_context(state: RunState, runtime: Runtime[RunDeps]) -> RunState:
 async def recall(state: RunState, runtime: Runtime[RunDeps]) -> RunState:
     """The top memories for the message being answered. A memory failure never fails a run."""
     deps = runtime.context
+    if not await _bot_memory_on(deps):
+        return {"memories": []}
     try:
         memories = await deps.memory.recall(_memory_scope(state, deps), _last_human_text(state))
     except Exception:
@@ -354,9 +363,10 @@ async def save_reply(state: RunState, runtime: Runtime[RunDeps]) -> RunState:
 
 async def remember(state: RunState, runtime: Runtime[RunDeps]) -> RunState:
     """Saving memories costs a model call, so it runs in the background and the reply isn't
-    held up. Runs that read outside text (tainted) don't save memories (§9)."""
+    held up. Runs that read outside text (tainted) don't save memories (§9), and neither do
+    bots with memory turned off."""
     deps = runtime.context
-    if state.get("tainted"):
+    if state.get("tainted") or not await _bot_memory_on(deps):
         return {}
     conversation = [
         {"role": "user", "content": _last_human_text(state)},

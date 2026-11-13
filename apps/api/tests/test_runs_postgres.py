@@ -13,7 +13,7 @@ from langchain_core.messages import AIMessage, AIMessageChunk, BaseMessage
 from langchain_core.outputs import ChatGeneration, ChatGenerationChunk, ChatResult
 from pydantic import Field
 
-from src.runtime.memory import MemoryScope
+from src.runtime.memory import MemoryScope, NoMemory
 from tests.conftest import Postgres, sign_up
 
 
@@ -272,8 +272,11 @@ async def test_runs_left_by_a_restart_fail_with_a_clear_message(pg: Postgres) ->
     assert run["error"] == "Interrupted by a restart. Send your message again."
 
 
-class FakeMemory:
+class FakeMemory(NoMemory):
+    """Recalls one fixed memory and records what it was asked; the memory screen part is empty."""
+
     def __init__(self) -> None:
+        super().__init__()
         self.recalled: list[tuple[MemoryScope, str]] = []
         self.remembered: list[tuple[MemoryScope, list[dict[str, str]]]] = []
 

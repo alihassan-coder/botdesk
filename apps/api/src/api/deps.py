@@ -12,6 +12,7 @@ from src.core.database import get_session
 from src.core.errors import Forbidden, NotFound, Unauthorized
 from src.core.secrets import SecretBox
 from src.models import Organization, User
+from src.runtime.memory import MemoryService
 from src.runtime.runner import RunManager
 from src.services import auth_service, organization_service
 from src.services.email_service import EmailSender
@@ -35,6 +36,15 @@ def get_runs(request: Request) -> RunManager:
 
 
 Runs = Annotated[RunManager, Depends(get_runs)]
+
+
+def get_memory(request: Request) -> MemoryService:
+    """What bots remember: the run manager's memory, so runs and the memory screen share one store."""
+    runs: RunManager = request.app.state.runs
+    return runs.memory
+
+
+Memory = Annotated[MemoryService, Depends(get_memory)]
 
 
 def get_email_sender(request: Request) -> EmailSender:

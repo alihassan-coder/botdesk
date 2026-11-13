@@ -30,3 +30,9 @@ class NotFound(AppError):
 
 class Conflict(AppError):
     status_code = 409
+
+
+class Unavailable(AppError):
+    """Something the API depends on (e.g. the memory store) isn't answering. Try again later."""
+
+    status_code = 503

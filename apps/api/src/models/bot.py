@@ -1,7 +1,7 @@
 import uuid
 from typing import Literal
 
-from sqlalchemy import ForeignKey, String, Text, UniqueConstraint
+from sqlalchemy import ForeignKey, String, Text, UniqueConstraint, true
 from sqlalchemy.orm import Mapped, mapped_column
 
 from src.core.database import Base, CreatedAtMixin, IdMixin
@@ -28,4 +28,6 @@ class Bot(IdMixin, CreatedAtMixin, Base):
     model_id: Mapped[str] = mapped_column(String(200), default="")
     security_level: Mapped[str] = mapped_column(String(30), default="ask-before-acting")
     monthly_budget_usd: Mapped[int] = mapped_column(default=50)
+    # Off: the bot neither recalls nor saves memories (what it already knows stays until forgotten).
+    memory_enabled: Mapped[bool] = mapped_column(default=True, server_default=true())
     created_by: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))

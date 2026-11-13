@@ -16,7 +16,7 @@ import pytest
 from pydantic import SecretStr
 
 from src.core.config import Settings
-from src.runtime.memory import SHARED, MemoryRecord, MemoryScope, memory_off_reason, org_key
+from src.runtime.memory import SHARED, MemoryGone, MemoryRecord, MemoryScope, memory_off_reason, org_key
 from tests.conftest import TEST_SETTINGS, FakeProviders, Postgres, api_client
 from tests.test_members import _as, _invite, _sign_in
 from tests.test_runs_postgres import ScriptedModel, _bot_chat, _send, use_model
@@ -34,6 +34,7 @@ class FakeMemoryStore:
         self.remembered: list[MemoryScope] = []
         self.leaky = leaky  # ignores the filters, to prove the service checks scope itself
         self.broken = False
+        self.vanishing = False  # someone else forgets each memory just after we read it
 
     @property
     def off_reason(self) -> str | None:
@@ -75,6 +76,8 @@ class FakeMemoryStore:
 
     async def update(self, memory_id: str, text: str) -> None:
         self._check()
+        if self.vanishing:
+            raise MemoryGone(memory_id)
         self.records = [
             replace(r, text=text, updated_at=START + timedelta(days=1)) if r.id == memory_id else r
             for r in self.records
@@ -82,6 +85,8 @@ class FakeMemoryStore:
 
     async def delete(self, memory_id: str) -> None:
         self._check()
+        if self.vanishing:
+            raise MemoryGone(memory_id)
         self.records = [r for r in self.records if r.id != memory_id]
 
     async def delete_all(self, org_id: uuid.UUID, bot_id: uuid.UUID) -> None:
@@ -227,6 +232,15 @@ async def test_correct_a_memory(team: Team) -> None:
 
     assert (await team.client.patch(f"{team.memories}/{ids['shared']}", json={"text": "x"})).status_code == 403
     assert (await team.client.patch(f"{team.memories}/{ids['sara']}", json={"text": "  "})).status_code == 422
+
+
+async def test_a_memory_forgotten_by_someone_else_mid_request_is_not_found(team: Team) -> None:
+    ids = _seed(team)
+    team.store.vanishing = True
+    forgot = await team.client.delete(f"{team.memories}/{ids['sara']}")
+    assert (forgot.status_code, forgot.json()["detail"]) == (404, "Memory not found.")
+    corrected = await team.client.patch(f"{team.memories}/{ids['sara']}", json={"text": "x"})
+    assert corrected.status_code == 404
 
 
 async def test_a_failing_memory_store_answers_503_in_plain_words(team: Team) -> None:

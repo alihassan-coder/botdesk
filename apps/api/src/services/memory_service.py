@@ -18,7 +18,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 
 from src.core.errors import AppError, Forbidden, NotFound, Unavailable
-from src.runtime.memory import SHARED, MemoryRecord, MemoryService, org_key
+from src.runtime.memory import SHARED, MemoryGone, MemoryRecord, MemoryService, org_key
 from src.schemas.memory import MemoryOut, MemoryStatusOut
 
 logger = logging.getLogger(__name__)
@@ -64,11 +64,14 @@ def memory_out(record: MemoryRecord, viewer: Viewer) -> MemoryOut:
 
 @asynccontextmanager
 async def _reaching_memory() -> AsyncIterator[None]:
-    """mem0 failing (its database, OpenAI) is a 503 in plain words, not a 500."""
+    """mem0 failing (its database, OpenAI) is a 503 in plain words, not a 500. A memory that
+    vanished mid-request (someone else just forgot it) is simply not found."""
     try:
         yield
     except AppError:
         raise
+    except MemoryGone as error:
+        raise NotFound(NOT_FOUND) from error
     except Exception as error:
         logger.exception("Memory call failed")
         raise Unavailable(UNAVAILABLE) from error

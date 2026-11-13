@@ -30,6 +30,7 @@ export function expiryLabel(expiresAt: string, now: number): string {
   if (left <= 0) return "Past its expiry";
   if (left < HOUR) return "Expires in under an hour";
   if (left < DAY) return `Expires in ${Math.floor(left / HOUR)}h`;
-  const days = Math.floor(left / DAY);
+  // Rounded: a 3-day expiry asked a minute ago should still say 3 days.
+  const days = Math.max(1, Math.round(left / DAY));
   return `Expires in ${days} ${days === 1 ? "day" : "days"}`;
 }

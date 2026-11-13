@@ -37,8 +37,8 @@ export function ApprovalsScreen() {
           </div>
           <div className="flex flex-wrap items-center gap-3">
             <TabsList>
-              <TabsTrigger value="waiting">Waiting · {waiting.length}</TabsTrigger>
-              <TabsTrigger value="decided">Decided · {decided.length}</TabsTrigger>
+              <TabsTrigger value="waiting">Waiting{isLoading ? "" : ` · ${waiting.length}`}</TabsTrigger>
+              <TabsTrigger value="decided">Decided{isLoading ? "" : ` · ${decided.length}`}</TabsTrigger>
             </TabsList>
             <Select value={botId} onValueChange={setBotId}>
               <SelectTrigger className="ml-auto w-44" aria-label="Filter by bot">
@@ -54,13 +54,13 @@ export function ApprovalsScreen() {
           </div>
 
           <TabsContent value="waiting" className="flex flex-col gap-6">
-            {waiting.length > 0 ? waiting.map((a) => <ApprovalEntry key={a.id} approval={a} />) : isLoading ? <Loading /> : <AllCaughtUp />}
+            {isLoading ? <Loading /> : waiting.length > 0 ? waiting.map((a) => <ApprovalEntry key={a.id} approval={a} />) : <AllCaughtUp />}
           </TabsContent>
           <TabsContent value="decided" className="flex flex-col gap-6">
-            {decided.length > 0 ? (
-              decided.map((a) => <ApprovalEntry key={a.id} approval={a} />)
-            ) : isLoading ? (
+            {isLoading ? (
               <Loading />
+            ) : decided.length > 0 ? (
+              decided.map((a) => <ApprovalEntry key={a.id} approval={a} />)
             ) : (
               <p className="py-16 text-center text-sm text-muted-foreground">Nothing decided yet.</p>
             )}
@@ -71,7 +71,10 @@ export function ApprovalsScreen() {
   );
 }
 
-/** On the API, the page asks for the newest approvals when it opens (the mock has them all). */
+/**
+ * The page asks for the newest approvals when it opens (the mock has them all). Until then it
+ * shows a spinner, on the server too, so the server's HTML matches the browser's first render.
+ */
 function useLoadApprovals() {
   const authStatus = useAuthStatus();
   const [isLoading, setIsLoading] = useState(true);
@@ -119,7 +122,7 @@ function ApprovalEntry({ approval }: { approval: Approval }) {
           <>
             <span className="text-muted-foreground">in</span>
             <Link href={`/chat/${approval.threadId}`} className="truncate text-muted-foreground underline-offset-4 hover:text-foreground hover:underline">
-              {thread.title}
+              {thread.kind === "dm" ? "your chat" : thread.title}
             </Link>
           </>
         )}

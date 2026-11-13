@@ -16,6 +16,7 @@ describe("approval wording", () => {
   it("expiryLabel counts down in days, then hours", () => {
     const now = Date.parse("2026-11-12T12:00:00Z");
     expect(expiryLabel("2026-11-15T12:00:00Z", now)).toBe("Expires in 3 days");
+    expect(expiryLabel("2026-11-15T11:58:00Z", now)).toBe("Expires in 3 days");
     expect(expiryLabel("2026-11-13T13:00:00Z", now)).toBe("Expires in 1 day");
     expect(expiryLabel("2026-11-12T17:30:00Z", now)).toBe("Expires in 5h");
     expect(expiryLabel("2026-11-12T12:20:00Z", now)).toBe("Expires in under an hour");

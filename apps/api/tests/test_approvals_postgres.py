@@ -108,7 +108,32 @@ async def test_a_risky_tool_pauses_the_run_and_approving_resumes_it(pg: Postgres
     ]
     reply = (await pg.client.get(f"{thread}/messages")).json()[-1]
     assert reply["parts"][0] == {"type": "approval", "approvalId": approval["id"]}
+    # The tool line is saved too, so a reloaded chat still says "Used Send email · done".
+    assert reply["parts"][1] == {
+        "type": "tool-call",
+        "toolExecutionId": str(execution.id),
+        "tool": "demo.send_email",
+        "status": "succeeded",
+    }
     assert "Finished demo.send_email" in reply["parts"][-1]["text"]
+
+
+async def test_a_chat_opened_later_sees_the_paused_run_and_follows_on_from_there(pg: Postgres) -> None:
+    org, thread = await _chat(pg.client)
+    run_id, approval = await _paused_on_approval(pg, thread, SEND)
+
+    active = (await pg.client.get(f"{thread}/runs", params={"active": True})).json()
+
+    (run,) = active["runs"]
+    assert (run["id"], run["status"], run["error"]) == (run_id, "waiting_approval", None)
+    events = await _events(pg.client, thread)
+    assert active["lastEventId"] == events[-1]["id"]  # the approval_requested event
+    await pg.client.post(f"{org}/approvals/{approval['id']}/decide", json={"decision": "approve"})
+    await pg.runs.wait_until_idle()
+    followed = await _events(pg.client, thread, last_event_id=active["lastEventId"])
+    assert followed[0]["event"] == "approval_decided"
+    assert followed[-1]["event"] == "run_finished"
+    assert (await pg.client.get(f"{thread}/runs", params={"active": True})).json()["runs"] == []
 
 
 async def test_denying_resumes_the_run_without_running_the_tool(pg: Postgres) -> None:

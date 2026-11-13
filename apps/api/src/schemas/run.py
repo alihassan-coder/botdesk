@@ -22,6 +22,14 @@ class RunOut(ApiModel):
     finished_at: datetime | None
 
 
+class ThreadRunsOut(ApiModel):
+    """A chat's runs, and where its event stream should start (`after=lastEventId`) so
+    nothing that happens after this answer is missed."""
+
+    runs: list[RunOut]
+    last_event_id: int
+
+
 class RunEventOut(ApiModel):
     """One live update, as sent over the event stream (the SSE `data:` line)."""
 

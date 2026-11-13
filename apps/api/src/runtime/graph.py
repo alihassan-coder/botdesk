@@ -50,7 +50,7 @@ from src.runtime.prompt import HistoryLine, build_prompt
 from src.runtime.reporter import RunReporter
 from src.runtime.token_batcher import BackgroundSender, TokenBatcher
 from src.runtime.tool_pipeline import ToolCallRequest, finished_event
-from src.services import run_service, thread_service
+from src.services import run_service, thread_service, tool_execution_service
 from src.services.tool_execution_service import RunRef
 
 logger = logging.getLogger(__name__)
@@ -92,7 +92,9 @@ class RunState(TypedDict, total=False):
     turns: list[dict[str, Any]]  # this run's tool round trips, as LangChain message dicts
     pending_calls: list[dict[str, Any]]  # tool calls not handled yet: {"id", "name", "args"}
     call: CallState
-    approval_ids: list[str]  # approvals asked for in this run (they become cards in the reply)
+    # Approvals asked for in this run. Kept for checkpoints already saved; the reply's cards
+    # now come from the tool calls recorded in the database (`reply_cards`).
+    approval_ids: list[str]
 
 
 @dataclass(frozen=True)
@@ -334,8 +336,8 @@ def after_call(state: RunState) -> Literal["prepare_call", "call_model"]:
 
 async def save_reply(state: RunState, runtime: Runtime[RunDeps]) -> RunState:
     deps = runtime.context
-    cards = [{"type": "approval", "approvalId": approval_id} for approval_id in state.get("approval_ids", [])]
     async with deps.sessionmaker() as db:
+        cards = await tool_execution_service.reply_cards(db, deps.run_id)
         message = await run_service.save_reply(
             db,
             run_id=deps.run_id,

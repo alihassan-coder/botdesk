@@ -165,6 +165,47 @@ async def mark_run_tainted(db: AsyncSession, run_id: uuid.UUID) -> None:
     await db.execute(update(Run).where(Run.id == run_id).values(tainted=True))
 
 
+# How a finished call shows in the reply. Calls in any other state never reach a saved reply.
+_SHOWN_STATUSES = ("succeeded", "failed", "denied")
+
+
+async def reply_cards(db: AsyncSession, run_id: uuid.UUID) -> list[dict[str, Any]]:
+    """The cards a run's reply keeps above its text, in the order the calls were made: each
+    call's approval card (if it asked), then its tool line ("Used Send email · done"), the same
+    as they showed live. One query."""
+    rows = await db.execute(
+        select(ToolExecution, Approval.id)
+        .outerjoin(Approval, Approval.tool_execution_id == ToolExecution.id)
+        .where(ToolExecution.run_id == run_id)
+        .order_by(ToolExecution.created_at, ToolExecution.id)
+    )
+    cards: list[dict[str, Any]] = []
+    for execution, approval_id in rows:
+        if approval_id:
+            cards.append({"type": "approval", "approvalId": str(approval_id)})
+        if execution.status in _SHOWN_STATUSES and not _denied_by_a_person(execution, approval_id):
+            cards.append(tool_call_part(execution))
+    return cards
+
+
+def _denied_by_a_person(execution: ToolExecution, approval_id: uuid.UUID | None) -> bool:
+    """Its approval card already says so (Denied or Expired); a tool line would repeat it."""
+    return approval_id is not None and execution.status == "denied"
+
+
+def tool_call_part(execution: ToolExecution) -> dict[str, Any]:
+    """A `tool-call` message part. Same fields as the `tool_finished` event the web shows live."""
+    part: dict[str, Any] = {
+        "type": "tool-call",
+        "toolExecutionId": str(execution.id),
+        "tool": execution.tool_name,
+        "status": execution.status,
+    }
+    if execution.error and execution.status != "succeeded":
+        part["error"] = execution.error
+    return part
+
+
 async def runs_with_a_started_call(db: AsyncSession, run_ids: list[uuid.UUID]) -> dict[uuid.UUID, str]:
     """Of these runs, the ones with a tool call left `started` (we can't tell if it finished),
     and that tool's name."""

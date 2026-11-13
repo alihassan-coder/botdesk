@@ -58,3 +58,30 @@ async def test_people_outside_the_chat_cannot_see_its_runs(client: httpx.AsyncCl
     await sign_up(client, name="Mallory", email="mallory@evil.dev")
     assert (await client.get(f"{org}/runs/{run_id}")).status_code == 404
     assert (await client.get(f"{org}/threads/{thread['id']}/events", params={"follow": False})).status_code == 404
+    assert (await client.get(f"{org}/threads/{thread['id']}/runs", params={"active": True})).status_code == 404
+
+
+async def _latest_event_id(client: httpx.AsyncClient, thread: str) -> int:
+    body = (await client.get(f"{thread}/events", params={"follow": False, "after": 0})).text
+    return max((int(line[4:]) for line in body.splitlines() if line.startswith("id: ")), default=0)
+
+
+async def test_a_chat_lists_its_unfinished_runs_and_where_its_stream_is(client: httpx.AsyncClient) -> None:
+    org, (scout, _) = await _org_with_bots(client)
+    thread = f"{org}/threads/{(await client.post(f'{org}/threads/dm', json={'botId': scout['id']})).json()['id']}"
+
+    assert (await client.get(f"{thread}/runs", params={"active": True})).json() == {"runs": [], "lastEventId": 0}
+
+    run_id = (await client.post(f"{thread}/messages", json={"text": "Hi"})).json()["runIds"][0]
+    active = (await client.get(f"{thread}/runs", params={"active": True})).json()
+    assert [(run["id"], run["status"], run["botId"], run["error"]) for run in active["runs"]] == [
+        (run_id, "queued", scout["id"], None)
+    ]
+    assert active["lastEventId"] == await _latest_event_id(client, thread) > 0
+
+    await client.post(f"{org}/runs/{run_id}/cancel")
+    after_stop = (await client.get(f"{thread}/runs", params={"active": True})).json()
+    assert after_stop["runs"] == []
+    assert after_stop["lastEventId"] == await _latest_event_id(client, thread) > active["lastEventId"]
+    every = (await client.get(f"{thread}/runs")).json()["runs"]
+    assert [(run["id"], run["status"]) for run in every] == [(run_id, "cancelled")]

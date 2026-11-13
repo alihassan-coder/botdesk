@@ -10,7 +10,7 @@ import uuid
 from dataclasses import dataclass
 from typing import Any
 
-from sqlalchemy import exists, func, select, update
+from sqlalchemy import and_, exists, func, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
@@ -19,7 +19,7 @@ from src.core.config import Settings
 from src.core.database import utcnow
 from src.core.errors import NotFound
 from src.core.handles import mentioned_handles
-from src.models import Bot, Message, Run, Thread, ThreadParticipant
+from src.models import Bot, Message, Run, RunEvent, Thread, ThreadParticipant
 from src.models.run import ACTIVE_STATUSES, PAUSED_STATUSES
 from src.schemas.run import RunOut
 from src.services.thread_service import text_of, text_part
@@ -199,7 +199,7 @@ async def save_reply(
     text: str,
     extra_parts: list[dict[str, Any]] | None = None,
 ) -> Message:
-    """The bot's reply becomes a message in the chat. `extra_parts` (approval cards) go before
+    """The bot's reply becomes a message in the chat. `extra_parts` (approval cards, tool lines) go before
     the text. The caller commits. Safe to call twice: a saved reply is returned as it is."""
     run = (
         await db.execute(select(Run.org_id, Run.thread_id, Run.bot_id, Run.reply_message_id).where(Run.id == run_id))
@@ -303,6 +303,42 @@ async def cancel_if_not_running(db: AsyncSession, run_id: uuid.UUID) -> bool:
         .returning(Run.id)
     )
     return result.first() is not None
+
+
+# Not finished: queued, running, or paused until a person acts.
+LIVE_STATUSES = (*ACTIVE_STATUSES, *PAUSED_STATUSES)
+THREAD_RUNS_LIMIT = 100
+
+
+@dataclass(frozen=True)
+class ThreadRuns:
+    runs: list[Run]
+    last_event_id: int  # the chat's newest event when the runs were read
+
+
+async def thread_runs(db: AsyncSession, thread_id: uuid.UUID, *, active: bool) -> ThreadRuns:
+    """A chat's runs, newest first (only the unfinished ones when `active`), and the chat's
+    newest event id, read in one statement so they describe the same moment: a stream that
+    starts after that id misses nothing that changed these runs. Always one row comes back,
+    even with no runs (the position is the left side of the join)."""
+    position = (
+        select(func.coalesce(func.max(RunEvent.id), 0).label("last_event_id"))
+        .where(RunEvent.thread_id == thread_id)
+        .subquery()
+    )
+    joined = [Run.thread_id == thread_id]
+    if active:
+        joined.append(Run.status.in_(LIVE_STATUSES))
+    rows = (
+        await db.execute(
+            select(position.c.last_event_id, Run)
+            .select_from(position)
+            .outerjoin(Run, and_(*joined))
+            .order_by(Run.created_at.desc())
+            .limit(THREAD_RUNS_LIMIT)
+        )
+    ).all()
+    return ThreadRuns(runs=[run for _, run in rows if run is not None], last_event_id=rows[0][0] if rows else 0)
 
 
 def run_out(run: Run) -> RunOut:

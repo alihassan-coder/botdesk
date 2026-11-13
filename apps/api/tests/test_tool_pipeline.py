@@ -27,6 +27,7 @@ from src.runtime.chat_model import StandInModel, parse_tool_command
 from src.runtime.reporter import RunReporter
 from src.runtime.runner import RunManager
 from src.runtime.tool_pipeline import ExecuteDeps, NeedsAttention, ToolCallRequest
+from src.services import tool_execution_service
 from src.services.tool_execution_service import RunRef
 from tests.conftest import TEST_SETTINGS, sign_up
 
@@ -430,3 +431,41 @@ async def test_a_restart_during_a_tool_call_asks_a_person_instead_of_failing_bli
     run = (await world.client.get(f"{world.org}/runs/{world.run.run_id}")).json()
     assert run["status"] == "needs_attention"
     assert run["error"].startswith("The API restarted while count.send was running")
+    # A chat opened later sees it, with the reason, so it can offer Stop.
+    thread = f"{world.org}/threads/{world.run.thread_id}"
+    (active,) = (await world.client.get(f"{thread}/runs", params={"active": True})).json()["runs"]
+    assert (active["id"], active["status"], active["error"]) == (str(world.run.run_id), "needs_attention", run["error"])
+
+
+async def test_the_reply_keeps_each_call_as_a_card_in_the_order_they_were_made(world: World) -> None:
+    ran = await world.record("count.lookup", {}, level="autonomous")
+    await tool_pipeline.execute(world.execute_deps(), ran.execution.id)
+    refused = await world.record("count.send", {}, level="read-only")
+    approved = await world.record("demo.send_email", {"to": "sara@acme.dev", "subject": "Hi"})
+    await world.client.post(f"{world.org}/approvals/{approved.approval.id}/decide", json={"decision": "approve"})
+    await tool_pipeline.execute(world.execute_deps(), approved.execution.id)
+    denied = await world.record("demo.send_email", {"to": "omar@acme.dev", "subject": "Hi"})
+    await world.client.post(f"{world.org}/approvals/{denied.approval.id}/decide", json={"decision": "deny"})
+
+    async with world.runs.sessionmaker() as db:
+        cards = await tool_execution_service.reply_cards(db, world.run.run_id)
+
+    assert cards == [
+        {"type": "tool-call", "toolExecutionId": str(ran.execution.id), "tool": "count.lookup", "status": "succeeded"},
+        {
+            "type": "tool-call",
+            "toolExecutionId": str(refused.execution.id),
+            "tool": "count.send",
+            "status": "denied",
+            "error": refused.execution.error,
+        },
+        {"type": "approval", "approvalId": str(approved.approval.id)},
+        {
+            "type": "tool-call",
+            "toolExecutionId": str(approved.execution.id),
+            "tool": "demo.send_email",
+            "status": "succeeded",
+        },
+        # Denied by a person: the card says so, no tool line repeats it.
+        {"type": "approval", "approvalId": str(denied.approval.id)},
+    ]

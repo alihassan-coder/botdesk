@@ -8,6 +8,7 @@ from fastapi.sse import EventSourceResponse, ServerSentEvent
 
 from src.api.deps import Db, OrgAccess, Runs
 from src.controllers import thread_controller
+from src.schemas.run import ThreadRunsOut
 from src.schemas.thread import GroupIn, MessageIn, MessageOut, OpenDmIn, SentMessageOut, ThreadOut
 
 router = APIRouter(prefix="/orgs/{org_id}/threads", tags=["threads"])
@@ -53,6 +54,14 @@ async def post_message(thread_id: uuid.UUID, body: MessageIn, access: OrgAccess,
     """Send a message. In a DM the bot replies; in a group, the bots you @mention do.
     Returns at once with the ids of the runs it started; replies arrive on `/events`."""
     return await thread_controller.post_message(db, access, runs, thread_id, body)
+
+
+@router.get("/{thread_id}/runs")
+async def list_runs(thread_id: uuid.UUID, access: OrgAccess, db: Db, active: bool = False) -> ThreadRunsOut:
+    """The chat's runs, newest first (at most 100). `active=true`: only the ones not finished
+    (queued, running, waiting_approval, needs_attention), so a chat opened later can show
+    them. Follow `/events?after={lastEventId}` from here and nothing is missed."""
+    return await thread_controller.list_runs(db, access, thread_id, active=active)
 
 
 async def _stream_start(

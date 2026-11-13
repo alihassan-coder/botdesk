@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.api.deps import Access
 from src.runtime.runner import RunManager
+from src.schemas.run import ThreadRunsOut
 from src.schemas.thread import GroupIn, MessageIn, MessageOut, SentMessageOut, ThreadOut
 from src.services import run_event_service, run_service, thread_service
 
@@ -52,6 +53,12 @@ async def list_messages(
     thread = await thread_service.get_thread(db, org_id=access.org.id, user_id=access.user.id, thread_id=thread_id)
     messages = await thread_service.list_messages(db, thread, limit=limit, before=before)
     return [thread_service.message_out(message) for message in messages]
+
+
+async def list_runs(db: AsyncSession, access: Access, thread_id: uuid.UUID, *, active: bool) -> ThreadRunsOut:
+    thread = await thread_service.get_thread(db, org_id=access.org.id, user_id=access.user.id, thread_id=thread_id)
+    found = await run_service.thread_runs(db, thread.id, active=active)
+    return ThreadRunsOut(runs=[run_service.run_out(run) for run in found.runs], last_event_id=found.last_event_id)
 
 
 async def post_message(

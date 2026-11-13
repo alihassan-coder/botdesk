@@ -62,8 +62,8 @@ When you finish something, tick it here in the same pull request.
 ## Next
 
 ### Real AI
-- [ ] Add `ANTHROPIC_API_KEY` or `OPENAI_API_KEY` to `apps/api/.env` (owner, no code)
-- [ ] Models and keys in settings, saved per organization
+- [ ] Set `SECRET_KEY` in `apps/api/.env`, then add a real key in Settings → Models & keys (owner, no code)
+- [x] Models and keys in settings, saved per organization: Anthropic, OpenAI, Gemini, OpenRouter, Groq and custom OpenAI-compatible servers; keys checked live and encrypted; live model lists; a searchable model picker for bots
 
 ### Plugins (step 3)
 - [ ] Plugin SDK as its own package, and a uv workspace ([ADR 0006](adr/0006-repo-structure-plugins-and-project.md))

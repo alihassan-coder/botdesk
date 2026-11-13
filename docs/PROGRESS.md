@@ -2,6 +2,17 @@
 
 A short history of BotDesk, newest first. For one checklist of what is done and what is next, see [ROADMAP.md](ROADMAP.md).
 
+## 2026-11-13: Models & keys, saved per organization
+
+Settings → Models & keys is real. An owner or admin adds an API key for a model provider; BotDesk checks it with a live call, saves it encrypted, and lists that provider's models live; everyone picks a model per bot from that list; and the bot's runs use the org's key. Details: [backend guide](backend/README.md#models-and-keys).
+
+- **Providers:** Anthropic (native), OpenAI, Google Gemini (through Google's OpenAI-compatible endpoint), OpenRouter (with names, context sizes and prices), Groq, and custom OpenAI-compatible servers such as Ollama, LM Studio or vLLM (name, base URL, optional key). One small adapter each, behind one interface.
+- **API:** `GET/PUT/DELETE /orgs/{id}/providers…`, `POST …/providers/{id}/test`, `GET /orgs/{id}/models` (merged across providers, cached 10 minutes, `?refresh=true`, a provider that's down is reported without failing the rest). New table `provider_credentials` (migration applied to the dev database); `bots.model_id` grew to 200 characters for ids like `custom-<id>:llama3.2:latest`.
+- **Keys:** Fernet-encrypted with a new `SECRET_KEY` (production won't start without it), never returned or logged (only the last 4 characters), provider error messages scrubbed. Owners and admins change keys; members only look.
+- **Runs:** the org's key, else the server's env key (`ANTHROPIC_API_KEY` … `GROQ_API_KEY`, kept for self-hosting), else the stand-in model. Errors from the provider become actionable messages ("This model can't use tools…", "refused the API key…").
+- **Safety:** custom server addresses go through an SSRF guard: http/https only, and in production no private, loopback or link-local addresses unless `ALLOW_PRIVATE_MODEL_URLS=true`.
+- **Web:** provider cards, an add-key dialog that says "Checking…" and then the API's verdict, a searchable live model list, and a searchable, grouped model picker in create bot and edit bot. Model ids are `provider:model` everywhere now, so the mock's translation table is gone.
+
 ## 2026-11-13: approvals on the web (finishes build step 2)
 
 In API mode a bot's risky action now shows up in the chat as an approval card, live from the chat's event stream, and on the Approvals page.

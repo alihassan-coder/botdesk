@@ -8,7 +8,8 @@ ORGS = "/api/v1/orgs"
 async def test_list_my_organizations(client: httpx.AsyncClient) -> None:
     await sign_up(client)
     orgs = (await client.get(ORGS)).json()
-    assert [(org["slug"], org["role"], org["plan"]) for org in orgs] == [("ali-s-team", "owner", "free")]
+    assert [(org["slug"], org["role"]) for org in orgs] == [("ali-s-team", "owner")]
+    assert "plan" not in orgs[0]
 
 
 async def test_the_owner_can_rename_the_organization(client: httpx.AsyncClient) -> None:

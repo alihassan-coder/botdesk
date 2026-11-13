@@ -6,7 +6,7 @@ import { actions, getStoreSnapshot as state } from "./store";
  * so these never touch a network.
  */
 
-const org = { id: "o1", name: "Zara's team", slug: "zara-team", plan: "free", role: "owner" };
+const org = { id: "o1", name: "Zara's team", slug: "zara-team", role: "owner" };
 const me = { user: { id: "u1", name: "Zara", email: "zara@example.com", handle: "zara" }, organizations: [org] };
 const notConnected = { source: null, keyHint: null, status: null, lastVerifiedAt: null, baseUrl: null };
 const openai = { id: "openai", kind: "openai", name: "OpenAI", hint: "GPT models.", connected: false, ...notConnected };

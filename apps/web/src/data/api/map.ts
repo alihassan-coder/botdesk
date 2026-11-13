@@ -18,8 +18,8 @@ export function toUser({ id, name, email, handle }: ApiUser, role: ApiRole): Use
   return { id, name, email, handle, role, presence: "online" };
 }
 
-export function toOrg({ id, name, slug, plan }: ApiOrg): Org {
-  return { id, name, slug, plan };
+export function toOrg({ id, name, slug }: ApiOrg): Org {
+  return { id, name, slug };
 }
 
 /** Drops the one-time invite link, so it never sits in the store. */

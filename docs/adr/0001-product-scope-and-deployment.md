@@ -1,5 +1,7 @@
 # 0001 — Product scope and deployment model
 
+> **Hosted SaaS dropped by [ADR 0008](0008-free-and-open-source.md):** BotDesk is free and open source, self-hosted, with no paid plans.
+
 - Status: accepted
 - Date: 2026-11-11
 

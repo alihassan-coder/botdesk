@@ -15,7 +15,7 @@ When you finish something, tick it here in the same pull request.
 - [x] Product spec, vision and research ([product/spec.md](product/spec.md), [research/](research/))
 - [x] Glossary of terms used in code and UI ([GLOSSARY.md](../GLOSSARY.md))
 - [x] Logo: the botdesk wordmark with an online light ([design/logo](design/logo/README.md))
-- [x] Architecture design, diagrams and ADRs 0001–0007 ([architecture/](architecture/README.md))
+- [x] Architecture design, diagrams and ADRs 0001–0008 ([architecture/](architecture/README.md))
 - [x] Open-source files: MIT license, contributing guide, security policy, code of conduct, issue and pull request templates, CI
 
 ### 2. Web app on demo data (`apps/web`)

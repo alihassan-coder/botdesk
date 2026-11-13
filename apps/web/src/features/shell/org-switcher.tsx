@@ -12,7 +12,6 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { actions, useOrg, useOrgs } from "@/data/store";
 import { OrgAvatar } from "./org-avatar";
-import { PLAN_LABEL } from "./plan";
 
 const RAIL_HIDDEN = "group-data-[collapsible=icon]:hidden";
 
@@ -41,7 +40,6 @@ export function OrgSwitcher({ onNavigate }: { onNavigate?: () => void }) {
         <OrgAvatar name={org.name} />
         <span className={`min-w-0 flex-1 leading-tight ${RAIL_HIDDEN}`}>
           <span className="block truncate text-sm font-medium">{org.name}</span>
-          <span className="block truncate text-xs text-muted-foreground">{PLAN_LABEL[org.plan]}</span>
         </span>
         <ChevronsUpDown className={`size-3.5 shrink-0 text-muted-foreground ${RAIL_HIDDEN}`} />
       </DropdownMenuTrigger>

@@ -6,7 +6,7 @@ import { actions, getStoreSnapshot as state, isDemoMode } from "./store";
  * fetch is faked per route, so these tests never touch a network.
  */
 
-const org = { id: "o1", name: "Zara's team", slug: "zara-team", plan: "free", role: "owner" };
+const org = { id: "o1", name: "Zara's team", slug: "zara-team", role: "owner" };
 const me = { user: { id: "u1", name: "Zara", email: "zara@example.com", handle: "zara" }, organizations: [org] };
 const members = [
   { ...me.user, role: "owner" },
@@ -51,7 +51,7 @@ describe("auth on the API", () => {
     await expect(actions.signIn("zara@example.com", "long-enough")).resolves.toEqual({ ok: true });
     expect(state().authStatus).toBe("signed-in");
     expect(currentUser()).toMatchObject({ name: "Zara", role: "owner" });
-    expect(state().org).toEqual({ id: "o1", name: "Zara's team", slug: "zara-team", plan: "free" });
+    expect(state().org).toEqual({ id: "o1", name: "Zara's team", slug: "zara-team" });
     await vi.waitFor(() => expect(state().users.map((u) => u.name)).toEqual(["Zara", "Omar"]));
     // The cookie is the session; nothing about it is kept in localStorage.
     expect(localStorage.getItem("botdesk.session")).toBeNull();
@@ -139,7 +139,7 @@ describe("members and invitations on the API", () => {
   });
 
   it("acceptInvitation switches you to the org you joined, with your role there", async () => {
-    const other = { id: "o2", name: "Globex", slug: "globex", plan: "team", role: "member" };
+    const other = { id: "o2", name: "Globex", slug: "globex", role: "member" };
     routes["POST /api/v1/invitations/accept"] = { status: 200, body: other };
     routes["GET /api/v1/orgs/o2/members"] = { status: 200, body: [{ ...me.user, role: "member" }] };
     await expect(actions.acceptInvitation("secret")).resolves.toEqual({ ok: true });
@@ -149,7 +149,7 @@ describe("members and invitations on the API", () => {
 });
 
 describe("switching organizations on the API", () => {
-  const globex = { id: "o2", name: "Globex", slug: "globex", plan: "team", role: "member" };
+  const globex = { id: "o2", name: "Globex", slug: "globex", role: "member" };
 
   beforeEach(() => {
     routes["GET /api/v1/auth/me"] = { status: 200, body: { ...me, organizations: [org, globex] } };
@@ -185,7 +185,7 @@ describe("switching organizations on the API", () => {
 
   it("acceptInvitation adds the org to your list and remembers it", async () => {
     await actions.signIn("zara@example.com", "long-enough");
-    const initech = { id: "o3", name: "Initech", slug: "initech", plan: "free", role: "admin" };
+    const initech = { id: "o3", name: "Initech", slug: "initech", role: "admin" };
     routes["POST /api/v1/invitations/accept"] = { status: 200, body: initech };
     await actions.acceptInvitation("secret");
     expect(state().orgs.map((o) => o.id)).toEqual(["o1", "o2", "o3"]);
@@ -255,7 +255,7 @@ describe("bots on the API", () => {
   });
 
   it("switching org loads that org's bots instead", async () => {
-    const globex = { id: "o2", name: "Globex", slug: "globex", plan: "team", role: "member" };
+    const globex = { id: "o2", name: "Globex", slug: "globex", role: "member" };
     routes["GET /api/v1/auth/me"] = { status: 200, body: { ...me, organizations: [org, globex] } };
     routes["GET /api/v1/orgs/o2/bots"] = { status: 200, body: [{ ...scout, id: "b9", name: "Globo" }] };
     await actions.restoreSession();

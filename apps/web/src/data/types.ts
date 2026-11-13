@@ -46,7 +46,6 @@ export interface Org {
   id: ID;
   name: string;
   slug: string;
-  plan: "self-hosted" | "free" | "pro" | "team";
 }
 
 /** An organization you belong to, with your role in it: what the org switcher lists. */

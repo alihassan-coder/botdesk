@@ -14,7 +14,6 @@ export interface ApiOrg {
   id: string;
   name: string;
   slug: string;
-  plan: "self-hosted" | "free" | "pro" | "team";
   role: ApiRole;
   /** null = no limit. */
   monthlyBudgetUsd?: number | null;

@@ -17,7 +17,6 @@ def org_out(org: Organization, role: str) -> OrgOut:
             "id": org.id,
             "name": org.name,
             "slug": org.slug,
-            "plan": org.plan,
             "role": role,
             "monthly_budget_usd": org.monthly_budget_usd,
         }

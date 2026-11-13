@@ -9,7 +9,7 @@ describe("API → web shapes", () => {
   });
 
   it("an org drops the viewer's role, which belongs to the user", () => {
-    expect(toOrg({ id: "o1", name: "Acme", slug: "acme", plan: "free", role: "owner" })).toEqual({ id: "o1", name: "Acme", slug: "acme", plan: "free" });
+    expect(toOrg({ id: "o1", name: "Acme", slug: "acme", role: "owner" })).toEqual({ id: "o1", name: "Acme", slug: "acme" });
   });
 
   const apiBot = {

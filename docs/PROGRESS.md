@@ -2,6 +2,10 @@
 
 A short history of BotDesk, newest first. For one checklist of what is done and what is next, see [ROADMAP.md](ROADMAP.md).
 
+## 2026-11-13: free and open source, no plans
+
+BotDesk is MIT and free forever: people bring their own AI keys and pay their provider directly ([ADR 0008](adr/0008-free-and-open-source.md)). Organizations no longer have a `plan` (migration `9f2d6c1b7a40` drops the column, `OrgOut` drops the field), and the sidebar and organization settings no longer show "Free plan" or "Team plan".
+
 ## 2026-11-13: usage and budgets, fixes from a review
 
 - **Stopped and failed calls are billed:** usage is recorded in a `finally`, as its own task that Stop and shutdown can't cancel. Without the provider's numbers, tokens are estimated from characters and the row is marked `estimated` (new column).

@@ -29,7 +29,7 @@ import type {
 const MOCK_NOW = Date.parse("2026-11-12T05:00:00Z");
 const ago = (minutes: number) => new Date(MOCK_NOW - minutes * 60_000).toISOString();
 
-export const org: Org = { id: "org_1", name: "Acme Labs", slug: "acme", plan: "team" };
+export const org: Org = { id: "org_1", name: "Acme Labs", slug: "acme" };
 
 export const users: User[] = [
   { id: "u_me", name: "Ali Hassan", email: "ali@acme.dev", handle: "ali", role: "owner", presence: "online" },

@@ -2,7 +2,7 @@ import uuid
 
 from pydantic import Field
 
-from src.models.organization import Plan, Role
+from src.models.organization import Role
 from src.schemas.common import ApiModel
 
 
@@ -12,7 +12,6 @@ class OrgOut(ApiModel):
     id: uuid.UUID
     name: str
     slug: str
-    plan: Plan
     role: Role
     # What all its bots together may spend in a calendar month (UTC), in whole dollars. None = no limit.
     monthly_budget_usd: int | None = None

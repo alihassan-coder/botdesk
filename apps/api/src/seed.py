@@ -17,7 +17,7 @@ from src.core.database import create_engine, create_sessionmaker
 from src.models import Bot, Membership, Organization, User
 
 DEMO_PASSWORD = "botdesk123"  # noqa: S105  (a published demo password, local only)
-ORG = {"name": "Acme Labs", "slug": "acme-labs", "plan": "team"}
+ORG = {"name": "Acme Labs", "slug": "acme-labs"}
 BOTS = [
     ("Chief", "chief", "Chief of staff", "Coordinates the other bots and hands work to the right one.", "indigo"),
     ("Inbox Manager", "inbox-manager", "Email", "Sorts your inbox and drafts replies for approval.", "sky"),

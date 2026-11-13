@@ -169,7 +169,7 @@ function apiSeed(): State {
   const blankUser: User = { id: "", name: "", email: "", handle: "", role: "member", presence: "online" };
   return {
     ...seed(),
-    org: { id: "", name: "", slug: "", plan: "self-hosted" },
+    org: { id: "", name: "", slug: "" },
     orgs: [],
     users: [blankUser],
     currentUserId: "",

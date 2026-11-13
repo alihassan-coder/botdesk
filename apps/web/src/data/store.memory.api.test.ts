@@ -6,7 +6,7 @@ import { actions, getStoreSnapshot as state } from "./store";
  * so these never touch a network.
  */
 
-const org = { id: "o1", name: "Zara's team", slug: "zara-team", plan: "free", role: "member" };
+const org = { id: "o1", name: "Zara's team", slug: "zara-team", role: "member" };
 const me = { user: { id: "u1", name: "Zara", email: "zara@example.com", handle: "zara" }, organizations: [org] };
 const BOT = "/api/v1/orgs/o1/bots/b1/memories";
 const fridays = { id: "m1", text: "Ships on Fridays", scope: "bot", createdAt: "2026-11-10T09:00:00+00:00", updatedAt: "2026-11-10T09:00:00+00:00" };

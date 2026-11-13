@@ -3,7 +3,7 @@
 The BotDesk backend: one API for web, desktop and mobile. Python 3.13, FastAPI, SQLAlchemy 2 (async), Alembic, PostgreSQL (Neon).
 
 ```bash
-uv sync && cp .env.example .env   # once
+uv sync --all-packages && cp .env.example .env   # once (uv uses the workspace at the repo root)
 pnpm dev:api                      # from the repo root → http://localhost:8000/api/docs
 ```
 

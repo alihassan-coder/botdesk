@@ -2,6 +2,16 @@
 
 A short history of BotDesk, newest first. For one checklist of what is done and what is next, see [ROADMAP.md](ROADMAP.md).
 
+## 2026-11-13: the plugin SDK as its own package (build step 3)
+
+Plugins now build on a small, separate package instead of a file inside the API, as [ADR 0006](adr/0006-repo-structure-plugins-and-project.md) decided. Details: [backend guide](backend/README.md#plugins), [SDK README](../packages/plugin-sdk/README.md).
+
+- **One Python workspace** at the repo root (`pyproject.toml`, `uv.lock`, `.venv`) with `apps/api`, `packages/plugin-sdk` and `plugins/*`. `apps/api/uv.lock` moved to the root; set up with `uv sync --all-packages`. CI runs `uv sync --frozen --all-packages`, and `pnpm check` now also checks the SDK and the demo plugin (each has a small `package.json` so Turborepo runs its ruff, mypy and pytest).
+- **`packages/plugin-sdk`** (`botdesk-plugin-sdk` 0.1.0, MIT, typed): `PluginManifest`, `ToolSpec`, the 7 risk classes, egress, `ToolContext` (ids, idempotency key, logger; no database, no settings), `ToolResult`, `NoArgs`, `validate_manifest`, and `testing.call_tool` to run a tool without the app. Depends only on Pydantic. A README with a five-minute "first plugin" guide and the release steps; not on PyPI yet.
+- **Entry points + allowlist:** plugins register under `botdesk.plugins`; the API imports only the ids in `PLUGINS`. A plugin that fails to import, raises, or breaks a rule (unique tool names, known risk class, Pydantic args model, async handler, id matching its entry point) is skipped with one log line; the API keeps running. An allowlisted id nobody provides stops startup, since it's a typo.
+- **The demo plugin** moved to `plugins/demo` (`botdesk-plugin-demo`), uses only the SDK, and loads through its entry point. Runs, policy and approvals behave exactly as before; their tests changed only in imports.
+- **API:** `GET /api/v1/orgs/{id}/plugins` lists the loaded plugins and their tools (name, title, description, risk) for the "Connect apps" page.
+
 ## 2026-11-13: Models & keys, saved per organization
 
 Settings → Models & keys is real. An owner or admin adds an API key for a model provider; BotDesk checks it with a live call, saves it encrypted, and lists that provider's models live; everyone picks a model per bot from that list; and the bot's runs use the org's key. Details: [backend guide](backend/README.md#models-and-keys).

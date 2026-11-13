@@ -46,8 +46,8 @@ The API stores everything in **PostgreSQL**. Pick one option:
 ## Step 4: configure and start the API
 
 ```bash
+uv sync --all-packages  # from the repo root: installs every Python package into .venv
 cd apps/api
-uv sync                 # installs Python packages into apps/api/.venv
 cp .env.example .env    # your local settings (never committed)
 ```
 

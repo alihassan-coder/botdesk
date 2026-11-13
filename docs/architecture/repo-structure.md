@@ -32,7 +32,7 @@ botdesk/
 │  │  │  ├─ jobs/                (step 1) the queue app + one small function per job
 │  │  │  ├─ agents/              (step 1) run graph, nodes, policy, limits (the "run engine")
 │  │  │  ├─ events/              (step 1) event bus: memory / postgres / valkey
-│  │  │  └─ plugins/             (step 3) registry + loaders (entry points, later MCP and HTTP)
+│  │  │  └─ plugins/             (exists) registry + loader (entry points; later MCP and HTTP)
 │  │  ├─ migrations/             (exists) Alembic
 │  │  ├─ tests/                  (exists) pytest
 │  │  └─ evals/                  (step 2) injection cases + golden conversations
@@ -40,8 +40,9 @@ botdesk/
 │  └─ desktop/, mobile/          (later) Electron and Expo, on the same API
 │
 ├─ packages/                     things you IMPORT (shared code, some published)
-│  ├─ plugin-sdk/                (step 3) Python. PyPI: botdesk-plugin-sdk
-│  │  ├─ src/botdesk_plugin_sdk/   Tool, TriggerSource, Plugin, Manifest, RiskClass, testing helpers
+│  ├─ plugin-sdk/                (exists) Python. PyPI: botdesk-plugin-sdk (not published yet)
+│  │  ├─ src/botdesk_plugin_sdk/   PluginManifest, ToolSpec, RiskClass, ToolContext, validation, testing helpers
+│  │                               (TriggerSource arrives with triggers, step 5)
 │  │  ├─ tests/
 │  │  └─ pyproject.toml          a real package (unlike apps/api): versioned and published
 │  └─ api-client/                (later) TypeScript client generated from /api/openapi.json,
@@ -49,7 +50,7 @@ botdesk/
 │
 ├─ plugins/                      built-in integrations, one folder = one Python package
 │  ├─ _template/                 (step 3) copy this to start a plugin
-│  ├─ demo-echo/                 (step 2/3) the fake plugin used in tests and docs
+│  ├─ demo/                      (exists) the fake plugin used in tests and docs (plugin id `demo`)
 │  └─ gmail/                     (step 5)
 │     ├─ src/botdesk_gmail/        tools.py, triggers.py, auth.py, plugin.py
 │     ├─ manifest.json           generated from the code, committed, checked in CI
@@ -73,7 +74,7 @@ botdesk/
 ├─ CONTRIBUTING.md  SECURITY.md  CODE_OF_CONDUCT.md (exist)
 ├─ CHANGELOG.md                                    (first release) see §6
 ├─ package.json  pnpm-workspace.yaml  turbo.json   (exist) JS workspace + task runner for everything
-└─ pyproject.toml  uv.lock                         (step 3) Python workspace root, see §4
+└─ pyproject.toml  uv.lock  .python-version       (exists) Python workspace root, see §4
 ```
 
 ## 3. Why each folder
@@ -103,23 +104,22 @@ Three kinds of Python project will live here: the app (`apps/api`, not a package
 **Decided: a uv workspace at the repo root** (added at step 3, when the second Python project appears). Langflow and Onyx both keep a root `pyproject.toml` + `uv.lock` next to their root `package.json`, so it sits happily beside pnpm.
 
 ```toml
-# /pyproject.toml  (proposed; not a package itself)
+# /pyproject.toml  (as built; not a package itself)
 [tool.uv.workspace]
 members = ["apps/api", "packages/plugin-sdk", "plugins/*"]
 exclude = ["plugins/_template"]
 ```
 
 ```toml
-# apps/api/pyproject.toml  (proposed additions)
-dependencies = ["botdesk-plugin-sdk", "botdesk-plugin-gmail", "botdesk-plugin-demo-echo", ...]
+# apps/api/pyproject.toml  (as built; gmail joins at step 5)
+dependencies = ["botdesk-plugin-sdk", "botdesk-plugin-demo", ...]
 
 [tool.uv.sources]
-botdesk-plugin-sdk       = { workspace = true }
-botdesk-plugin-gmail     = { workspace = true }
-botdesk-plugin-demo-echo = { workspace = true }
+botdesk-plugin-sdk  = { workspace = true }
+botdesk-plugin-demo = { workspace = true }
 ```
 
-What that gives us: **one lockfile** for all Python code, plugins installed in "editable" mode so a change shows up at once, and `uv run --package botdesk-api …` / `uv build --package botdesk-plugin-sdk` to target one member. The cost: `apps/api/uv.lock` moves to the root and the `pnpm` scripts that call `uv` change slightly. Until step 3 nothing changes.
+What that gives us: **one lockfile** for all Python code, plugins installed in "editable" mode so a change shows up at once, and `uv run --package botdesk-api …` / `uv build --package botdesk-plugin-sdk` to target one member. The cost: `apps/api/uv.lock` moved to the root, and setup is `uv sync --all-packages` from the root (CI: `uv sync --frozen --all-packages`). The `pnpm` scripts in `apps/api` did not change: `uv run` inside a member finds the workspace. The SDK and each plugin have a tiny `package.json` too, so `pnpm check` (Turborepo) runs their ruff, mypy and pytest.
 
 **The import rules** (checked in CI with [import-linter](https://github.com/seddonym/import-linter), so they don't depend on memory):
 

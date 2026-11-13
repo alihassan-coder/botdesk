@@ -7,8 +7,8 @@ The BotDesk API: one backend for the web, desktop and mobile apps. Python, FastA
 You need [uv](https://docs.astral.sh/uv/) and Python 3.13 (uv can install it: `uv python install 3.13`).
 
 ```bash
+uv sync --all-packages   # from the repo root: the API, plugin SDK and plugins into .venv (one uv workspace)
 cd apps/api
-uv sync                  # install dependencies into apps/api/.venv
 cp .env.example .env     # then set DATABASE_URL (Neon) — or leave it unset for local SQLite
 cd ../..
 pnpm dev:api             # applies migrations, then serves http://localhost:8000
@@ -23,7 +23,7 @@ Open **http://localhost:8000/api/docs** to see and try every route.
 | `pnpm test:api` | pytest: unit and HTTP tests on in-memory SQLite (seconds, no network), plus the Postgres tests when `TEST_DATABASE_URL` is set |
 | `pnpm db:migrate` | Apply migrations to `DATABASE_URL` |
 | `pnpm db:seed` | Add the demo team (ali@acme.dev / botdesk123, Sara, Omar in Acme Labs) and three bots. Not in production |
-| `pnpm check` | typecheck (mypy) + lint (ruff) + tests, for web and API together |
+| `pnpm check` | typecheck (mypy) + lint (ruff) + tests, for web, API, plugin SDK and plugins together |
 
 Inside `apps/api`: `pnpm db:revision "add bots"` writes a new migration from model changes; `pnpm format` formats and fixes lint.
 
@@ -42,7 +42,7 @@ Every setting is in [`apps/api/.env.example`](../../apps/api/.env.example). The 
 | `ALLOW_PRIVATE_MODEL_URLS` | false | Production only: let custom model servers live on private, loopback or link-local addresses (see [Models and keys](#models-and-keys)). Always allowed outside production |
 | `RUN_MAX_STEPS`, `RUN_MAX_SECONDS` | 25, 900 | Limits on every run; a run that hits one fails with a clear message |
 | `BOT_MAX_RUNNING_RUNS` | 2 | Runs one bot may have going at once (across chats) |
-| `PLUGINS` | `demo` | Allowlist of built-in plugins to load (comma-separated). `demo` = fake tools for trying approvals |
+| `PLUGINS` | `demo` | Allowlist of plugin ids to load (comma-separated), found through `botdesk.plugins` entry points. An id nobody provides stops startup; a broken plugin is skipped with a log line. `demo` = fake tools for trying approvals |
 | `TOOL_TIMEOUT_SECONDS` | 30 | A tool call that takes longer fails |
 | `APPROVAL_EXPIRY_HOURS` | 72 | An approval nobody answers in time counts as "no" (checked when someone decides) |
 | `MEMORY_ENABLED` | false | mem0 memory on pgvector, in the same database. Also needs Postgres and `OPENAI_API_KEY` |
@@ -100,10 +100,9 @@ apps/api/
       event_bus.py           wakes a chat's live streams when new events are saved
       reporter.py            saves a run's events
     model_providers/         one small adapter per model provider: list models (= test a key), build a chat model
-    plugins/                 what bots can do
-      sdk.py                 the plugin seam: ToolSpec, PluginManifest, ToolContext, RiskClass (becomes packages/plugin-sdk)
+    plugins/                 what bots can do (the contract itself is packages/plugin-sdk)
+      loader.py              finds `botdesk.plugins` entry points, imports only allowlisted ones, skips broken ones
       registry.py            ToolRegistry: allowlisted plugins' tools by full name (`demo.send_email`)
-      demo/                  DEMO plugin: fake tools (clock, knowledge base, notes, fake outbox, injected inbox)
     api/
       deps.py                Db, CurrentUser, OrgAccess
       v1/router.py           mounts every route file under /api/v1
@@ -178,6 +177,7 @@ A service raises `NotFound("…")`, `Conflict("…")` and so on. `main.py` turns
 | `POST /api/v1/orgs/{id}/runs/{runId}/cancel` | Stop a run (queued or paused: at once, and its pending approval expires; running: within moments) |
 | `GET /api/v1/orgs/{id}/approvals` | Approvals in chats you're in, newest first, max 100. `status` = `pending` (default) / `approved` / `denied` / `edited` / `expired` / `all`; filter with `botId`, `threadId` |
 | `GET /api/v1/orgs/{id}/approvals/{approvalId}` | One approval (404 unless you're in its chat) |
+| `GET /api/v1/orgs/{id}/plugins` | The plugins this server loaded and their tools: `[{id, name, version, description, tools: [{name, title, description, risk}]}]`, `name` in full (`demo.send_email`). No handlers or schemas. Any member |
 | `GET /api/v1/orgs/{id}/providers` | Every supported model provider: connected or not, where the key comes from, its last 4 characters, last check. Never the key. Any member |
 | `PUT /api/v1/orgs/{id}/providers/{provider}` | `{apiKey, baseUrl?, label?}`: add or replace a key (owners and admins). Checked live first; a bad one is 400 `"That key didn't work: …"`. `provider` = `anthropic` / `openai` / `gemini` / `openrouter` / `groq`, `custom` for a new server, `custom-<id>` to change one |
 | `POST /api/v1/orgs/{id}/providers/{provider}/test` | Check a saved key again; saves the result (owners and admins) |
@@ -285,6 +285,16 @@ call_model ──(tool calls, one at a time)──→ prepare_call: validate arg
 - **Expiry:** approvals expire after `APPROVAL_EXPIRY_HOURS`. With no job queue there is no sweeper yet: an expired approval is noticed when someone decides it (409, and the run is told "no"), or when the run is stopped.
 - **Short transactions:** none is open during a model call, a tool call, or the wait for a person.
 
+### Plugins
+
+Build step 3 ([ADR 0006](../adr/0006-repo-structure-plugins-and-project.md)). The plugin contract is its own package, [`packages/plugin-sdk`](../../packages/plugin-sdk/README.md) (`botdesk-plugin-sdk`, import `botdesk_plugin_sdk`): `PluginManifest`, `ToolSpec`, `RiskClass`, `Egress`, `ToolContext`, `ToolResult`, `NoArgs`, `validate_manifest`, and test helpers. It depends only on Pydantic. The API imports the SDK; plugins import only the SDK; the API never imports a plugin by name.
+
+- **Layout:** one uv workspace at the repo root (`pyproject.toml`, `uv.lock`, `.venv`), members `apps/api`, `packages/plugin-sdk` and `plugins/*`. Built-in plugins live in `plugins/<name>/`, each its own package (`plugins/demo` = `botdesk-plugin-demo`, import `botdesk_demo`). The API lists them as workspace dependencies in `apps/api/pyproject.toml`.
+- **Finding:** a plugin package declares `[project.entry-points."botdesk.plugins"] <id> = "module:function"`; the function returns its `PluginManifest`, fresh each call so every app and test gets its own state.
+- **Allowlist first:** `src/plugins/loader.py` reads the entry points without importing anything, and imports only the ids in `PLUGINS`. Installed never means trusted.
+- **Checks at load** (`validate_manifest`, the same function plugin authors run in their tests): id is lowercase letters, digits and dashes and matches the entry-point name; tool names are lowercase with underscores and unique; title and description set; risk is one of the 7 classes and egress `fixed` / `open`; `args_model` is a Pydantic `BaseModel` class; the handler is `async`. A plugin that fails, or fails to import, or raises while building its manifest, or is provided by two packages, is **skipped with one `ERROR` log line** (`Plugin 'x' skipped: …`) and the API starts without it. An allowlisted id that no package provides is a settings typo and stops startup.
+- **Adding one:** see the SDK README's five-minute guide and [CONTRIBUTING.md](../../CONTRIBUTING.md#write-a-plugin).
+
 ### Approval JSON
 
 `GET …/approvals`, `GET …/approvals/{id}`, the `decide` response, and the `approval_requested` / `approval_decided` events all use this shape:
@@ -361,7 +371,7 @@ Follows the OWASP Forgot Password cheat sheet:
 ## Not yet (in order)
 
 1. Wire the web app's sign-in to this API (replace the mock in `apps/web/src/data/store.ts`).
-2. Approval follow-ups: an expiry sweeper (needs the job queue), *retry / skip* for `needs_attention` runs, saved rules ("always allow"), org ceiling and routine levels, per-call risk raising, `run_steps` audit rows, a tool-calls-per-run limit, an org-wide approvals stream. Then the plugin SDK (step 3). Full order: [agents-and-plugins.md §14](../architecture/agents-and-plugins.md#14-build-order-each-step-small-tested-and-usable).
+2. Approval follow-ups: an expiry sweeper (needs the job queue), *retry / skip* for `needs_attention` runs, saved rules ("always allow"), org ceiling and routine levels, per-call risk raising, `run_steps` audit rows, a tool-calls-per-run limit, an org-wide approvals stream. Then the rest of step 3: `plugins/_template`, a generated and CI-checked `manifest.json`, import rules in CI, release-please for the SDK. Full order: [agents-and-plugins.md §14](../architecture/agents-and-plugins.md#14-build-order-each-step-small-tested-and-usable).
 3. The job queue (procrastinate) and a separate worker, deferred by [ADR 0007](../adr/0007-runs-in-the-api-process-for-now.md); then the Postgres `LISTEN/NOTIFY` bus for several API copies.
 4. Memory screens (see, edit, delete) and `memory_audit`; trimming old `run_events` and checkpoints.
 5. Email verification, rate limiting on sign-in and forgot-password.

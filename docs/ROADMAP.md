@@ -66,8 +66,12 @@ When you finish something, tick it here in the same pull request.
 - [x] Models and keys in settings, saved per organization: Anthropic, OpenAI, Gemini, OpenRouter, Groq and custom OpenAI-compatible servers; keys checked live and encrypted; live model lists; a searchable model picker for bots
 
 ### Plugins (step 3)
-- [ ] Plugin SDK as its own package, and a uv workspace ([ADR 0006](adr/0006-repo-structure-plugins-and-project.md))
-- [ ] Move the demo plugin onto the SDK
+- [x] Plugin SDK as its own package, and a uv workspace ([ADR 0006](adr/0006-repo-structure-plugins-and-project.md))
+- [x] Move the demo plugin onto the SDK
+- [x] Plugins found through `botdesk.plugins` entry points, loaded only from the `PLUGINS` allowlist, checked at load (a broken one is skipped)
+- [x] `GET /orgs/{id}/plugins` for the "Connect apps" page
+- [ ] `plugins/_template`, a generated `manifest.json` checked in CI, import rules in CI
+- [ ] Release the SDK to PyPI with release-please (separate `sdk-v*` version)
 
 ### Gmail (step 5)
 - [ ] Connect with your own Google client; read, label, draft, and send only after approval

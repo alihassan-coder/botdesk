@@ -24,8 +24,8 @@ Quick check that everything works:
 
 ```bash
 pnpm install
-cd apps/api && uv sync && cd ../..
-pnpm check          # type checks, linting and tests for web and API
+uv sync --all-packages   # every Python package (API, plugin SDK, plugins) into one .venv
+pnpm check               # type checks, linting and tests for everything
 ```
 
 ## How we work
@@ -62,8 +62,9 @@ We care most that code is **easy for the next person to read**: plain names, sma
 |---|---|---|
 | `apps/web` | TypeScript, Next.js 16, Tailwind, shadcn/ui | Screens get data only through `src/data/store.ts`. Use shadcn components before writing custom UI. See [apps/web/AGENTS.md](apps/web/AGENTS.md) and the [frontend guide](docs/frontend/README.md). |
 | `apps/api` | Python 3.13, FastAPI, SQLAlchemy, Alembic | Layers go one way: routes → controllers → services → models. Every route lives under `/api/v1`. Database changes always come with an Alembic migration. See [apps/api/AGENTS.md](apps/api/AGENTS.md) and the [backend guide](docs/backend/README.md). |
+| `packages/plugin-sdk`, `plugins/*` | Python 3.13, Pydantic | The SDK depends on Pydantic only. Plugins import the SDK and never the API. See [Write a plugin](#write-a-plugin). |
 
-Formatting and linting are automatic: ESLint for the web app; ruff and mypy (strict) for the API. `pnpm check` runs them all.
+Formatting and linting are automatic: ESLint for the web app; ruff and mypy (strict) for every Python package. `pnpm check` runs them all.
 
 ### Tests
 
@@ -71,6 +72,18 @@ Every change to logic needs a test. Every bug fix needs a test that would have c
 
 - **Web:** Vitest + Testing Library for logic and components (`pnpm test:web`), Playwright for real browser flows (`pnpm test:e2e`).
 - **API:** pytest (`pnpm test:api`). Tests use an in-memory database, so they need no setup and no network.
+- **Plugin SDK and plugins:** pytest in each package (`pnpm --filter @botdesk/plugin-sdk test`, or `uv run --package botdesk-plugin-demo pytest plugins/demo` from the root).
+
+### Write a plugin
+
+A plugin adds tools that bots can use. It is a small Python package that depends only on the [plugin SDK](packages/plugin-sdk/README.md); the SDK README has a five-minute walkthrough. In this repo:
+
+1. Copy `plugins/demo` to `plugins/<name>` and rename the package (`botdesk-plugin-<name>`, import `botdesk_<name>`), the entry point and the `package.json` name. The workspace picks up every folder in `plugins/`.
+2. Write each tool as an `async` handler with a Pydantic args model, and pick its risk class honestly (the SDK README explains the 7 classes). Set `untrusted_output=True` for tools that return outside text.
+3. Test it without the app: `validate_manifest(your_plugin())` and `botdesk_plugin_sdk.testing.call_tool(...)`. Run `uv sync --all-packages`, then `uv run --package botdesk-plugin-<name> pytest plugins/<name>`.
+4. To try it in the API, add it to `apps/api/pyproject.toml` (a dependency plus a `[tool.uv.sources]` workspace line), run `uv lock`, add its id to `PLUGINS` in `apps/api/.env`, and start the API. `GET /api/v1/orgs/{id}/plugins` should list it; if not, the API log says why it was skipped.
+
+Plugins must not import anything from `apps/api`, and a plugin that talks to an outside service needs a README saying what it reads, what it can change, and which scopes it asks for.
 
 ### Words we use
 

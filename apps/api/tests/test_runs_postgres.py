@@ -54,7 +54,10 @@ class ScriptedModel(BaseChatModel):
 
 
 def use_model(pg: Postgres, model: BaseChatModel) -> None:
-    pg.runs.model_for = lambda _model_id: model
+    async def model_for(_org_id: uuid.UUID, _model_id: str) -> BaseChatModel:
+        return model
+
+    pg.runs.model_for = model_for
 
 
 async def _bot_chat(client: httpx.AsyncClient) -> tuple[str, str]:

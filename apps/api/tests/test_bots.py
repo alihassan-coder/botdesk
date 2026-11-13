@@ -17,7 +17,6 @@ async def test_hire_a_bot_and_see_it_in_the_list(client: httpx.AsyncClient) -> N
             "role": "Writing",
             "description": "Turns merged pull requests into release notes.",
             "avatarColor": "emerald",
-            "modelId": "anthropic:claude-sonnet-5-5",
         },
     )
     assert response.status_code == 201, response.text

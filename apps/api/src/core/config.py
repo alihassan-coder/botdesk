@@ -27,11 +27,22 @@ class Settings(BaseSettings):
     # the tests wipe it. Empty = those tests are skipped.
     test_database_url: str = ""
 
-    # Bots: the model when a bot doesn't name one ("provider:model"), and provider keys.
-    # A provider with no key gets a stand-in model that replies with a canned message.
+    # Bots: the model when a bot doesn't name one ("provider:model"), and instance-wide provider
+    # keys. Organizations add their own keys in Settings → Models & keys; those come first, these
+    # are the fallback for self-hosting. A provider with neither gets a stand-in model.
     default_model_id: str = "anthropic:claude-sonnet-4-5"
     anthropic_api_key: str = ""
     openai_api_key: str = ""
+    gemini_api_key: str = ""
+    openrouter_api_key: str = ""
+    groq_api_key: str = ""
+
+    # Encrypts organizations' provider keys at rest. Required in production; in development an
+    # unset key falls back to a fixed development key (with a warning).
+    secret_key: SecretStr | None = None
+    # Custom model servers on private, loopback or link-local addresses. Always allowed outside
+    # production (so Ollama on localhost works); in production only when this is true.
+    allow_private_model_urls: bool = False
 
     # Run limits (agents-and-plugins.md §4.2) and how many runs one bot may have going at once.
     run_max_steps: int = 25
@@ -67,6 +78,10 @@ class Settings(BaseSettings):
     @property
     def is_production(self) -> bool:
         return self.environment == "production"
+
+    @property
+    def private_model_urls_allowed(self) -> bool:
+        return self.allow_private_model_urls or not self.is_production
 
     @property
     def sends_real_email(self) -> bool:

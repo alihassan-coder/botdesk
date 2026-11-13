@@ -5,6 +5,7 @@ from src.models.approval import Approval
 from src.models.bot import Bot
 from src.models.invitation import Invitation
 from src.models.organization import Membership, Organization
+from src.models.provider_credential import ProviderCredential
 from src.models.run import Run, RunEvent, ToolExecution
 from src.models.thread import Message, Thread, ThreadParticipant
 from src.models.user import PasswordResetToken, Session, User
@@ -17,6 +18,7 @@ __all__ = [
     "Message",
     "Organization",
     "PasswordResetToken",
+    "ProviderCredential",
     "Run",
     "RunEvent",
     "Session",

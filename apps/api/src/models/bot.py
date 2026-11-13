@@ -23,8 +23,9 @@ class Bot(IdMixin, CreatedAtMixin, Base):
     description: Mapped[str] = mapped_column(Text, default="")
     instructions: Mapped[str] = mapped_column(Text, default="")
     avatar_color: Mapped[str] = mapped_column(String(20), default="indigo")
-    # "provider:model", e.g. "anthropic:claude-sonnet-5-5". Empty = the organization's default.
-    model_id: Mapped[str] = mapped_column(String(120), default="")
+    # "provider:model", e.g. "anthropic:claude-sonnet-5-5" or "custom-<id>:llama3.2:latest".
+    # Empty = DEFAULT_MODEL_ID.
+    model_id: Mapped[str] = mapped_column(String(200), default="")
     security_level: Mapped[str] = mapped_column(String(30), default="ask-before-acting")
     monthly_budget_usd: Mapped[int] = mapped_column(default=50)
     created_by: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))

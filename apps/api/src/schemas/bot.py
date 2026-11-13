@@ -7,7 +7,9 @@ from pydantic import Field, field_validator
 from src.models.bot import AvatarColor, SecurityLevel
 from src.schemas.common import ApiModel
 
-MODEL_ID_PATTERN = r"^([a-z0-9-]+:[A-Za-z0-9._-]+)?$"  # "provider:model" or empty
+# "provider:model" or empty. Model ids may hold "/" (OpenRouter), ":" (Ollama tags) and "@".
+MODEL_ID_PATTERN = r"^([a-z0-9-]+:[A-Za-z0-9._:/@+-]+)?$"
+MODEL_ID_MAX = 200
 
 
 class BotIn(ApiModel):
@@ -16,7 +18,7 @@ class BotIn(ApiModel):
     description: str = Field(default="", max_length=2000)
     instructions: str = Field(default="", max_length=20000)
     avatar_color: AvatarColor = "indigo"
-    model_id: str = Field(default="", max_length=120, pattern=MODEL_ID_PATTERN)
+    model_id: str = Field(default="", max_length=MODEL_ID_MAX, pattern=MODEL_ID_PATTERN)
     security_level: SecurityLevel = "ask-before-acting"
     monthly_budget_usd: int = Field(default=50, ge=0, le=100_000)
 
@@ -36,7 +38,7 @@ class BotUpdate(ApiModel):
     description: str | None = Field(default=None, max_length=2000)
     instructions: str | None = Field(default=None, max_length=20000)
     avatar_color: AvatarColor | None = None
-    model_id: str | None = Field(default=None, max_length=120, pattern=MODEL_ID_PATTERN)
+    model_id: str | None = Field(default=None, max_length=MODEL_ID_MAX, pattern=MODEL_ID_PATTERN)
     security_level: SecurityLevel | None = None
     monthly_budget_usd: int | None = Field(default=None, ge=0, le=100_000)
 

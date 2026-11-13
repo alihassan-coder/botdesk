@@ -16,7 +16,7 @@ pause. Side effects happen only in `execute_tool`, after the decision is saved.
 import logging
 import time
 import uuid
-from collections.abc import Callable, Coroutine
+from collections.abc import Awaitable, Callable, Coroutine
 from dataclasses import dataclass
 from datetime import timedelta
 from typing import Any, Literal, TypedDict, cast
@@ -42,6 +42,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from src.models.bot import SecurityLevel
 from src.plugins.registry import ToolRegistry
 from src.runtime import tool_pipeline
+from src.runtime.chat_model import ModelUnavailable, describe_model_error
 from src.runtime.limits import RunLimits, limit_reached
 from src.runtime.memory import MemoryScope, MemoryService
 from src.runtime.policy import LEVELS
@@ -107,7 +108,7 @@ class RunDeps:
     sessionmaker: async_sessionmaker[AsyncSession]
     reporter: RunReporter
     memory: MemoryService
-    model_for: Callable[[str], BaseChatModel]
+    model_for: Callable[[str], Awaitable[BaseChatModel]]  # model id → chat model, with this org's keys
     in_background: Callable[[Coroutine[Any, Any, None]], None]
     registry: ToolRegistry
     tool_timeout_seconds: float
@@ -182,7 +183,11 @@ async def call_model(state: RunState, runtime: Runtime[RunDeps]) -> RunState:
     # The reply's id is chosen at the first step, so every streamed piece and the saved message share it.
     message_id = state.get("reply_message_id") or str(uuid.uuid4())
     earlier = state.get("reply", "")
-    model = _with_tools(deps.model_for(state["model_id"]), deps.registry)
+    try:
+        chat_model = await deps.model_for(state["model_id"])
+    except ModelUnavailable as error:
+        raise RunError(str(error)) from error
+    model = _with_tools(chat_model, deps.registry)
     answer = await _stream_reply(
         deps, model, [*prompt, *messages_from_dict(turns)], message_id, separator=STEP_SEPARATOR if earlier else ""
     )
@@ -228,7 +233,7 @@ async def _stream_reply(
                     if batch := batcher.add(token, now=time.monotonic()):
                         sender.send(batch)
         except Exception as error:
-            raise RunError(f"The model couldn't reply: {error}") from error
+            raise RunError(describe_model_error(error)) from error
         if rest := batcher.flush():
             sender.send(rest)
     if answer is None:

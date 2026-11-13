@@ -13,11 +13,13 @@ from src.api.v1.router import api_router
 from src.core.config import Settings, get_settings
 from src.core.database import Base, create_engine, create_sessionmaker, is_in_memory
 from src.core.errors import AppError
+from src.core.secrets import build_secret_box
 from src.runtime.memory import build_memory
 from src.runtime.runner import run_manager
 from src.services.email_service import build_email_sender
+from src.services.model_catalog import ModelCatalog
 
-# Calls to outside services (email) give up quickly; they run in the background anyway.
+# Calls to outside services (email, model lists) give up quickly; model lists set shorter timeouts.
 OUTBOUND_TIMEOUT = httpx.Timeout(10.0, connect=5.0)
 
 
@@ -31,9 +33,11 @@ def _show_app_logs() -> None:
         app_logger.setLevel(logging.INFO)
 
 
-def create_app(settings: Settings | None = None) -> FastAPI:
+def create_app(settings: Settings | None = None, *, outbound: httpx.AsyncBaseTransport | None = None) -> FastAPI:
+    """`outbound` replaces the network for calls to other services (tests pass an httpx.MockTransport)."""
     settings = settings or get_settings()
     _show_app_logs()
+    secrets = build_secret_box(settings)  # production stops here without SECRET_KEY
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
@@ -45,10 +49,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         app.state.engine = engine
         app.state.sessionmaker = create_sessionmaker(engine)
         async with (
-            httpx.AsyncClient(timeout=OUTBOUND_TIMEOUT) as http,
-            run_manager(settings, app.state.sessionmaker, build_memory(settings)) as runs,
+            httpx.AsyncClient(timeout=OUTBOUND_TIMEOUT, transport=outbound) as http,
+            run_manager(settings, app.state.sessionmaker, build_memory(settings), secrets) as runs,
         ):
             app.state.email = build_email_sender(settings, http)
+            app.state.models = ModelCatalog(http, allow_private_urls=settings.private_model_urls_allowed)
             app.state.runs = runs
             yield
         await engine.dispose()
@@ -63,12 +68,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         openapi_url=None if settings.is_production else "/api/openapi.json",
     )
     app.state.settings = settings
+    app.state.secrets = secrets
 
     app.add_middleware(
         CORSMiddleware,
         allow_origins=settings.allowed_origins,
         allow_credentials=True,  # the web app sends the session cookie
-        allow_methods=["GET", "POST", "PATCH", "DELETE"],
+        allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE"],
         allow_headers=["Content-Type", "Authorization"],
     )
 

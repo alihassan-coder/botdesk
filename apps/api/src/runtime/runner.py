@@ -18,7 +18,7 @@ import logging
 import time
 import uuid
 from collections import Counter
-from collections.abc import AsyncIterator, Callable, Coroutine
+from collections.abc import AsyncIterator, Awaitable, Callable, Coroutine
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from datetime import timedelta
@@ -38,9 +38,10 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from src.core.config import Settings
 from src.core.database import postgres_connect_args
+from src.core.secrets import SecretBox
 from src.models import Run
 from src.plugins.registry import ToolRegistry, build_registry
-from src.runtime.chat_model import chat_model_for
+from src.runtime.chat_model import ModelResolver
 from src.runtime.event_bus import EventBus
 from src.runtime.graph import RunDeps, RunError, RunStopped, build_graph
 from src.runtime.limits import RunLimits, time_limit_message
@@ -90,13 +91,17 @@ class RunManager:
         memory: MemoryService | None = None,
         bus: EventBus | None = None,
         registry: ToolRegistry | None = None,
+        secrets: SecretBox,
     ) -> None:
         self.settings = settings
         self.sessionmaker = sessionmaker
         self.bus = bus or EventBus()
         self.memory: MemoryService = memory or NoMemory()
         self.registry = registry or build_registry(settings.plugin_ids)
-        self.model_for: Callable[[str], BaseChatModel] = self._model_for
+        # (org id, model id) → the chat model, with the org's keys. Tests swap in a fake model here.
+        self.model_for: Callable[[uuid.UUID, str], Awaitable[BaseChatModel]] = ModelResolver(
+            settings, sessionmaker, secrets
+        )
         # Tests about chats (not replies) switch this off: runs are created but never start.
         self.enabled = True
         self._graph = build_graph(checkpointer)
@@ -226,7 +231,7 @@ class RunManager:
             sessionmaker=self.sessionmaker,
             reporter=reporter,
             memory=self.memory,
-            model_for=self.model_for,
+            model_for=partial(self.model_for, ticket.org_id),
             in_background=self.in_background,
             registry=self.registry,
             tool_timeout_seconds=self.settings.tool_timeout_seconds,
@@ -284,9 +289,6 @@ class RunManager:
 
     # Helpers
 
-    def _model_for(self, model_id: str) -> BaseChatModel:
-        return chat_model_for(model_id, self.settings)
-
     def _reporter(self, ticket: RunTicket) -> RunReporter:
         return RunReporter(self.sessionmaker, self.bus, ticket.org_id, ticket.thread_id, ticket.id)
 
@@ -338,11 +340,13 @@ async def checkpointer_for(settings: Settings) -> AsyncIterator[BaseCheckpointSa
 
 @asynccontextmanager
 async def run_manager(
-    settings: Settings, sessionmaker: async_sessionmaker[AsyncSession], memory: MemoryService
+    settings: Settings, sessionmaker: async_sessionmaker[AsyncSession], memory: MemoryService, secrets: SecretBox
 ) -> AsyncIterator[RunManager]:
     """The API's run manager, for the lifetime of the app."""
     async with checkpointer_for(settings) as checkpointer:
-        runs = RunManager(settings=settings, sessionmaker=sessionmaker, checkpointer=checkpointer, memory=memory)
+        runs = RunManager(
+            settings=settings, sessionmaker=sessionmaker, checkpointer=checkpointer, memory=memory, secrets=secrets
+        )
         await runs.recover_after_restart()
         try:
             yield runs

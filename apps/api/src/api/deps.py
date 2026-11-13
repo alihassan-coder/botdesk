@@ -10,10 +10,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src.core.config import Settings
 from src.core.database import get_session
 from src.core.errors import Forbidden, NotFound, Unauthorized
+from src.core.secrets import SecretBox
 from src.models import Organization, User
 from src.runtime.runner import RunManager
 from src.services import auth_service, organization_service
 from src.services.email_service import EmailSender
+from src.services.model_catalog import ModelCatalog
 
 Db = Annotated[AsyncSession, Depends(get_session)]
 
@@ -42,6 +44,24 @@ def get_email_sender(request: Request) -> EmailSender:
 
 
 Emails = Annotated[EmailSender, Depends(get_email_sender)]
+
+
+def get_secrets(request: Request) -> SecretBox:
+    """Encrypts and decrypts saved provider keys (built from SECRET_KEY at startup)."""
+    secrets: SecretBox = request.app.state.secrets
+    return secrets
+
+
+Secrets = Annotated[SecretBox, Depends(get_secrets)]
+
+
+def get_model_catalog(request: Request) -> ModelCatalog:
+    """Live model lists from the providers, cached for a few minutes (one per API process)."""
+    catalog: ModelCatalog = request.app.state.models
+    return catalog
+
+
+Catalog = Annotated[ModelCatalog, Depends(get_model_catalog)]
 
 
 def session_token(request: Request) -> str | None:

@@ -2,6 +2,7 @@
 
 - `client`: a fresh app on an in-memory SQLite database. No network, runs anywhere in seconds.
   Bots don't reply here (runs are created but not started): these tests are about the API.
+  Calls to model providers go to `providers` (a `FakeProviders`), never to the internet.
 - `pg`: a fresh app on real Postgres (TEST_DATABASE_URL), with bots replying. Everything that
   depends on Postgres (runs, checkpoints, the one-run-per-chat guard, JSONB) is tested here.
   Skipped, with a reason, when TEST_DATABASE_URL isn't set.
@@ -9,6 +10,7 @@
 
 import asyncio
 from collections.abc import AsyncIterator, Callable, Mapping
+from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from typing import Any
 
@@ -59,14 +61,52 @@ def outbox() -> FakeEmailSender:
     return FakeEmailSender()
 
 
+Answer = Callable[[httpx.Request], httpx.Response]
+
+
+class FakeProviders:
+    """Stands in for every model provider's HTTP API: `answer(host, …)` says how a host replies.
+    Hosts with no answer refuse the connection, like a server that's down."""
+
+    def __init__(self) -> None:
+        self.answers: dict[str, Answer] = {}
+        self.requests: list[httpx.Request] = []
+
+    def answer(self, host: str, body: Any = None, *, status: int = 200, handler: Answer | None = None) -> None:
+        self.answers[host] = handler or (lambda _request: httpx.Response(status, json=body))
+
+    def calls_to(self, host: str) -> int:
+        return sum(1 for request in self.requests if request.url.host == host)
+
+    def handle(self, request: httpx.Request) -> httpx.Response:
+        self.requests.append(request)
+        if answer := self.answers.get(request.url.host):
+            return answer(request)
+        raise httpx.ConnectError("connection refused", request=request)
+
+
 @pytest.fixture
-async def client(outbox: FakeEmailSender) -> AsyncIterator[httpx.AsyncClient]:
-    app = create_app(TEST_SETTINGS)
+def providers() -> FakeProviders:
+    return FakeProviders()
+
+
+@asynccontextmanager
+async def api_client(
+    settings: Settings, providers: FakeProviders, outbox: FakeEmailSender | None = None
+) -> AsyncIterator[tuple[FastAPI, httpx.AsyncClient]]:
+    """A fresh app on `settings` with fake providers; runs are created but never start."""
+    app = create_app(settings, outbound=httpx.MockTransport(providers.handle))
     async with app.router.lifespan_context(app):
         app.state.runs.enabled = False
-        app.state.email = outbox
+        app.state.email = outbox or FakeEmailSender()
         async with await _client_for(app) as http:
-            yield http
+            yield app, http
+
+
+@pytest.fixture
+async def client(outbox: FakeEmailSender, providers: FakeProviders) -> AsyncIterator[httpx.AsyncClient]:
+    async with api_client(TEST_SETTINGS, providers, outbox) as (_, http):
+        yield http
 
 
 @dataclass

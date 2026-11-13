@@ -1,6 +1,8 @@
-"""Pick the chat model for a bot. Any LangChain provider works through `init_chat_model`.
+"""Pick the chat model for a bot: `ModelResolver` turns a bot's "provider:model" into a LangChain
+chat model, using (in this order) the organization's key for that provider, the server's
+environment key, or a stand-in model. Keys are decrypted only here, right before the run uses them.
 
-With no API key for the provider, the bot gets a stand-in model, so the whole flow (runs,
+With no key for the provider, the bot gets the stand-in model, so the whole flow (runs,
 streaming, tools, approvals) works offline and in tests. The stand-in is deterministic:
 
 - a message containing `/tool demo.create_note title="Plan" body=Ship` makes it call that
@@ -15,7 +17,6 @@ import uuid
 from collections.abc import AsyncIterator, Callable, Iterator, Sequence
 from typing import Any
 
-from langchain.chat_models import init_chat_model
 from langchain_core.callbacks import AsyncCallbackManagerForLLMRun, CallbackManagerForLLMRun
 from langchain_core.language_models import BaseChatModel, LanguageModelInput
 from langchain_core.messages import AIMessage, AIMessageChunk, BaseMessage, HumanMessage, ToolMessage
@@ -23,12 +24,18 @@ from langchain_core.messages.tool import tool_call_chunk
 from langchain_core.outputs import ChatGeneration, ChatGenerationChunk, ChatResult
 from langchain_core.runnables import Runnable
 from langchain_core.tools import BaseTool
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from src.core.config import Settings
+from src.core.errors import AppError
+from src.core.secrets import SecretBox
+from src.core.url_guard import check_base_url
+from src.model_providers import ProviderError, adapter_for, scrub
+from src.services import provider_service
 
 STAND_IN_REPLY = (
     "Hi! I'm a stand-in reply: BotDesk has no API key for {provider} yet, so I can't think for real. "
-    "Add ANTHROPIC_API_KEY or OPENAI_API_KEY to apps/api/.env and restart the API. "
+    "An owner or admin can add one in Settings → Models & keys, then pick a model for me. "
     "You can still try tools: send `/tool demo.send_email to=sara@acme.dev subject=Hi`."
 )
 TOOL_COMMAND = "/tool"
@@ -144,12 +151,47 @@ def stand_in_model(provider: str) -> BaseChatModel:
     return StandInModel(provider=provider or "this model")
 
 
-def chat_model_for(model_id: str, settings: Settings) -> BaseChatModel:
-    """`model_id` is "provider:model", e.g. "anthropic:claude-sonnet-4-5". Empty = the default."""
-    model_id = model_id or settings.default_model_id
-    provider = model_id.partition(":")[0]
-    keys = {"anthropic": settings.anthropic_api_key, "openai": settings.openai_api_key}
-    api_key = keys.get(provider, "")
-    if not api_key:
-        return stand_in_model(provider)
-    return init_chat_model(model_id, api_key=api_key)
+class ModelUnavailable(Exception):
+    """The bot's model can't be used (its key can't be read, or its server's address isn't allowed).
+    The message is safe to show as the run's error."""
+
+
+class ModelResolver:
+    """The chat model for one run: org key > environment key > stand-in."""
+
+    def __init__(self, settings: Settings, sessionmaker: async_sessionmaker[AsyncSession], secrets: SecretBox) -> None:
+        self.settings = settings
+        self.sessionmaker = sessionmaker
+        self.secrets = secrets
+
+    async def __call__(self, org_id: uuid.UUID, model_id: str) -> BaseChatModel:
+        """`model_id` is "provider:model" (e.g. "groq:llama-3.3-70b-versatile"). Empty = DEFAULT_MODEL_ID."""
+        provider_id, _, model = (model_id or self.settings.default_model_id).partition(":")
+        try:
+            async with self.sessionmaker() as db:
+                connection = await provider_service.connection_for(db, org_id, provider_id, self.settings, self.secrets)
+            if connection is None:
+                return stand_in_model(provider_id)
+            base_url = connection.base_url
+            if connection.kind == "custom" and base_url:
+                base_url = await check_base_url(base_url, allow_private=self.settings.private_model_urls_allowed)
+        except ProviderError as error:
+            raise ModelUnavailable(f"{provider_id}: {error}") from error
+        except AppError as error:
+            raise ModelUnavailable(error.message) from error
+        return adapter_for(connection.kind).chat_model(model, connection.api_key, base_url)
+
+
+def describe_model_error(error: Exception) -> str:
+    """A model call failed mid-run: say why in words people can act on. Never includes a key."""
+    status = getattr(error, "status_code", None)
+    lowered = str(error).lower()
+    if status in (401, 403) or "invalid api key" in lowered or "incorrect api key" in lowered:
+        return "The model provider refused the API key. An owner or admin can replace it in Settings → Models & keys."
+    if "tool" in lowered and any(word in lowered for word in ("support", "not available", "not enabled")):
+        return "This model can't use tools. Pick another model in the bot's settings."
+    if status == 404 or "model_not_found" in lowered or "does not exist" in lowered:
+        return "The provider doesn't offer this model any more. Pick another one in the bot's settings."
+    if status == 429:
+        return "The model provider says we're over its rate limit or quota. Try again in a little while."
+    return f"The model couldn't reply: {scrub(str(error))}"

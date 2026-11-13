@@ -29,6 +29,23 @@ describe("Models & keys in the demo", () => {
     expect(added.keyHint).toBeUndefined();
   });
 
+  it("editing a custom server keeps its key when left blank, and asks again for a new URL", async () => {
+    await actions.saveProviderKey("custom", { apiKey: "vllm-secret-key-0042", label: "vLLM", baseUrl: "https://vllm.acme.dev/v1" });
+    const server = state().modelProviders.at(-1)!;
+    expect(server.keyHint).toBe("0042");
+
+    await expect(actions.saveProviderKey(server.id, { apiKey: "", label: "vLLM 2", baseUrl: "https://vllm.acme.dev/v1" })).resolves.toEqual({ ok: true });
+    expect(provider(server.id)).toMatchObject({ name: "vLLM 2", keyHint: "0042" });
+
+    const moved = await actions.saveProviderKey(server.id, { apiKey: "", label: "vLLM 2", baseUrl: "https://elsewhere.dev/v1" });
+    expect(moved.ok).toBe(false);
+    expect(provider(server.id)?.baseUrl).toBe("https://vllm.acme.dev/v1");
+
+    await actions.saveProviderKey(server.id, { apiKey: "", label: "vLLM 2", baseUrl: "https://elsewhere.dev/v1", noKey: true });
+    expect(provider(server.id)).toMatchObject({ baseUrl: "https://elsewhere.dev/v1" });
+    expect(provider(server.id)?.keyHint).toBeUndefined();
+  });
+
   it("removing a key disconnects a built-in provider, takes its models, and drops a custom server", async () => {
     await actions.removeProviderKey("anthropic");
     expect(provider("anthropic")).toEqual(expect.objectContaining({ connected: false }));

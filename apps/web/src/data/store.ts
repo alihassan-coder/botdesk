@@ -885,11 +885,15 @@ function decideMockApproval(approvalId: string, decision: "approve" | "deny", ed
  * unless it starts with "bad", so the error path can be tried too.
  */
 
-/** What you type to connect a provider. Custom servers add a name and a base URL; their key may be empty. */
+/**
+ * What you type to connect a provider. Custom servers add a name and a base URL; their key may be
+ * empty. Editing one, an empty key keeps the saved key unless the base URL changes; `noKey` drops it.
+ */
 export interface ProviderKeyInput {
   apiKey: string;
   baseUrl?: string;
   label?: string;
+  noKey?: boolean;
 }
 
 /** The org's providers and every connected provider's models, fetched together. */
@@ -923,7 +927,7 @@ const MOCK_NEW_MODELS: Record<string, Model[]> = {
 };
 
 /** MOCK: "checks" the key, then connects the provider (or adds a custom server). */
-function saveMockKey(providerId: string, { apiKey, baseUrl, label }: ProviderKeyInput): ActionResult {
+function saveMockKey(providerId: string, { apiKey, baseUrl, label, noKey }: ProviderKeyInput): ActionResult {
   const key = apiKey.trim();
   if (key.startsWith("bad")) return { ok: false, error: "That key didn't work: 401: Incorrect API key provided." };
   const existing = state.modelProviders.find((p) => p.id === providerId);
@@ -931,7 +935,12 @@ function saveMockKey(providerId: string, { apiKey, baseUrl, label }: ProviderKey
   if (!existing && !isNewCustom) return { ok: false, error: "We don't support that provider." };
   const kind = existing?.kind ?? "custom";
   if (kind !== "custom" && !key) return { ok: false, error: "Paste the API key." };
-  const hint = keyHintOf(key);
+  const newUrl = baseUrl?.trim().replace(/\/+$/, "") || existing?.baseUrl;
+  const keepsKey = kind === "custom" && !key && !noKey && existing?.keyHint !== undefined;
+  if (keepsKey && newUrl !== existing?.baseUrl) {
+    return { ok: false, error: "You changed the base URL, so paste the API key again (or choose No key). A saved key is never sent to a new address." };
+  }
+  const hint = keepsKey ? existing?.keyHint : keyHintOf(key);
   const saved: ModelProvider = {
     id: isNewCustom ? `custom-${id()}` : providerId,
     kind,
@@ -939,7 +948,7 @@ function saveMockKey(providerId: string, { apiKey, baseUrl, label }: ProviderKey
     hint: existing?.hint ?? CUSTOM_HINT,
     connected: true, source: "org", status: "ok", lastVerifiedAt: now(),
     ...(hint ? { keyHint: hint } : {}),
-    ...(kind === "custom" ? { baseUrl: baseUrl?.trim().replace(/\/+$/, "") || existing?.baseUrl } : {}),
+    ...(kind === "custom" ? { baseUrl: newUrl } : {}),
   };
   const added = (MOCK_NEW_MODELS[saved.id] ?? []).filter((m) => !state.models.some((known) => known.id === m.id));
   set((st) => ({ ...st, modelProviders: withProvider(st.modelProviders, saved), models: [...st.models, ...added] }));

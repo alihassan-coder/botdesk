@@ -80,11 +80,16 @@ export interface ApiModelProvider {
   baseUrl: string | null;
 }
 
-/** Add or replace a key. Custom servers also send a base URL and a name; their key may be "". */
+/**
+ * Add or replace a key. Custom servers also send a base URL and a name; their key may be "".
+ * Editing a custom server: "" keeps the saved key while the base URL is unchanged; a new base URL
+ * needs the key again, or `noKey: true` to drop it.
+ */
 export interface ApiProviderKeyInput {
   apiKey: string;
   baseUrl?: string;
   label?: string;
+  noKey?: boolean;
 }
 
 export interface ApiProviderTest {

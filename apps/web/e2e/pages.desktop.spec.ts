@@ -149,6 +149,19 @@ test.describe("Settings", () => {
     await expect(page.getByLabel("Custom colour")).toBeFocused();
   });
 
+  test("Memory: search a bot's memories, then make it forget everything", async ({ page }) => {
+    await page.goto("/settings/memory");
+    const list = page.getByRole("list", { name: "What Chief remembers" });
+    await expect(list.getByRole("listitem")).toHaveCount(2);
+    await page.getByLabel("Search what Chief remembers").fill("thursdays");
+    await expect(list.getByRole("listitem")).toHaveCount(1);
+    await page.getByLabel("Search what Chief remembers").fill("");
+
+    await page.getByRole("button", { name: "Forget everything" }).click();
+    await page.getByRole("alertdialog").getByRole("button", { name: "Forget everything" }).click();
+    await expect(page.getByText("Chief hasn't remembered anything yet. It learns as you chat.")).toBeVisible();
+  });
+
   test("a custom accent colour, with readable text on it", async ({ page }) => {
     await page.goto("/settings/appearance");
     // Under load the colour can be set before the page hydrates, and React then drops it: set it

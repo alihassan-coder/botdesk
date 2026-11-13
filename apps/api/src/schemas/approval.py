@@ -2,10 +2,10 @@ import uuid
 from datetime import datetime
 from typing import Any, Literal
 
+from botdesk_plugin_sdk import RiskClass
 from pydantic import Field
 
 from src.models.approval import ApprovalStatus
-from src.plugins.sdk import RiskClass
 from src.schemas.common import ApiModel
 
 

@@ -1,13 +1,8 @@
-"""Plugins: what bots can do. `sdk.py` is the seam, `registry.py` collects the tools.
+"""Plugins: what bots can do.
 
-Built-in plugins are listed here by id. Each entry builds a fresh manifest, so every app
-(and every test) gets its own plugin state. Entry points and the plugin SDK package replace
-this list in build step 3 (ADR 0006).
+The plugin contract (manifests, tools, risk classes) lives in the separate `botdesk_plugin_sdk`
+package (packages/plugin-sdk); this app only knows that contract, never a specific plugin.
+`loader.py` finds allowlisted plugins through `botdesk.plugins` entry points, and
+`registry.py` collects their tools under full names. Built-in plugins live in `plugins/` at the
+repo root, each its own package (ADR 0006).
 """
-
-from collections.abc import Callable
-
-from src.plugins.demo import demo_plugin
-from src.plugins.sdk import PluginManifest
-
-BUILTIN_PLUGINS: dict[str, Callable[[], PluginManifest]] = {"demo": demo_plugin}

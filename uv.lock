@@ -7,6 +7,13 @@ resolution-markers = [
     "python_full_version < '3.14'",
 ]
 
+[manifest]
+members = [
+    "botdesk-api",
+    "botdesk-plugin-demo",
+    "botdesk-plugin-sdk",
+]
+
 [[package]]
 name = "aiosqlite"
 version = "0.22.1"
@@ -211,11 +218,13 @@ wheels = [
 [[package]]
 name = "botdesk-api"
 version = "0.1.0"
-source = { virtual = "." }
+source = { virtual = "apps/api" }
 dependencies = [
     { name = "aiosqlite" },
     { name = "alembic" },
     { name = "argon2-cffi" },
+    { name = "botdesk-plugin-demo" },
+    { name = "botdesk-plugin-sdk" },
     { name = "cryptography" },
     { name = "email-validator" },
     { name = "fastapi" },
@@ -248,6 +257,8 @@ requires-dist = [
     { name = "aiosqlite", specifier = ">=0.22.1" },
     { name = "alembic", specifier = ">=1.20.1" },
     { name = "argon2-cffi", specifier = ">=25.1.0" },
+    { name = "botdesk-plugin-demo", editable = "plugins/demo" },
+    { name = "botdesk-plugin-sdk", editable = "packages/plugin-sdk" },
     { name = "cryptography", specifier = ">=50.0.2" },
     { name = "email-validator", specifier = ">=2.3.0" },
     { name = "fastapi", specifier = ">=0.162.5" },
@@ -269,6 +280,64 @@ requires-dist = [
 [package.metadata.requires-dev]
 dev = [
     { name = "httpx", specifier = ">=0.28.1" },
+    { name = "mypy", specifier = ">=2.4.1" },
+    { name = "pytest", specifier = ">=9.2.0" },
+    { name = "pytest-asyncio", specifier = ">=1.4.1.post1" },
+    { name = "ruff", specifier = ">=0.17.4" },
+]
+
+[[package]]
+name = "botdesk-plugin-demo"
+version = "0.1.0"
+source = { editable = "plugins/demo" }
+dependencies = [
+    { name = "botdesk-plugin-sdk" },
+    { name = "pydantic", extra = ["email"] },
+]
+
+[package.dev-dependencies]
+dev = [
+    { name = "mypy" },
+    { name = "pytest" },
+    { name = "pytest-asyncio" },
+    { name = "ruff" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "botdesk-plugin-sdk", editable = "packages/plugin-sdk" },
+    { name = "pydantic", extras = ["email"], specifier = ">=2.11" },
+]
+
+[package.metadata.requires-dev]
+dev = [
+    { name = "mypy", specifier = ">=2.4.1" },
+    { name = "pytest", specifier = ">=9.2.0" },
+    { name = "pytest-asyncio", specifier = ">=1.4.1.post1" },
+    { name = "ruff", specifier = ">=0.17.4" },
+]
+
+[[package]]
+name = "botdesk-plugin-sdk"
+version = "0.1.0"
+source = { editable = "packages/plugin-sdk" }
+dependencies = [
+    { name = "pydantic" },
+]
+
+[package.dev-dependencies]
+dev = [
+    { name = "mypy" },
+    { name = "pytest" },
+    { name = "pytest-asyncio" },
+    { name = "ruff" },
+]
+
+[package.metadata]
+requires-dist = [{ name = "pydantic", specifier = ">=2.11" }]
+
+[package.metadata.requires-dev]
+dev = [
     { name = "mypy", specifier = ">=2.4.1" },
     { name = "pytest", specifier = ">=9.2.0" },
     { name = "pytest-asyncio", specifier = ">=1.4.1.post1" },
@@ -1786,6 +1855,11 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/b4/fc/1203d011145c98ddce3cd2f505bb54375ef8d43223053df6bfcf3c746f46/pydantic-2.14.3.tar.gz", hash = "sha256:1054f237f4d4733e5a30e1e2333bd33a2004ab9ab1510bd053a9a31bb48e232d", size = 925636, upload-time = "2026-11-05T09:17:04.686Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/72/b8/b864503789ef5c58597d2a7b4adbee62c26440ab1e682581fc6838df8947/pydantic-2.14.3-py3-none-any.whl", hash = "sha256:3f7b347782ab7e4cf4c798496ae3a82787d9f21ec12676a9c564355eeef8daa8", size = 494071, upload-time = "2026-11-05T09:17:02.426Z" },
+]
+
+[package.optional-dependencies]
+email = [
+    { name = "email-validator" },
 ]
 
 [[package]]

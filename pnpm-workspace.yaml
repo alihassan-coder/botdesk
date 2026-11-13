@@ -1,6 +1,8 @@
 packages:
   - "apps/*"
   - "packages/*"
+  - "plugins/*"
+  - "!plugins/_template"
 
 allowBuilds:
   sharp: true

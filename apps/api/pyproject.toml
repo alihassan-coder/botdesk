@@ -9,6 +9,8 @@ dependencies = [
     "aiosqlite>=0.22.1",
     "alembic>=1.20.1",
     "argon2-cffi>=25.1.0",
+    "botdesk-plugin-demo",
+    "botdesk-plugin-sdk",
     "cryptography>=50.0.2",
     "email-validator>=2.3.0",
     "fastapi>=0.162.5",
@@ -29,6 +31,12 @@ dependencies = [
 
 [tool.uv]
 package = false  # an app, not a library: the code runs from src/ (imports are `from src...`)
+
+# The SDK and the built-in plugins come from this repo's uv workspace (the root pyproject.toml),
+# installed in editable mode, so a change to them shows up here at once.
+[tool.uv.sources]
+botdesk-plugin-sdk = { workspace = true }
+botdesk-plugin-demo = { workspace = true }
 
 [dependency-groups]
 dev = [

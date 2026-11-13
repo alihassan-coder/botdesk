@@ -1,9 +1,9 @@
 """The policy table from ADR 0004, cell by cell, plus the taint rules. Pure: no database."""
 
 import pytest
+from botdesk_plugin_sdk import RISK_CLASSES, RiskClass
 
 from src.models.bot import SecurityLevel
-from src.plugins.sdk import RISK_CLASSES, RiskClass
 from src.runtime.policy import Decision, decide, effective_risk, strictest_level
 
 # Exactly the table in ADR 0004 §4. Columns: read, write-internal, write-external,

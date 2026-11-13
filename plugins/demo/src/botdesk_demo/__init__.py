@@ -1,6 +1,9 @@
-"""DEMO PLUGIN. Fake tools so the tool pipeline and approvals can be tried with no outside
-account. Nothing here talks to the outside world: "emails" are only recorded, notes live in
-this process's memory and are gone after a restart.
+"""DEMO PLUGIN (`botdesk-plugin-demo`, plugin id `demo`). Fake tools so the tool pipeline and
+approvals can be tried with no outside account. Nothing here talks to the outside world:
+"emails" are only recorded, notes live in this process's memory and are gone after a restart.
+
+It is also the reference plugin: it uses nothing but `botdesk_plugin_sdk`, and the app finds it
+through its `botdesk.plugins` entry point (see pyproject.toml), exactly like any other plugin.
 
 One tool per interesting case:
 
@@ -19,9 +22,8 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any
 
+from botdesk_plugin_sdk import NoArgs, PluginManifest, ToolContext, ToolSpec
 from pydantic import BaseModel, EmailStr, Field
-
-from src.plugins.sdk import PluginManifest, ToolContext, ToolSpec
 
 KNOWLEDGE_BASE = {
     "refunds": "Refunds are issued within 14 days of purchase. Ask finance for anything older.",
@@ -45,10 +47,6 @@ FAKE_INBOX = [
         ),
     },
 ]
-
-
-class NoArgs(BaseModel):
-    pass
 
 
 class SearchArgs(BaseModel):
@@ -76,6 +74,8 @@ class DemoState:
 
 
 def demo_plugin(state: DemoState | None = None) -> PluginManifest:
+    """The entry point. The app calls it with no arguments, so each app (and each test) gets
+    its own notes and outbox; tests may pass a `DemoState` to look inside."""
     state = state or DemoState()
 
     async def current_time(_args: NoArgs, _ctx: ToolContext) -> dict[str, Any]:

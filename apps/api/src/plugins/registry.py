@@ -1,15 +1,17 @@
 """The tool registry: every tool from every allowed plugin, under its full name.
 
 Built once at startup from the `PLUGINS` allowlist (ADR 0006: installed never means trusted;
-the operator names the plugins). Inside BotDesk a tool is `demo.create_note`; model
-providers only accept letters, digits, `_` and `-`, so the model sees `demo__create_note`
-and the registry maps it back.
+the operator names the plugins, see `loader.py`). Inside BotDesk a tool is `demo.create_note`;
+model providers only accept letters, digits, `_` and `-`, so the model sees
+`demo__create_note` and the registry maps it back.
 """
 
 from dataclasses import dataclass
 from typing import Any
 
-from src.plugins.sdk import PluginManifest, ToolSpec
+from botdesk_plugin_sdk import PluginManifest, ToolSpec, validate_manifest
+
+from src.plugins.loader import load_plugins
 
 MODEL_NAME_SEPARATOR = "__"
 
@@ -49,6 +51,9 @@ class ToolRegistry:
         self._plugins: dict[str, PluginManifest] = {}
 
     def register(self, plugin: PluginManifest) -> None:
+        """Add a plugin's tools. Raises `ValueError` (a `PluginError` for a bad manifest) and
+        changes nothing if the plugin is invalid or clashes with one already registered."""
+        validate_manifest(plugin)
         if plugin.id in self._plugins:
             raise ValueError(f"Plugin {plugin.id!r} is already registered.")
         tools = [RegisteredTool(plugin.id, spec) for spec in plugin.tools]
@@ -75,12 +80,13 @@ class ToolRegistry:
 
 
 def build_registry(plugin_ids: list[str]) -> ToolRegistry:
-    """The registry for the allowlisted built-in plugins. An unknown id is an operator mistake."""
-    from src.plugins import BUILTIN_PLUGINS
+    """The registry for the allowlisted plugins, found through their entry points.
 
+    A plugin that is installed but broken is skipped (and logged) so one bad plugin can't take
+    the API down. An id in `PLUGINS` that no installed package provides is an operator typo, and
+    stops startup with a clear message instead of quietly running without the plugin.
+    """
     registry = ToolRegistry()
-    for plugin_id in plugin_ids:
-        if plugin_id not in BUILTIN_PLUGINS:
-            raise ValueError(f"PLUGINS names {plugin_id!r}, but there is no such plugin.")
-        registry.register(BUILTIN_PLUGINS[plugin_id]())
+    for manifest in load_plugins(plugin_ids):
+        registry.register(manifest)
     return registry

@@ -11,6 +11,8 @@ from typing import Any
 
 import httpx
 import pytest
+from botdesk_demo import demo_plugin
+from botdesk_plugin_sdk import PluginManifest, ToolContext, ToolSpec
 from fastapi import FastAPI
 from pydantic import BaseModel
 from sqlalchemy import update
@@ -19,9 +21,7 @@ from src.core.database import utcnow
 from src.main import create_app
 from src.models import Approval, Run, ToolExecution
 from src.models.bot import SecurityLevel
-from src.plugins.demo import demo_plugin
 from src.plugins.registry import ToolRegistry, build_registry
-from src.plugins.sdk import PluginManifest, ToolContext, ToolSpec
 from src.runtime import tool_pipeline
 from src.runtime.chat_model import StandInModel, parse_tool_command
 from src.runtime.reporter import RunReporter

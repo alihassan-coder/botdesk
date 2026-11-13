@@ -8,8 +8,9 @@ Every decision comes with a trace that says why, e.g.
 from dataclasses import dataclass
 from typing import Literal
 
+from botdesk_plugin_sdk import RISK_CLASSES, Egress, RiskClass
+
 from src.models.bot import SecurityLevel
-from src.plugins.sdk import RISK_CLASSES, Egress, RiskClass
 
 Decision = Literal["auto", "ask", "deny"]
 

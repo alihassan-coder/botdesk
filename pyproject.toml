@@ -1,0 +1,6 @@
+# The Python workspace (ADR 0006 §2): one lockfile (uv.lock, next to this file) and one
+# virtual environment (.venv here) for the API, the plugin SDK and the built-in plugins.
+# This file is not a package itself. Target one member with `uv run --package <name> ...`.
+[tool.uv.workspace]
+members = ["apps/api", "packages/plugin-sdk", "plugins/*"]
+exclude = ["plugins/_template"]

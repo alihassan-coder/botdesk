@@ -18,13 +18,13 @@ from dataclasses import dataclass
 from datetime import timedelta
 from typing import Any, Literal
 
+from botdesk_plugin_sdk import RiskClass, ToolContext
 from pydantic import ValidationError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from src.core.database import utcnow
 from src.models.bot import SecurityLevel
 from src.plugins.registry import RegisteredTool, ToolRegistry
-from src.plugins.sdk import RiskClass, ToolContext
 from src.runtime.policy import LEVEL_NAMES, decide
 from src.runtime.reporter import RunReporter
 from src.services import tool_execution_service as executions

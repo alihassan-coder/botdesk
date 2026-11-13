@@ -1,5 +1,6 @@
 # Runs on every pull request and every push to main:
-# type checks, linting and tests for the web app and the API (`pnpm check`).
+# type checks, linting and tests for the web app, the API, the plugin SDK and the built-in
+# plugins (`pnpm check`).
 name: CI
 
 on:
@@ -57,9 +58,10 @@ jobs:
       - name: Install JavaScript packages
         run: pnpm install --frozen-lockfile
 
+      # One uv workspace at the repo root (ADR 0006): the API, packages/plugin-sdk and plugins/*
+      # share one lockfile and one .venv. --all-packages installs every member, not just one.
       - name: Install Python packages
-        working-directory: apps/api
-        run: uv sync --frozen
+        run: uv sync --frozen --all-packages
 
       - name: Check web and API
         run: pnpm check

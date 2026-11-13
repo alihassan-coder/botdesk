@@ -15,7 +15,7 @@ from typing import Any
 
 from sqlalchemy import event, func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, SessionTransaction
 
 from src.models import RunEvent
 from src.schemas.run import RunEventOut
@@ -43,17 +43,44 @@ def thread_lock_key(thread_id: uuid.UUID) -> int:
     return int.from_bytes(thread_id.bytes[:8], "big", signed=True)
 
 
+LOCKED_THREADS = "botdesk.locked_threads"  # session.info key: chats whose lock this transaction holds
+
+
 @event.listens_for(Session, "before_flush")
 def _lock_chats_before_adding_events(session: Session, _context: Any, _instances: Any) -> None:
     """Before new events get their ids, wait for any other transaction adding events to the same
     chat to commit (see the module docstring). One short lock per flush; the token batcher already
-    groups a reply's words into a few events a second. Locks are taken in a fixed order, so two
-    transactions that touch the same chats can't deadlock on them. SQLite writes one at a time anyway."""
-    if session.get_bind().dialect.name != "postgresql":
-        return
+    groups a reply's words into a few events a second. SQLite writes one at a time anyway.
+
+    Deadlock rule: a transaction takes chat locks in ascending order of `thread_lock_key`, so two
+    transactions touching the same chats can't wait on each other. Within one flush that's done
+    here by sorting. Across flushes it's on the caller: once a transaction holds a chat's lock it
+    may add events to that chat again, or to chats with a *higher* key, never a lower one. A
+    transaction that breaks the rule raises here instead of deadlocking now and then in production.
+    (Today every transaction adds events to one chat only.)"""
     threads = {obj.thread_id for obj in session.new if isinstance(obj, RunEvent)}
-    for thread_id in sorted(threads):
-        session.connection().execute(text("SELECT pg_advisory_xact_lock(:key)"), {"key": thread_lock_key(thread_id)})
+    if not threads or session.get_bind().dialect.name != "postgresql":
+        return
+    held: set[uuid.UUID] = session.info.setdefault(LOCKED_THREADS, set())
+    new_keys = sorted(thread_lock_key(t) for t in threads - held)
+    if not new_keys:
+        return
+    highest_held = max((thread_lock_key(t) for t in held), default=None)
+    if highest_held is not None and new_keys[0] < highest_held:
+        raise RuntimeError(
+            "A transaction added run events to a chat whose lock sorts before one it already holds; "
+            "this can deadlock. Add events to chats in order of thread_lock_key, or commit in between."
+        )
+    for key in new_keys:
+        session.connection().execute(text("SELECT pg_advisory_xact_lock(:key)"), {"key": key})
+    held.update(threads)
+
+
+@event.listens_for(Session, "after_transaction_end")
+def _forget_chat_locks(session: Session, transaction: SessionTransaction) -> None:
+    """Advisory xact locks end with the transaction, and so does our record of them."""
+    if transaction.parent is None:
+        session.info.pop(LOCKED_THREADS, None)
 
 
 async def events_after(db: AsyncSession, *, thread_id: uuid.UUID, after_id: int) -> list[RunEvent]:

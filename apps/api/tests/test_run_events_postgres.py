@@ -3,7 +3,10 @@ has seen id N never misses a smaller id committed later."""
 
 import asyncio
 import uuid
+from types import SimpleNamespace
+from typing import Any
 
+import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.services import run_event_service
@@ -65,3 +68,36 @@ def test_a_chats_lock_key_is_a_signed_64_bit_number() -> None:
     key = run_event_service.thread_lock_key(uuid.UUID("ffffffff-ffff-ffff-0000-000000000000"))
     assert key == -1
     assert run_event_service.thread_lock_key(uuid.UUID(int=1 << 64)) == 1
+
+
+async def test_a_transaction_takes_chat_locks_in_key_order_or_fails_loudly(pg: Postgres) -> None:
+    org_id, *chats = await _two_chats(pg)
+    low, high = sorted(chats, key=run_event_service.thread_lock_key)
+
+    async with pg.runs.sessionmaker() as db:
+        _add(db, org_id, low)
+        await db.flush()
+        _add(db, org_id, low)  # a chat it already holds: fine
+        _add(db, org_id, high)  # a higher one later: fine
+        await db.flush()
+        await db.commit()
+
+    async with pg.runs.sessionmaker() as db:
+        _add(db, org_id, high)
+        await db.flush()
+        _add(db, org_id, low)  # lower than a lock it holds: could deadlock with the order above
+        with pytest.raises(RuntimeError, match="can deadlock"):
+            await db.flush()
+        await db.rollback()
+
+        _add(db, org_id, low)  # a new transaction starts with no locks
+        await db.flush()
+        await db.commit()
+
+
+def test_flushes_without_new_events_skip_the_lock_hook_entirely() -> None:
+    def no_bind() -> Any:
+        raise AssertionError("looked up the database for a flush with no events")
+
+    session: Any = SimpleNamespace(new=[object()], get_bind=no_bind, info={})
+    run_event_service._lock_chats_before_adding_events(session, None, None)

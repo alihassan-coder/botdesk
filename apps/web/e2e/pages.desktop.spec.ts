@@ -151,8 +151,12 @@ test.describe("Settings", () => {
 
   test("a custom accent colour, with readable text on it", async ({ page }) => {
     await page.goto("/settings/appearance");
-    await page.getByLabel("Custom colour").fill("#ffd60a");
-    await expect(page.getByText("#FFD60A")).toBeVisible();
+    // Under load the colour can be set before the page hydrates, and React then drops it: set it
+    // again until the page shows it.
+    await expect(async () => {
+      await page.getByLabel("Custom colour").fill("#ffd60a");
+      await expect(page.getByText("#FFD60A")).toBeVisible({ timeout: 1_000 });
+    }).toPass();
     const [brand, text] = await page.evaluate(() => {
       const s = getComputedStyle(document.documentElement);
       return [s.getPropertyValue("--brand").trim(), s.getPropertyValue("--brand-foreground").trim()];

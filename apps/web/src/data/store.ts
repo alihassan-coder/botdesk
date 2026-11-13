@@ -23,8 +23,8 @@ import { previewFromArgs } from "@/lib/args-form";
 import { approvalApi, authApi, botApi, inviteApi, modelApi, orgApi, runApi, threadApi } from "./api/botdesk";
 import { ApiError, apiBaseUrl } from "./api/client";
 import { toApiBot, toApproval, toBot, toInvitation, toMessage, toModel, toModelProvider, toOrg, toThread, toUser } from "./api/map";
-import { applyRunEvent, upsertApproval, withPreview, withWaitingApprovals, type ActiveRun } from "./api/run-events";
-import type { ApiMe, ApiRunEvent, ApiThread } from "./api/types";
+import { applyRunEvent, upsertApproval, withActiveRuns, withPreview, withWaitingApprovals, type ActiveRun } from "./api/run-events";
+import type { ApiMe, ApiRun, ApiRunEvent, ApiThread } from "./api/types";
 import * as mock from "./mock/fixtures";
 import type {
   Approval, ApprovalStatus, Bot, Invitation, Membership, Message, Model, ModelListProblem, ModelProvider, Org, Participant, Routine, Thread, User,
@@ -60,9 +60,12 @@ export type ActionResult = { ok: true } | { ok: false; error: string };
 
 /**
  * Deciding an approval: `conflict` when someone decided first or it expired (the card now shows
- * what happened), `invalid` when the edited fields don't fit the action (`error` says which).
+ * what happened, and `status` says what that was), `invalid` when the edited fields don't fit
+ * the action (`error` says which). Any other failure leaves it waiting, so an edit can be kept.
  */
-export type DecideResult = { ok: true } | { ok: false; error: string; reason?: "conflict" | "invalid" };
+export type DecideResult =
+  | { ok: true }
+  | { ok: false; error: string; reason?: "conflict" | "invalid"; status?: ApprovalStatus };
 
 /** True when the mock data is in use: there's no API to talk to, or you're a guest. */
 export const isDemoMode = () => apiBaseUrl() === "" || state.guest;
@@ -90,6 +93,8 @@ interface State {
   threadLoads: Record<string, ThreadLoad>;
   /** API only: bot replies in progress. The mock fakes its replies without these. */
   runs: ActiveRun[];
+  /** API only: runs seen finish, so a late event can't revive one (see api/run-events.ts). */
+  endedRunIds: string[];
   approvals: Approval[];
   connectors: typeof mock.connectors;
   connections: typeof mock.connections;
@@ -122,6 +127,7 @@ function seed(): State {
     messages: mock.messages,
     threadLoads: {},
     runs: [],
+    endedRunIds: [],
     approvals: mock.approvals,
     connectors: mock.connectors,
     connections: mock.connections,
@@ -136,7 +142,41 @@ function seed(): State {
   };
 }
 
-let state: State = seed();
+/**
+ * Before the API answers, in API mode: nothing yet, and no demo data either. The org and
+ * user are blank stand-ins (screens behind the auth gate still prerender and read them).
+ */
+function apiSeed(): State {
+  const blankUser: User = { id: "", name: "", email: "", handle: "", role: "member", presence: "online" };
+  return {
+    ...seed(),
+    org: { id: "", name: "", slug: "", plan: "self-hosted" },
+    orgs: [],
+    users: [blankUser],
+    currentUserId: "",
+    passwords: {},
+    bots: [],
+    botsLoading: true,
+    threads: [],
+    messages: [],
+    approvals: [],
+    routines: [],
+    memories: [],
+    models: [],
+    modelProviders: [],
+  };
+}
+
+/** Where the store starts, and where signing out of the demo goes back to. */
+const initialState = (): State => (apiBaseUrl() ? apiSeed() : seed());
+
+let state: State = initialState();
+/**
+ * What the server rendered with, which is also what the browser must hydrate with, however far
+ * the browser's own state has moved on by then (a Suspense boundary can hydrate after the
+ * session is restored). In API mode it has no demo data, so the chat list shows its skeleton.
+ */
+const serverState = state;
 const listeners = new Set<() => void>();
 
 function set(updater: (s: State) => State) {
@@ -150,7 +190,7 @@ function subscribe(l: () => void) {
 }
 
 const getSnapshot = () => state;
-const getServerSnapshot = () => state;
+const getServerSnapshot = () => serverState;
 
 /** The whole state, read once. For tests and debugging only: screens use the hooks below. */
 export const getStoreSnapshot = () => state;
@@ -259,6 +299,7 @@ function enterOrg(org: Membership) {
     messages: [],
     threadLoads: {},
     runs: [],
+    endedRunIds: [],
     approvals: [],
     models: [],
     modelProviders: [],
@@ -352,7 +393,7 @@ function startGuestSession() {
 
 function leaveGuestMode() {
   cancelMockTimers();
-  set(() => seed());
+  set(() => initialState());
   rememberGuest(false);
 }
 
@@ -574,9 +615,9 @@ function closeChatStreams() {
   chatStreams.clear();
 }
 
-function followChat(orgId: string, threadId: string): () => void {
+function followChat(orgId: string, threadId: string, after?: number): () => void {
   chatStreams.get(threadId)?.();
-  const close = threadApi.follow(orgId, threadId, (event) => onRunEvent(orgId, event));
+  const close = threadApi.follow(orgId, threadId, (event) => onRunEvent(orgId, event), after);
   chatStreams.set(threadId, close);
   return () => {
     close();
@@ -629,10 +670,11 @@ const setThreadLoad = (threadId: string, load: ThreadLoad) =>
   set((st) => ({ ...st, threadLoads: { ...st.threadLoads, [threadId]: load } }));
 
 /**
- * The newest page of messages, and the chat's approvals so their cards can show (a waiting one
- * gets a stand-in reply, see withWaitingApprovals). Messages that arrived on the stream meanwhile are kept.
+ * The newest page of messages, and the chat's approvals so their cards can show (a reply still
+ * being written gets a stand-in, see withWaitingApprovals). `activeRuns` (null if that list
+ * failed) sets this chat's runs. Messages that arrived on the stream meanwhile are kept.
  */
-async function loadMessages(orgId: string, threadId: string) {
+async function loadMessages(orgId: string, threadId: string, activeRuns: ApiRun[] | null = null) {
   setThreadLoad(threadId, { status: "loading", hasOlder: state.threadLoads[threadId]?.hasOlder ?? false });
   try {
     const [apiPage, apiApprovals] = await Promise.all([
@@ -651,7 +693,8 @@ async function loadMessages(orgId: string, threadId: string) {
         messages: [...others, ...page, ...newer],
         threadLoads: { ...st.threadLoads, [threadId]: { status: "ready" as const, hasOlder: page.length === PAGE_SIZE } },
       };
-      return withRunStatus({ ...loaded, ...withWaitingApprovals(loaded, apiApprovals.map(toApproval)) });
+      const withCards = withWaitingApprovals(loaded, apiApprovals.map(toApproval), activeRuns ?? undefined);
+      return withRunStatus({ ...loaded, ...(activeRuns ? withActiveRuns(withCards, threadId, activeRuns) : withCards) });
     });
   } catch {
     if (state.org.id === orgId) setThreadLoad(threadId, { status: "error", hasOlder: false });
@@ -666,8 +709,22 @@ const chatActions = {
   openThread(threadId: string): () => void {
     if (isDemoMode() || !state.threads.some((t) => t.id === threadId)) return () => {};
     const orgId = state.org.id;
-    void loadMessages(orgId, threadId);
-    return followChat(orgId, threadId);
+    setThreadLoad(threadId, { status: "loading", hasOlder: state.threadLoads[threadId]?.hasOlder ?? false });
+    let closed = false;
+    let stopFollowing = () => {};
+    void (async () => {
+      // The chat's runs first: their `lastEventId` is where the stream starts, and the messages
+      // are read after it, so nothing that happens in between is missed. If the list fails,
+      // the stream starts from now, as a best effort.
+      const active = await threadApi.activeRuns(orgId, threadId).catch(() => null);
+      if (closed || state.org.id !== orgId) return;
+      stopFollowing = followChat(orgId, threadId, active?.lastEventId);
+      await loadMessages(orgId, threadId, active?.runs ?? null);
+    })();
+    return () => {
+      closed = true;
+      stopFollowing();
+    };
   },
 
   /** The page of messages before the oldest one shown. API only. */
@@ -802,12 +859,13 @@ const approvalActions = {
     } catch (error) {
       const { error: message } = failure(error);
       const status = error instanceof ApiError ? error.status : 0;
-      if (status === 409 || status === 404) {
-        const latest = await approvalApi.get(orgId, approvalId).catch(() => null);
-        if (latest) putApprovals(orgId, [toApproval(latest)]);
-      }
-      const reason = status === 409 ? "conflict" : status === 400 ? "invalid" : undefined;
-      return { ok: false, error: message, ...(reason ? { reason } : {}) };
+      // A 409 is also "this tool isn't available any more", while the approval still waits:
+      // only a decision we can see counts as a conflict.
+      const latest = status === 409 || status === 404 ? await approvalApi.get(orgId, approvalId).catch(() => null) : null;
+      if (latest) putApprovals(orgId, [toApproval(latest)]);
+      const decided = latest !== null && latest.status !== "pending";
+      const reason = status === 400 ? "invalid" : decided ? "conflict" : undefined;
+      return { ok: false, error: message, ...(reason ? { reason } : {}), ...(latest ? { status: latest.status } : {}) };
     }
   },
 

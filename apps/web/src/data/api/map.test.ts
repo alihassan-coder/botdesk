@@ -54,6 +54,15 @@ describe("API → web shapes", () => {
     });
   });
 
+  it("a saved reply keeps its tool lines, so a reloaded chat still says what the bot used", () => {
+    const line = { type: "tool-call", toolExecutionId: "x1", tool: "demo.send_email", status: "succeeded" };
+    const message = toMessage({
+      id: "m1", threadId: "t1", author: { type: "bot", id: "b1" }, status: "complete", createdAt: "2026-11-12T08:00:00Z",
+      parts: [{ type: "approval", approvalId: "a1" }, line, { type: "text", text: "Sent." }],
+    });
+    expect(message.parts).toEqual([{ type: "approval", approvalId: "a1" }, line, { type: "text", text: "Sent." }]);
+  });
+
   it("times without a zone (SQLite) are read as UTC; ones with a zone are kept", () => {
     expect(asUtc("2026-11-12T11:36:54.520126")).toBe("2026-11-12T11:36:54.520126Z");
     expect(asUtc("2026-11-12T11:36:54Z")).toBe("2026-11-12T11:36:54Z");

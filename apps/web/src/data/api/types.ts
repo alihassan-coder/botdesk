@@ -141,6 +141,34 @@ export interface ApiSentMessage extends ApiMessage {
   runIds: string[];
 }
 
+/* ---------- Runs ---------- */
+
+export type ApiRunStatus = "queued" | "running" | "waiting_approval" | "needs_attention" | "succeeded" | "failed" | "cancelled";
+
+/** One piece of work by one bot, from a message to its reply. */
+export interface ApiRun {
+  id: string;
+  botId: string;
+  threadId: string;
+  triggerMessageId: string | null;
+  replyMessageId: string | null;
+  status: ApiRunStatus;
+  stepsUsed: number;
+  maxSteps: number;
+  maxSeconds: number;
+  /** Why it failed, or why it needs attention. */
+  error: string | null;
+  createdAt: string;
+  startedAt: string | null;
+  finishedAt: string | null;
+}
+
+/** A chat's runs, and its newest event id: follow the stream after it and nothing is missed. */
+export interface ApiThreadRuns {
+  runs: ApiRun[];
+  lastEventId: number;
+}
+
 /* ---------- Approvals ---------- */
 
 export type ApiRiskClass = "read" | "write-internal" | "write-external" | "external-send" | "spend" | "destructive" | "credential";

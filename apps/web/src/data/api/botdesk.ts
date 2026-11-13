@@ -20,6 +20,7 @@ import {
   type ApiRunEvent,
   type ApiSentMessage,
   type ApiThread,
+  type ApiThreadRuns,
 } from "./types";
 
 /** Every API route the web app uses, one plain function each. Only store.ts calls these. */
@@ -92,13 +93,19 @@ export const threadApi = {
   send: (orgId: string, threadId: string, text: string) =>
     apiFetch<ApiSentMessage>(`/api/v1/orgs/${orgId}/threads/${threadId}/messages`, { method: "POST", body: { text } }),
 
+  /** The chat's runs that haven't finished (queued, running or paused), and where its event stream is. */
+  activeRuns: (orgId: string, threadId: string) =>
+    apiFetch<ApiThreadRuns>(`/api/v1/orgs/${orgId}/threads/${threadId}/runs?active=true`),
+
   /**
-   * Live updates for one chat (Server-Sent Events), from now on. If the connection drops,
-   * the browser reconnects by itself and the API resumes after the last event it saw
-   * (the Last-Event-ID header). Returns a function that closes the stream.
+   * Live updates for one chat (Server-Sent Events), after event `after` (a `lastEventId`
+   * from activeRuns), or from now on without it. If the connection drops, the browser
+   * reconnects by itself and the API resumes after the last event it saw (the
+   * Last-Event-ID header). Returns a function that closes the stream.
    */
-  follow(orgId: string, threadId: string, onEvent: (event: ApiRunEvent) => void): () => void {
-    const source = new EventSource(`${apiBaseUrl()}/api/v1/orgs/${orgId}/threads/${threadId}/events`, { withCredentials: true });
+  follow(orgId: string, threadId: string, onEvent: (event: ApiRunEvent) => void, after?: number): () => void {
+    const query = after === undefined ? "" : `?after=${after}`;
+    const source = new EventSource(`${apiBaseUrl()}/api/v1/orgs/${orgId}/threads/${threadId}/events${query}`, { withCredentials: true });
     const handle = (message: MessageEvent<string>) => {
       try {
         onEvent(JSON.parse(message.data) as ApiRunEvent);

@@ -140,8 +140,9 @@ export interface ApprovalPart {
 }
 
 /**
- * A tool the bot used while replying: "Used Send email · done". Live only: the API doesn't
- * save these in the reply, so a reloaded chat shows just the approval cards and the text.
+ * A tool the bot used while replying: "Used Send email · done". Shown live from the run's
+ * events, and saved in the reply (after the call's approval card, if it asked), so a
+ * reloaded chat shows the same lines.
  */
 export interface ToolCallPart {
   type: "tool-call";

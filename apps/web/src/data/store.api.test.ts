@@ -280,14 +280,14 @@ describe("guest mode, even with the API set", () => {
     expect(state().guest).toBe(true);
   });
 
-  it("signing out leaves guest mode and throws the demo's changes away", async () => {
+  it("signing out leaves guest mode and throws the demo away: with the API set, no demo data stays", async () => {
     await actions.enterGuestMode();
     await actions.removeBot("b_chief");
     await actions.signOut();
     expect(state()).toMatchObject({ authStatus: "signed-out", guest: false });
     expect(isDemoMode()).toBe(false);
     expect(sessionStorage.getItem("botdesk.guest")).toBeNull();
-    expect(state().bots.some((b) => b.id === "b_chief")).toBe(true);
+    expect(state()).toMatchObject({ bots: [], threads: [], messages: [], approvals: [], botsLoading: true });
     expect(calls).toEqual([]);
   });
 
@@ -421,6 +421,35 @@ describe("chats on the API", () => {
     expect(FakeEventSource.last?.closed).toBe(true);
   });
 
+  const apiRun = (patch: Record<string, unknown> = {}) => ({
+    id: "r1", botId: "b1", threadId: "t1", triggerMessageId: "m1", replyMessageId: null, status: "running", stepsUsed: 1,
+    maxSteps: 10, maxSeconds: 300, error: null, createdAt: "2026-11-12T09:00:00Z", startedAt: "2026-11-12T09:00:01Z", finishedAt: null,
+    ...patch,
+  });
+
+  it("opening a chat where a bot is mid-reply shows it thinking, and follows on from where the list left off", async () => {
+    routes["GET /api/v1/orgs/o1/threads/t1/runs?active=true"] = { status: 200, body: { runs: [apiRun()], lastEventId: 42 } };
+    actions.openThread("t1");
+    await vi.waitFor(() => expect(state().threadLoads.t1?.status).toBe("ready"));
+    expect(calls.indexOf("GET /api/v1/orgs/o1/threads/t1/runs?active=true")).toBeLessThan(calls.indexOf("GET /api/v1/orgs/o1/threads/t1/messages?limit=50"));
+    expect(FakeEventSource.last?.url).toBe("http://api.test/api/v1/orgs/o1/threads/t1/events?after=42");
+    expect(state().messages.at(-1)).toMatchObject({ id: "typing-r1", status: "streaming" });
+    expect(state().bots[0]).toMatchObject({ status: "working", statusText: "Thinking…" });
+    expect(state().runs).toMatchObject([{ id: "r1", threadId: "t1", botId: "b1" }]);
+  });
+
+  it("opening a chat with a stuck run shows the needs-attention notice, which Stop clears", async () => {
+    routes["GET /api/v1/orgs/o1/threads/t1/runs?active=true"] = {
+      status: 200, body: { runs: [apiRun({ status: "needs_attention", error: "Check the outbox." })], lastEventId: 7 },
+    };
+    actions.openThread("t1");
+    await vi.waitFor(() => expect(state().runs[0]?.status).toBe("needs_attention"));
+    expect(state().runs[0].error).toBe("Check the outbox.");
+    expect(state().bots[0]).toMatchObject({ status: "error", statusText: "Needs attention" });
+    FakeEventSource.last!.emit("run_finished", { runId: "r1", data: { status: "cancelled" } });
+    expect(state().runs).toEqual([]);
+  });
+
   it("sendMessage shows your message at once, then the saved one, and knows a bot is replying", async () => {
     actions.openThread("t1");
     await vi.waitFor(() => expect(state().threadLoads.t1?.status).toBe("ready"));
@@ -544,8 +573,20 @@ describe("approvals on the API", () => {
     await actions.loadApprovals();
     routes["POST /api/v1/orgs/o1/approvals/a1/decide"] = { status: 409, body: { detail: "This approval was already decided." } };
     routes["GET /api/v1/orgs/o1/approvals/a1"] = { status: 200, body: decided("denied") };
-    await expect(actions.decideApproval("a1", "approve")).resolves.toEqual({ ok: false, error: "This approval was already decided.", reason: "conflict" });
+    await expect(actions.decideApproval("a1", "approve")).resolves.toEqual({
+      ok: false, error: "This approval was already decided.", reason: "conflict", status: "denied",
+    });
     expect(stored()).toMatchObject({ status: "denied", decidedByName: "Omar" });
+  });
+
+  it("409 while it still waits (the tool went away) isn't a conflict, so an edit can be kept", async () => {
+    await actions.loadApprovals();
+    routes["POST /api/v1/orgs/o1/approvals/a1/decide"] = { status: 409, body: { detail: "This tool isn't available any more." } };
+    routes["GET /api/v1/orgs/o1/approvals/a1"] = { status: 200, body: approval() };
+    await expect(actions.decideApproval("a1", "approve", { to: "sara@acme.dev" })).resolves.toEqual({
+      ok: false, error: "This tool isn't available any more.", status: "pending",
+    });
+    expect(stored()?.status).toBe("pending");
   });
 
   it("400: the edited arguments don't fit, and nothing changes", async () => {
@@ -573,6 +614,24 @@ describe("approvals on the API", () => {
     await vi.waitFor(() => expect(state().threadLoads.t1?.status).toBe("ready"));
     expect(state().messages.at(-1)).toMatchObject({ id: "typing-r1", parts: [{ type: "approval", approvalId: "a1" }, { type: "text", text: "" }] });
     expect(state().bots[0]).toMatchObject({ status: "waiting-approval", statusText: "Waiting for approval" });
+  });
+
+  it("a slow pending list after you approved doesn't bring the buttons back", async () => {
+    await actions.loadApprovals();
+    routes["POST /api/v1/orgs/o1/approvals/a1/decide"] = { status: 200, body: decided("approved", { decidedBy: { id: "u1", name: "Zara" } }) };
+    await actions.decideApproval("a1", "approve");
+    await actions.refreshPendingApprovals(); // still answers with the pending copy
+    await actions.loadApprovals();
+    expect(stored()?.status).toBe("approved");
+  });
+
+  it("opening a chat whose waiting approval's run has ended doesn't leave a run waiting", async () => {
+    routes["GET /api/v1/orgs/o1/approvals?status=all&threadId=t1"] = { status: 200, body: [approval()] };
+    routes["GET /api/v1/orgs/o1/threads/t1/runs?active=true"] = { status: 200, body: { runs: [], lastEventId: 3 } };
+    actions.openThread("t1");
+    await vi.waitFor(() => expect(state().threadLoads.t1?.status).toBe("ready"));
+    expect(state().runs).toEqual([]);
+    expect(state().bots[0]).toMatchObject({ status: "idle" });
   });
 
   it("live: a request pauses the bot, a decision resumes it, needs-attention can be stopped", async () => {

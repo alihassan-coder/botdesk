@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
 import type { Message, Thread } from "../types";
 import { toApproval, toMessage } from "./map";
-import { applyRunEvent, withWaitingApprovals, type ChatSlice } from "./run-events";
-import type { ApiApproval, ApiMessage, ApiRunEvent } from "./types";
+import { applyRunEvent, upsertApproval, withActiveRuns, withWaitingApprovals, type ChatSlice } from "./run-events";
+import type { ApiApproval, ApiMessage, ApiRun, ApiRunEvent } from "./types";
 
 const thread: Thread = {
   id: "t1", kind: "dm", title: "Scout", botId: "b1", participants: [], lastMessageAt: "2026-11-12T09:00:00Z", lastMessagePreview: "", unread: 0,
@@ -139,6 +139,22 @@ describe("tools and approvals in a chat", () => {
     });
   });
 
+  it("a reply saved with its tool lines is used as saved, in the order the calls were made", () => {
+    const savedParts = [
+      { type: "tool-call", toolExecutionId: "x0", tool: "demo.read_inbox", status: "succeeded" },
+      { type: "approval", approvalId: "a1" },
+      { type: "tool-call", toolExecutionId: "x1", tool: "demo.send_email", status: "succeeded" },
+      { type: "text", text: "Sent." },
+    ];
+    const savedReply = { ...apiMessage("m1", "Sent.", { type: "bot", id: "b1" }, "2026-11-12T09:02:00Z"), parts: savedParts };
+    const chat = play(
+      started, toolStarted("x0", "demo.read_inbox"), toolFinished("succeeded", "x0"), requested(), decided({ status: "approved" }), resumed,
+      toolStarted("x1", "demo.send_email"), toolFinished("succeeded", "x1"), delta("Sent."),
+      event({ kind: "message_saved", data: { message: savedReply } }),
+    );
+    expect(only(chat).parts).toEqual(savedParts);
+  });
+
   it("stopping a waiting run keeps the card, which shows it expired", () => {
     const chat = play(started, requested(), decided({ status: "expired" }), cancelled);
     expect(only(chat).parts?.[0]).toEqual({ type: "approval", approvalId: "a1" });
@@ -173,5 +189,95 @@ describe("withWaitingApprovals (a chat that just loaded)", () => {
     expect(chat.messages).toEqual([saved]);
     expect(chat.runs).toEqual([]);
     expect(chat.approvals.map((a) => a.id).sort()).toEqual(["a1", "a2"]);
+  });
+});
+
+describe("decisions are final", () => {
+  it("an older pending copy (a slow list, a replayed event) never undoes a decision", () => {
+    const decidedChat = play(requested(), decided({ status: "approved" }));
+    const replayed = applyRunEvent(decidedChat, requested());
+    expect(replayed.approvals[0].status).toBe("approved");
+    expect(upsertApproval(replayed.approvals, toApproval(apiApproval()))[0].status).toBe("approved");
+    // …while a newer decision still replaces an older one.
+    expect(upsertApproval(replayed.approvals, toApproval(apiApproval({ status: "expired" })))[0].status).toBe("expired");
+  });
+
+  it("a request replayed after the run finished doesn't bring the run back as waiting", () => {
+    const chat = play(started, requested(), decided({ status: "expired" }), cancelled, requested());
+    expect(chat.runs).toEqual([]);
+    expect(chat.endedRunIds).toEqual(["r1"]);
+    const late = play(started, cancelled, requested({ id: "a2" }));
+    expect(late.runs).toEqual([]);
+    expect(late.messages).toEqual([]); // no stand-in reply typing forever
+  });
+
+  it("a chat that loads an approval already decided here doesn't pause its run again", () => {
+    const decidedHere = play(requested(), decided({ status: "approved" }), resumed);
+    const chat = withWaitingApprovals(decidedHere, [toApproval(apiApproval())]);
+    expect(chat.approvals[0].status).toBe("approved");
+    expect(chat.runs[0].status).toBe("running");
+  });
+});
+
+/* ---------- A chat opened later ---------- */
+
+const apiRun = (patch: Partial<ApiRun> = {}): ApiRun => ({
+  id: "r1", botId: "b1", threadId: "t1", triggerMessageId: "m0", replyMessageId: null, status: "running",
+  stepsUsed: 1, maxSteps: 10, maxSeconds: 300, error: null,
+  createdAt: "2026-11-12T09:00:00", startedAt: "2026-11-12T09:00:01", finishedAt: null,
+  ...patch,
+});
+const empty: ChatSlice = { ...start, runs: [] };
+
+describe("withActiveRuns (the chat's runs that haven't finished, when it opens)", () => {
+  it("a running bot shows thinking", () => {
+    const chat = withActiveRuns(empty, "t1", [apiRun()]);
+    expect(only(chat)).toMatchObject({ id: "typing-r1", status: "streaming", author: { type: "bot", id: "b1" } });
+    expect(chat.messages[0].createdAt).toBe("2026-11-12T09:00:01Z");
+    expect(chat.runs).toEqual([{ id: "r1", threadId: "t1", botId: "b1", status: undefined, error: undefined }]);
+  });
+
+  it("a queued run can be stopped but isn't typing yet", () => {
+    const chat = withActiveRuns(empty, "t1", [apiRun({ status: "queued", startedAt: null })]);
+    expect(chat.messages).toEqual([]);
+    expect(chat.runs).toHaveLength(1);
+  });
+
+  it("a paused run waits for a decision; a stuck one needs attention, with why", () => {
+    expect(withActiveRuns(empty, "t1", [apiRun({ status: "waiting_approval" })]).runs[0]).toMatchObject({ status: "waiting_approval" });
+    const stuck = withActiveRuns(empty, "t1", [apiRun({ status: "needs_attention", error: "Check the outbox." })]);
+    expect(stuck.runs).toEqual([{ id: "r1", threadId: "t1", botId: "b1", status: "needs_attention", error: "Check the outbox." }]);
+    expect(stuck.messages).toEqual([]);
+  });
+
+  it("is the truth for this chat's runs: ones not listed have ended, except one you just started", () => {
+    const before: ChatSlice = {
+      ...empty,
+      runs: [
+        { id: "old", threadId: "t1", botId: "b1", status: "waiting_approval" },
+        { id: "sent", threadId: "t1" },
+        { id: "other", threadId: "t9", botId: "b2" },
+      ],
+    };
+    expect(withActiveRuns(before, "t1", []).runs.map((r) => r.id)).toEqual(["sent", "other"]);
+  });
+
+  it("the stream then carries on from there: the next words take over the thinking reply", () => {
+    const chat = [delta("Hello")].reduce(applyRunEvent, withActiveRuns(empty, "t1", [apiRun()]));
+    expect(only(chat)).toMatchObject({ id: "m1", status: "streaming", parts: [{ type: "text", text: "Hello" }] });
+  });
+
+  it("an approved card whose run is still going shows in its stand-in reply", () => {
+    const runs = [apiRun()];
+    const withCards = withWaitingApprovals(empty, [toApproval(apiApproval({ status: "approved" }))], runs);
+    const chat = withActiveRuns(withCards, "t1", runs);
+    expect(only(chat)).toMatchObject({ id: "typing-r1", parts: [{ type: "approval", approvalId: "a1" }, { type: "text", text: "" }] });
+    expect(chat.runs[0].status).toBeUndefined();
+  });
+
+  it("a pending approval whose run isn't going any more gets no stand-in", () => {
+    const chat = withWaitingApprovals(empty, [toApproval(apiApproval())], []);
+    expect(chat.messages).toEqual([]);
+    expect(chat.runs).toEqual([]);
   });
 });

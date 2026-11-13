@@ -52,7 +52,7 @@ export function toThread({ id, kind, title, botId, participants, lastMessageAt, 
 
 /* The part types the web app can show. Bots may send others later; those are left out until it can. */
 const KNOWN_PARTS = new Set<MessagePart["type"]>([
-  "text", "reasoning", "work-log", "computer-task", "approval", "question", "routine-created", "file", "handoff",
+  "text", "reasoning", "work-log", "computer-task", "approval", "tool-call", "question", "routine-created", "file", "handoff",
 ]);
 
 export function toMessage({ id, threadId, author, parts, status, createdAt }: ApiMessage): Message {

@@ -57,8 +57,14 @@ test("signing up with an existing email points you to sign in", async ({ page })
 test("forgot password confirms without revealing who has an account", async ({ page }) => {
   await page.goto("/sign-in");
   await page.getByRole("link", { name: "Forgot password?" }).click();
-  await page.getByLabel("Email").fill("someone@example.com");
-  await page.getByRole("button", { name: "Send reset link" }).click();
+  // Under load the field can be filled before the page hydrates, and React then drops the value:
+  // fill again until the form has it (the button enables once the address is valid).
+  const send = page.getByRole("button", { name: "Send reset link" });
+  await expect(async () => {
+    await page.getByLabel("Email").fill("someone@example.com");
+    await expect(send).toBeEnabled({ timeout: 1_000 });
+  }).toPass();
+  await send.click();
   await expect(page.getByRole("heading", { name: "Check your email" })).toBeVisible();
   await expect(page.getByText(/If someone@example.com has an account/)).toBeVisible();
 });

@@ -31,7 +31,7 @@ describe("a chat's live updates", () => {
   it("run_started shows the bot thinking, with no words yet", () => {
     const chat = play(started);
     expect(only(chat)).toMatchObject({ id: "typing-r1", status: "streaming", error: undefined, parts: [{ type: "text", text: "" }] });
-    expect(chat.runs).toEqual([{ id: "r1", threadId: "t1", botId: "b1" }]);
+    expect(chat.runs).toMatchObject([{ id: "r1", threadId: "t1", botId: "b1" }]);
   });
 
   it("deltas turn the dots into the reply, chunk by chunk", () => {
@@ -107,7 +107,7 @@ describe("tools and approvals in a chat", () => {
     expect(only(chat)).toMatchObject({ id: "m1", status: "complete", parts: [{ type: "approval", approvalId: "a1" }, { type: "text", text: "Sending now." }] });
     expect(chat.approvals).toEqual([toApproval(apiApproval())]);
     expect(chat.approvals[0].requestedAt).toBe("2026-11-12T09:00:01Z");
-    expect(chat.runs).toEqual([{ id: "r1", threadId: "t1", botId: "b1", messageId: "m1", status: "waiting_approval" }]);
+    expect(chat.runs).toMatchObject([{ id: "r1", threadId: "t1", botId: "b1", messageId: "m1", status: "waiting_approval" }]);
   });
 
   it("before any words, the card sits in the thinking reply, which stops showing dots", () => {
@@ -171,7 +171,7 @@ describe("tools and approvals in a chat", () => {
   it("an approval for a run we never saw start still shows, in a stand-in reply", () => {
     const chat = applyRunEvent({ ...start, runs: [] }, requested());
     expect(only(chat)).toMatchObject({ id: "typing-r1", author: { type: "bot", id: "b1" } });
-    expect(chat.runs).toEqual([{ id: "r1", threadId: "t1", botId: "b1", status: "waiting_approval" }]);
+    expect(chat.runs).toMatchObject([{ id: "r1", threadId: "t1", botId: "b1", status: "waiting_approval" }]);
   });
 });
 
@@ -279,5 +279,60 @@ describe("withActiveRuns (the chat's runs that haven't finished, when it opens)"
     const chat = withWaitingApprovals(empty, [toApproval(apiApproval())], []);
     expect(chat.messages).toEqual([]);
     expect(chat.runs).toEqual([]);
+  });
+});
+
+describe("a chat that opens mid-reply (the list, then the stream replays from replayFrom)", () => {
+  const at = (id: number, e: ApiRunEvent): ApiRunEvent => ({ ...e, id });
+  const startedAt = (id: number, runId = "r1") => at(id, event({ kind: "run_started", runId, data: { botId: "b1" } }));
+  const deltaAt = (id: number, text: string, runId = "r1", messageId = "m1") =>
+    at(id, event({ kind: "message_delta", runId, data: { messageId, botId: "b1", text } }));
+  const finishedAt = (id: number, runId = "r1") => at(id, event({ kind: "run_finished", runId, data: { status: "succeeded" } }));
+  const savedAt = (id: number, runId: string, message: ApiMessage) => at(id, event({ kind: "message_saved", runId, data: { message } }));
+
+  it("a run that started after the list was read keeps going (Stop shows, the bot is busy)", () => {
+    const streamed = [startedAt(11, "r2")].reduce(applyRunEvent, empty);
+    const chat = withActiveRuns(streamed, "t1", [], 10);
+    expect(chat.runs).toMatchObject([{ id: "r2", botId: "b1", lastEventId: 11 }]);
+    expect(chat.messages.map((m) => m.id)).toEqual(["typing-r2"]);
+  });
+
+  it("a run heard only before the list, and not in it, has ended: its dots go and it can't come back", () => {
+    const streamed = [startedAt(9, "r2")].reduce(applyRunEvent, empty);
+    const chat = withActiveRuns(streamed, "t1", [], 10);
+    expect(chat.runs).toEqual([]);
+    expect(chat.messages).toEqual([]);
+    expect(applyRunEvent(chat, startedAt(9, "r2")).runs).toEqual([]);
+  });
+
+  it("replaying the run from its start rebuilds the whole reply, whichever arrives first", () => {
+    const replay = [startedAt(5), deltaAt(6, "Hello"), deltaAt(8, " there")];
+    const listFirst = replay.reduce(applyRunEvent, withActiveRuns(empty, "t1", [apiRun()], 8));
+    const streamFirst = withActiveRuns(replay.reduce(applyRunEvent, empty), "t1", [apiRun()], 8);
+    for (const chat of [listFirst, streamFirst]) {
+      expect(only(chat)).toMatchObject({ id: "m1", status: "streaming", parts: [{ type: "text", text: "Hello there" }] });
+      expect(chat.runs).toMatchObject([{ id: "r1", messageId: "m1", lastEventId: 8 }]);
+    }
+  });
+
+  it("words seen before (the chat opened again, or a reconnect) aren't added twice", () => {
+    const once = [startedAt(5), deltaAt(6, "Hello")].reduce(applyRunEvent, empty);
+    const again = [startedAt(5), deltaAt(6, "Hello"), deltaAt(7, "!")].reduce(applyRunEvent, once);
+    expect(only(again).parts).toEqual([{ type: "text", text: "Hello!" }]);
+  });
+
+  it("another run's words replayed into its saved reply leave the saved text whole", () => {
+    const savedReply = apiMessage("m2", "Done.", { type: "bot", id: "b1" }, "2026-11-12T09:00:02Z");
+    const page: ChatSlice = { ...empty, messages: [toMessage(savedReply)] };
+    const replay = [startedAt(3, "r2"), deltaAt(4, "Done.", "r2", "m2"), savedAt(5, "r2", savedReply), finishedAt(6, "r2")];
+    let chat = page;
+    for (const e of replay) {
+      chat = applyRunEvent(chat, e);
+      expect(chat.messages.find((m) => m.id === "m2")?.parts).toEqual([{ type: "text", text: "Done." }]);
+    }
+    expect(only(chat).parts).toEqual([{ type: "text", text: "Done." }]);
+    expect(chat.runs).toEqual([]);
+    // Its words, replayed when the run isn't known here at all, are skipped too.
+    expect(only(applyRunEvent(page, deltaAt(4, "Done.", "r2", "m2"))).parts).toEqual([{ type: "text", text: "Done." }]);
   });
 });

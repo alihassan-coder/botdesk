@@ -17,6 +17,11 @@ import type { ApiRun, ApiRunEvent } from "./types";
  *
  * Cards and tool lines sit above the reply's text in the order they arrived, which is the
  * order the saved reply has them too, so nothing jumps when the reply is saved.
+ *
+ * A chat that opens mid-reply replays the unfinished runs' events from their start (see
+ * `replayFrom` in withActiveRuns), so events can arrive twice. Every event is safe to apply
+ * again except `message_delta`, which adds words: a run remembers the newest event id it has
+ * seen, and a delta at or below it is skipped.
  */
 
 /** A bot reply in progress. Known from the moment you send, so the Stop button can show. */
@@ -31,6 +36,8 @@ export interface ActiveRun {
   status?: "running" | "waiting_approval" | "needs_attention";
   /** Why it needs attention. */
   error?: string;
+  /** The newest of its events this chat has applied (event ids only grow within a chat). */
+  lastEventId?: number;
 }
 
 export interface ChatSlice {
@@ -49,6 +56,11 @@ const ENDED_RUNS_KEPT = 200;
 export const typingId = (runId: string) => `typing-${runId}`;
 
 export function applyRunEvent(chat: ChatSlice, event: ApiRunEvent): ChatSlice {
+  const next = reduce(chat, event);
+  return event.runId ? withLastEventId(next, event.runId, event.id) : next;
+}
+
+function reduce(chat: ChatSlice, event: ApiRunEvent): ChatSlice {
   const run = chat.runs.find((r) => r.id === event.runId);
 
   switch (event.kind) {
@@ -61,7 +73,7 @@ export function applyRunEvent(chat: ChatSlice, event: ApiRunEvent): ChatSlice {
     }
 
     case "run_started": {
-      if (!event.runId) return chat;
+      if (!event.runId || hasEnded(chat, event.runId)) return chat; // a replay of a run that has ended
       const started: ActiveRun = { ...run, id: event.runId, threadId: event.threadId, botId: event.data.botId };
       const hasReply = chat.messages.some((m) => m.id === run?.messageId || m.id === typingId(event.runId!));
       const typing: Message = {
@@ -73,6 +85,11 @@ export function applyRunEvent(chat: ChatSlice, event: ApiRunEvent): ChatSlice {
 
     case "message_delta": {
       const { messageId, botId, text } = event.data;
+      // Words already added (a replay), or words for a reply that isn't being written: one that's
+      // saved (its text is whole) or paused (a run resumes, which sets it streaming, before more words).
+      if (run?.lastEventId !== undefined && event.id <= run.lastEventId) return chat;
+      if (event.runId && hasEnded(chat, event.runId)) return chat;
+      if (chat.messages.some((m) => m.id === messageId && m.status === "complete")) return chat;
       const placeholder = event.runId ? typingId(event.runId) : undefined;
       const existing = chat.messages.find((m) => m.id === messageId || m.id === placeholder);
       const reply: Message = existing
@@ -83,17 +100,8 @@ export function applyRunEvent(chat: ChatSlice, event: ApiRunEvent): ChatSlice {
       return { ...chat, messages, runs };
     }
 
-    case "run_finished": {
-      // Stopped before any words: drop the dots (unless a card is there). Stopped mid-reply: keep what was written.
-      const messages = chat.messages
-        .filter((m) => !event.runId || m.id !== typingId(event.runId) || hasCards(m))
-        .map((m) =>
-          m.status === "streaming" && (m.id === run?.messageId || (event.runId && m.id === typingId(event.runId)))
-            ? { ...m, status: "complete" as const }
-            : m,
-        );
-      return { ...chat, messages, runs: chat.runs.filter((r) => r.id !== event.runId), endedRunIds: ended(chat, event.runId) };
-    }
+    case "run_finished":
+      return event.runId ? endRun(chat, event.runId) : chat;
 
     case "run_failed": {
       const runs = chat.runs.filter((r) => r.id !== event.runId);
@@ -182,19 +190,27 @@ export function withWaitingApprovals(chat: ChatSlice, approvals: Approval[], act
 
 /**
  * A chat that just opened, told which of its runs are still going (`GET /threads/{id}/runs?active=true`).
- * That list is the truth for this chat's runs: a running one shows the bot thinking, a paused one
- * waits for a decision or for a person (the needs-attention notice, with Stop). Runs we thought
- * were going but aren't in it have ended, except ones you just started, which the list may predate.
+ * That list sets this chat's runs: a running one shows the bot thinking, a paused one waits for a
+ * decision or for a person (the needs-attention notice, with Stop). Runs we thought were going but
+ * aren't in it have ended, except ones the list may predate: one you just started, or one heard
+ * on the stream after the list's `lastEventId`.
+ *
+ * The stream follows from the list's `replayFrom`, so it replays the listed runs' events from their
+ * start: their words so far, tool lines and cards. A run the stream has already applied events for
+ * is left to the stream.
  */
-export function withActiveRuns(chat: ChatSlice, threadId: string, apiRuns: ApiRun[]): ChatSlice {
+export function withActiveRuns(chat: ChatSlice, threadId: string, apiRuns: ApiRun[], lastEventId?: number): ChatSlice {
   const listed = new Set(apiRuns.map((r) => r.id));
   const justSent = (r: ActiveRun) => r.botId === undefined && r.status === undefined;
-  let next: ChatSlice = {
-    ...chat,
-    runs: chat.runs.filter((r) => r.threadId !== threadId || listed.has(r.id) || justSent(r)),
-  };
+  // Heard on the stream after the list was read: newer than the list (say, it started meanwhile).
+  const newerThanList = (r: ActiveRun) => lastEventId !== undefined && (r.lastEventId ?? 0) > lastEventId;
+  const over = chat.runs.filter((r) => r.threadId === threadId && !listed.has(r.id) && !justSent(r) && !newerThanList(r));
+  let next = over.reduce((c, r) => endRun(c, r.id), chat);
   for (const apiRun of apiRuns) {
     if (hasEnded(next, apiRun.id)) continue;
+    // The stream already has this run, and it replays all the run's events (it follows from
+    // `replayFrom`), so what it shows is at least as new as the list.
+    if (next.runs.find((r) => r.id === apiRun.id)?.lastEventId !== undefined) continue;
     if (apiRun.status === "waiting_approval" || apiRun.status === "needs_attention") {
       const error = apiRun.status === "needs_attention" ? (apiRun.error ?? undefined) : undefined;
       next = pauseRun(next, apiRun.id, threadId, apiRun.botId, { status: apiRun.status, error });
@@ -241,6 +257,24 @@ export function withPreview(threads: Thread[], message: Message): Thread[] {
       ? { ...t, lastMessageAt: message.createdAt, lastMessagePreview: text }
       : t,
   );
+}
+
+/** The run has ended: it stops being active, and its reply stops typing. */
+function endRun(chat: ChatSlice, runId: string): ChatSlice {
+  const run = chat.runs.find((r) => r.id === runId);
+  // Stopped before any words: drop the dots (unless a card is there). Stopped mid-reply: keep what was written.
+  const messages = chat.messages
+    .filter((m) => m.id !== typingId(runId) || hasCards(m))
+    .map((m) =>
+      m.status === "streaming" && (m.id === run?.messageId || m.id === typingId(runId)) ? { ...m, status: "complete" as const } : m,
+    );
+  return { ...chat, messages, runs: chat.runs.filter((r) => r.id !== runId), endedRunIds: ended(chat, runId) };
+}
+
+function withLastEventId(chat: ChatSlice, runId: string, eventId: number): ChatSlice {
+  const run = chat.runs.find((r) => r.id === runId);
+  if (!run || (run.lastEventId ?? 0) >= eventId) return chat;
+  return { ...chat, runs: chat.runs.map((r) => (r === run ? { ...r, lastEventId: eventId } : r)) };
 }
 
 function upsertRun(runs: ActiveRun[], run: ActiveRun): ActiveRun[] {

@@ -23,8 +23,8 @@ import { previewFromArgs } from "@/lib/args-form";
 import { approvalApi, authApi, botApi, inviteApi, modelApi, orgApi, runApi, threadApi } from "./api/botdesk";
 import { ApiError, apiBaseUrl } from "./api/client";
 import { toApiBot, toApproval, toBot, toInvitation, toMessage, toModel, toModelProvider, toOrg, toThread, toUser } from "./api/map";
-import { applyRunEvent, upsertApproval, withActiveRuns, withPreview, withWaitingApprovals, type ActiveRun } from "./api/run-events";
-import type { ApiMe, ApiRun, ApiRunEvent, ApiThread } from "./api/types";
+import { applyRunEvent, typingId, upsertApproval, withActiveRuns, withPreview, withWaitingApprovals, type ActiveRun } from "./api/run-events";
+import type { ApiMe, ApiRunEvent, ApiThread, ApiThreadRuns } from "./api/types";
 import * as mock from "./mock/fixtures";
 import type {
   Approval, ApprovalStatus, Bot, Invitation, Membership, Message, Model, ModelListProblem, ModelProvider, Org, Participant, Routine, Thread, User,
@@ -671,10 +671,11 @@ const setThreadLoad = (threadId: string, load: ThreadLoad) =>
 
 /**
  * The newest page of messages, and the chat's approvals so their cards can show (a reply still
- * being written gets a stand-in, see withWaitingApprovals). `activeRuns` (null if that list
- * failed) sets this chat's runs. Messages that arrived on the stream meanwhile are kept.
+ * being written gets a stand-in, see withWaitingApprovals). `active` (null if that list failed)
+ * sets this chat's runs. Messages that arrived on the stream meanwhile are kept.
  */
-async function loadMessages(orgId: string, threadId: string, activeRuns: ApiRun[] | null = null) {
+async function loadMessages(orgId: string, threadId: string, active: ApiThreadRuns | null = null) {
+  const activeRuns = active?.runs ?? null;
   setThreadLoad(threadId, { status: "loading", hasOlder: state.threadLoads[threadId]?.hasOlder ?? false });
   try {
     const [apiPage, apiApprovals] = await Promise.all([
@@ -684,21 +685,32 @@ async function loadMessages(orgId: string, threadId: string, activeRuns: ApiRun[
     const page = apiPage.map(toMessage);
     set((st) => {
       if (st.org.id !== orgId) return st;
-      const inPage = new Set(page.map((m) => m.id));
-      const newest = page.at(-1)?.createdAt ?? "";
       const others = st.messages.filter((m) => m.threadId !== threadId);
-      const newer = st.messages.filter((m) => m.threadId === threadId && !inPage.has(m.id) && Date.parse(m.createdAt) >= Date.parse(newest || "1970-01-01"));
+      const kept = st.messages.filter((m) => m.threadId === threadId && keepBesidePage(st, m, page));
       const loaded = {
         ...st,
-        messages: [...others, ...page, ...newer],
+        messages: [...others, ...page, ...kept],
         threadLoads: { ...st.threadLoads, [threadId]: { status: "ready" as const, hasOlder: page.length === PAGE_SIZE } },
       };
       const withCards = withWaitingApprovals(loaded, apiApprovals.map(toApproval), activeRuns ?? undefined);
-      return withRunStatus({ ...loaded, ...(activeRuns ? withActiveRuns(withCards, threadId, activeRuns) : withCards) });
+      return withRunStatus({ ...loaded, ...(active ? withActiveRuns(withCards, threadId, active.runs, active.lastEventId) : withCards) });
     });
   } catch {
     if (state.org.id === orgId) setThreadLoad(threadId, { status: "error", hasOlder: false });
   }
+}
+
+/**
+ * A message of this chat already in the store that the newly loaded page doesn't have. Kept: the
+ * reply of a run still going (its stand-in, or its streamed words), whatever its time, and
+ * anything saved since the page's oldest message (it arrived on the stream after the page was
+ * read). Dropped: older ones from an earlier visit, which would leave a gap before the page.
+ */
+function keepBesidePage(st: State, message: Message, page: Message[]): boolean {
+  if (page.some((m) => m.id === message.id)) return false;
+  if (st.runs.some((r) => message.id === typingId(r.id) || message.id === r.messageId)) return true;
+  const oldest = page[0]?.createdAt;
+  return oldest === undefined || Date.parse(message.createdAt) >= Date.parse(oldest);
 }
 
 const chatActions = {
@@ -713,13 +725,14 @@ const chatActions = {
     let closed = false;
     let stopFollowing = () => {};
     void (async () => {
-      // The chat's runs first: their `lastEventId` is where the stream starts, and the messages
-      // are read after it, so nothing that happens in between is missed. If the list fails,
-      // the stream starts from now, as a best effort.
+      // The chat's runs first. The stream starts at their `replayFrom`, just before the unfinished
+      // runs' first events, so it replays a reply's words and tool lines so far; the messages are
+      // read after that, so nothing that happens in between is missed. If the list fails, the
+      // stream starts from now, as a best effort.
       const active = await threadApi.activeRuns(orgId, threadId).catch(() => null);
       if (closed || state.org.id !== orgId) return;
-      stopFollowing = followChat(orgId, threadId, active?.lastEventId);
-      await loadMessages(orgId, threadId, active?.runs ?? null);
+      stopFollowing = followChat(orgId, threadId, active?.replayFrom);
+      await loadMessages(orgId, threadId, active);
     })();
     return () => {
       closed = true;

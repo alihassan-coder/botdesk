@@ -166,7 +166,10 @@ export interface ApiRun {
 /** A chat's runs, and its newest event id: follow the stream after it and nothing is missed. */
 export interface ApiThreadRuns {
   runs: ApiRun[];
+  /** The chat's newest event when the runs were read. */
   lastEventId: number;
+  /** Just before the unfinished runs' first events: following from here replays them. */
+  replayFrom: number;
 }
 
 /* ---------- Approvals ---------- */

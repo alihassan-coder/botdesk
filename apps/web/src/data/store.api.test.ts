@@ -13,7 +13,8 @@ const members = [
   { id: "u2", name: "Omar", email: "omar@example.com", handle: "omar", role: "member" },
 ];
 
-type Route = { status: number; body?: unknown };
+/** `wait`: the answer comes once it settles (a slow request). */
+type Route = { status: number; body?: unknown; wait?: Promise<unknown> };
 let routes: Record<string, Route>;
 const calls: string[] = [];
 
@@ -32,6 +33,7 @@ beforeEach(() => {
       const key = `${init?.method ?? "GET"} ${url.replace("http://api.test", "")}`;
       calls.push(key);
       const route = routes[key] ?? { status: 404, body: { detail: "Not found" } };
+      await route.wait;
       return route.body === undefined ? new Response(null, { status: route.status }) : Response.json(route.body, { status: route.status });
     }),
   );
@@ -332,6 +334,8 @@ describe("your profile on the API", () => {
 /** Stands in for the browser's EventSource, so tests can play a chat's live updates. */
 class FakeEventSource {
   static last: FakeEventSource | null = null;
+  /** Event ids grow, as on the API. A test can pass its own `id`. */
+  static nextId = 1;
   readonly listeners = new Map<string, (event: MessageEvent<string>) => void>();
   closed = false;
   constructor(
@@ -347,7 +351,7 @@ class FakeEventSource {
     this.closed = true;
   }
   emit(kind: string, event: Record<string, unknown>) {
-    const data = JSON.stringify({ id: 1, threadId: "t1", createdAt: "2026-11-12T09:00:01Z", runId: null, kind, ...event });
+    const data = JSON.stringify({ id: FakeEventSource.nextId++, threadId: "t1", createdAt: "2026-11-12T09:00:01Z", runId: null, kind, ...event });
     this.listeners.get(kind)?.(new MessageEvent(kind, { data }));
   }
 }
@@ -428,14 +432,45 @@ describe("chats on the API", () => {
   });
 
   it("opening a chat where a bot is mid-reply shows it thinking, and follows on from where the list left off", async () => {
-    routes["GET /api/v1/orgs/o1/threads/t1/runs?active=true"] = { status: 200, body: { runs: [apiRun()], lastEventId: 42 } };
+    routes["GET /api/v1/orgs/o1/threads/t1/runs?active=true"] = { status: 200, body: { runs: [apiRun()], lastEventId: 42, replayFrom: 30 } };
     actions.openThread("t1");
     await vi.waitFor(() => expect(state().threadLoads.t1?.status).toBe("ready"));
     expect(calls.indexOf("GET /api/v1/orgs/o1/threads/t1/runs?active=true")).toBeLessThan(calls.indexOf("GET /api/v1/orgs/o1/threads/t1/messages?limit=50"));
-    expect(FakeEventSource.last?.url).toBe("http://api.test/api/v1/orgs/o1/threads/t1/events?after=42");
     expect(state().messages.at(-1)).toMatchObject({ id: "typing-r1", status: "streaming" });
     expect(state().bots[0]).toMatchObject({ status: "working", statusText: "Thinking…" });
     expect(state().runs).toMatchObject([{ id: "r1", threadId: "t1", botId: "b1" }]);
+
+    // The stream replays the run from its start, so the reply has its words from the first one.
+    expect(FakeEventSource.last?.url).toBe("http://api.test/api/v1/orgs/o1/threads/t1/events?after=30");
+    const stream = FakeEventSource.last!;
+    stream.emit("run_started", { id: 31, runId: "r1", data: { botId: "b1" } });
+    stream.emit("message_delta", { id: 32, runId: "r1", data: { messageId: "m9", botId: "b1", text: "Looking " } });
+    stream.emit("message_delta", { id: 43, runId: "r1", data: { messageId: "m9", botId: "b1", text: "now." } });
+    expect(texts()).toEqual(["Hi Scout", "Hello!", "Looking now."]);
+  });
+
+  it("a run that starts while the chat is loading keeps its Stop button and busy bot", async () => {
+    let answer = () => {};
+    const slow = new Promise<void>((resolve) => (answer = resolve));
+    routes["GET /api/v1/orgs/o1/threads/t1/runs?active=true"] = { status: 200, body: { runs: [], lastEventId: 10, replayFrom: 10 } };
+    routes["GET /api/v1/orgs/o1/threads/t1/messages?limit=50"] = {
+      status: 200, wait: slow, body: [message("m1", "Hi Scout"), message("m3", "Still there?", undefined, "2026-11-12T09:30:00Z")],
+    };
+    actions.openThread("t1");
+    await vi.waitFor(() => expect(FakeEventSource.last?.url).toContain("after=10"));
+
+    const stream = FakeEventSource.last!;
+    stream.emit("run_started", { id: 11, runId: "r2", data: { botId: "b1" } });
+    stream.emit("tool_started", { id: 12, runId: "r2", data: { toolExecutionId: "x1", tool: "demo.current_time", risk: "read", args: {} } });
+    answer();
+    await vi.waitFor(() => expect(state().threadLoads.t1?.status).toBe("ready"));
+
+    expect(state().runs).toMatchObject([{ id: "r2", botId: "b1" }]);
+    expect(state().bots[0]).toMatchObject({ status: "working", statusText: "Thinking…" });
+    // Its reply (with the tool line) stays, though the page has a message newer than it.
+    expect(state().messages.at(-1)).toMatchObject({
+      id: "typing-r2", parts: [{ type: "tool-call", toolExecutionId: "x1", status: "running" }, { type: "text", text: "" }],
+    });
   });
 
   it("opening a chat with a stuck run shows the needs-attention notice, which Stop clears", async () => {

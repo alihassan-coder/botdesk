@@ -2,6 +2,16 @@
 
 A short history of BotDesk, newest first. For one checklist of what is done and what is next, see [ROADMAP.md](ROADMAP.md).
 
+## 2026-11-13: usage and budgets, for real
+
+Every model call is now counted and priced, and budgets stop a bot before it overspends. Details: [backend guide](backend/README.md#usage-and-budgets).
+
+- **Usage records:** one `usage_records` row per model call (tokens from LangChain's `usage_metadata`, streaming included; the built-in OpenAI-compatible providers now send `stream_options.include_usage`), with the provider, model and cost in US dollars. Prices: OpenRouter's from its model list, a small dated price table in `services/pricing.py` for Anthropic, OpenAI, Gemini and Groq, and none for custom servers. A model without a price records tokens and "price unknown", never a guess.
+- **Budgets:** checked before each model call against this calendar month (UTC), with one indexed SUM: the bot's `monthlyBudgetUsd` (0 = no limit) and a new optional organization budget (owners and admins, `PATCH /orgs/{id}`). Over budget, the run fails with a clear message and `run_failed` carries `code: "budget"`.
+- **Routes:** `GET /orgs/{id}/usage?days=14` (daily totals, month to date, org budget, every bot's spend) and `GET /orgs/{id}/bots/{botId}/usage`, for any member.
+- **Web:** Settings → Usage & budgets, the bot details' budget bar and the org budget are on the API (demo and guest mode keep the mock); bots near their limit show amber, past it red; a reply stopped by a budget shows a notice with Edit and a link to Usage & budgets.
+- **Plugin hardening (from a review):** a plugin that returns a non-object or something JSON can't hold (a `datetime`, a `UUID`) now fails that tool call cleanly (`failed`, with a message) instead of leaving the row `started` and crashing the run.
+
 ## 2026-11-13: the memory screen
 
 See, search, correct and forget what a bot remembers, on the API and the web. Details: [backend guide](backend/README.md#memory).

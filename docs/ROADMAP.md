@@ -95,7 +95,7 @@ When you finish something, tick it here in the same pull request.
 - [ ] Rate limits (forgot password, sign-in) and your own email domain in Brevo
 
 ### Later
-- [ ] Usage and budgets on the API
+- [x] Usage and budgets on the API
 - [ ] Unread counts in the chat list
 - [ ] Bot computers (live screen, take over) and routine recording
 - [ ] Desktop app, then mobile

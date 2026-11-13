@@ -32,7 +32,7 @@ The words BotDesk uses for its domain. Use these exact terms in code, UI copy, d
 | **Connection** | A connector authorised for a member, bot or org (e.g. `ali@acme.dev` on Gmail). |
 | **Memory** | Facts a bot remembers about members and work (mem0). Visible and editable by members. |
 | **Template** | A ready-made bot in the marketplace that an org can hire. |
-| **Budget** | A spending cap on a bot. A bot that reaches it is paused. |
+| **Budget** | A monthly spending cap (calendar month, UTC) on a bot, and optionally on the whole organization. A bot that reaches either stops before its next model call and says so in the chat. 0 or empty = no limit. |
 | **Model provider** | A service bots' models come from: Anthropic, OpenAI, Google Gemini, OpenRouter, Groq, or a **custom** OpenAI-compatible server (Ollama, LM Studio, vLLM). Its id is the kind (`groq`) or `custom-<id>`. |
 | **Model id** | `provider:model`, e.g. `anthropic:claude-opus-5-5` or `custom-<id>:llama3.2:latest` (only the first colon splits). Empty = the instance's default model. |
 | **Model key** | An organization's API key for a model provider (`provider_credentials`), added by owners and admins in Settings → Models & keys, checked live and encrypted at rest. People only ever see its last 4 characters. Key precedence for a run today: the org's key → the server's environment key → the stand-in model. Per-bot and per-member keys come later. |

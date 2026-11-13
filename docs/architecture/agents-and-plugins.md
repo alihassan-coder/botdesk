@@ -480,7 +480,7 @@ Every table has `org_id`.
 | `bot_plugin_bindings` | which bot uses which connection, enabled tools, stricter-only overrides |
 | `trigger_subscriptions` | bot, trigger, config, cursor, next renewal |
 | `trigger_events` | outside event id (unique per subscription), so a duplicate delivery is dropped |
-| `usage_events` | tokens and cost per model call, for budgets and billing |
+| `usage_records` | tokens and cost per model call, for budgets and billing |
 | `audit_log` | append-only: actor, action, target, decision trace, args hash |
 
 Plus the tables that procrastinate and LangGraph create for themselves (created in the `migrate` step).

@@ -159,7 +159,7 @@ A service raises `NotFound("…")`, `Conflict("…")` and so on. `main.py` turns
 | `POST /api/v1/auth/reset-password` | `{token, password}`: sets a new password from the link (once, before it expires) and signs out every device |
 | `GET /api/v1/orgs` | Your organizations |
 | `GET /api/v1/orgs/{id}` | One organization |
-| `PATCH /api/v1/orgs/{id}` | Rename / change address (owner or admin) |
+| `PATCH /api/v1/orgs/{id}` | Rename / change address / set the monthly budget `monthlyBudgetUsd` (null or 0 = no limit) (owner or admin) |
 | `GET /api/v1/orgs/{id}/members` | People and their roles |
 | `PATCH /api/v1/orgs/{id}/members/{userId}` | Change a role (owners and admins; only owners touch owners) |
 | `DELETE /api/v1/orgs/{id}/members/{userId}` | Remove someone, or leave (your own id). There's always one owner |
@@ -195,6 +195,8 @@ A service raises `NotFound("…")`, `Conflict("…")` and so on. `main.py` turns
 | `POST /api/v1/orgs/{id}/providers/{provider}/test` | Check a saved key again; saves the result (owners and admins) |
 | `DELETE /api/v1/orgs/{id}/providers/{provider}` | Remove the org's key or custom server (owners and admins) |
 | `GET /api/v1/orgs/{id}/models` | Live models of every connected provider, merged; `?provider=` for one, `?refresh=true` skips the 10 minute cache. A provider that's down is listed in `errors`, the rest still come back. Any member |
+| `GET /api/v1/orgs/{id}/usage` | Daily spend for `?days=` (default 14, max 90), this month's total, the org's budget and each bot's spend against its budget. Any member. See [Usage and budgets](#usage-and-budgets) |
+| `GET /api/v1/orgs/{id}/bots/{botId}/usage` | One bot's spend this month, its budget and daily totals. Any member |
 | `POST /api/v1/orgs/{id}/approvals/{approvalId}/decide` | `{decision: "approve" or "deny", editedArgs?}`. Decides once and resumes the run. 409 if already decided or expired, 400 if `editedArgs` don't fit the tool |
 
 #### Live events
@@ -207,7 +209,7 @@ Each SSE message has `id:` (a growing number), `event:` (the kind) and `data:` J
 | `run_started` | `{botId}` |
 | `message_delta` | `{messageId, botId, text}`: the next piece of a reply. `messageId` is the id the saved reply will have |
 | `run_finished` | `{status}`: `succeeded` or `cancelled` |
-| `run_failed` | `{status: "failed", error}`: `error` is ready to show |
+| `run_failed` | `{status: "failed", error, code?}`: `error` is ready to show; `code` is `"budget"` when the bot or the org reached its monthly budget |
 | `tool_started` | `{toolExecutionId, tool, risk, args}`: a tool call is about to run (`tool` like `demo.send_email`) |
 | `tool_finished` | `{toolExecutionId, tool, status, result, error}`: `status` is `succeeded` (with `result`), `failed` (with `error`) or `denied` (refused by the policy; it never ran, `error` says why). Bad arguments or an unknown tool also come as `failed` without a `tool_started` |
 | `approval_requested` | `{approval}`: the run paused on a risky call and is now `waiting_approval`. `approval` is the [Approval JSON](#approval-json) |
@@ -323,6 +325,7 @@ call_model ──(tool calls, one at a time)──→ prepare_call: validate arg
 - **Who:** members of the organization who are in the approval's chat (the same people who can see the run; a DM stays private). Any role can decide.
 - **Expiry:** approvals expire after `APPROVAL_EXPIRY_HOURS`. With no job queue there is no sweeper yet: an expired approval is noticed when someone decides it (409, and the run is told "no"), or when the run is stopped.
 - **Short transactions:** none is open during a model call, a tool call, or the wait for a person.
+- **Results must be JSON objects.** A handler that returns something else (a list, None, a dict holding a `datetime` or `UUID`) fails that call with a clear message: the row ends `failed`, not `started`, and the run goes on.
 
 ### Plugins
 
@@ -397,6 +400,42 @@ Bots remember with mem0 on pgvector, in the same Postgres database ([agents-and-
 ```
 
 **Not yet:** memory doesn't use the org's OpenAI key from Models & keys. mem0 builds one client (LLM, embedder and a pgvector connection pool) at startup, so a per-org key would mean one cached `AsyncMemory` per org key, with its own pool, rebuilt when the key changes; that's left for later. Also not yet: `memory_audit`, tainted memories, removing a bot's memories when the bot is removed, and paging past `limit` (pgvector's list has no order, so with more than `limit` memories the newest-first list is of an arbitrary `limit` of them).
+
+## Usage and budgets
+
+Settings → Usage & budgets, and each bot's "Budget this month" ([agents-and-plugins.md §4.2](../architecture/agents-and-plugins.md)).
+
+**Recording.** After every model call, `call_model` adds one `usage_records` row in its own short transaction: org, bot, run, provider id (`anthropic`, `openrouter`, `custom-<id>`…), model id (`provider:model`), input and output tokens, and `cost_usd`. Tokens come from the LangChain answer's `usage_metadata`, which streaming fills in too: Anthropic always reports it, and the OpenAI-compatible adapters ask for it with `stream_usage` (`stream_options.include_usage`) for the built-in providers. Custom servers aren't asked (some refuse the field), so they record tokens only if they send them anyway. A model that reports no tokens (the stand-in) records nothing. A failed insert is logged and the reply goes on. `bot_id` and `run_id` become null when those are deleted, so the organization's spend stays right. Indexes: `(org_id, created_at)` and `(bot_id, created_at)`.
+
+**Cost** = `input_tokens × input price + output_tokens × output price`, prices in US dollars per million tokens (`services/pricing.py`):
+
+| Provider | Price from |
+|---|---|
+| OpenRouter | its model list (`ModelCatalog`, the same cache Models & keys uses; fetched once if the API hasn't listed it yet) |
+| Anthropic, OpenAI, Gemini, Groq | `PRICE_TABLE` in `services/pricing.py`, dated by `PRICES_CHECKED`. Standard rates, no caching or batch discounts. Exact model ids only, after dropping a date suffix (`-20250929`, `-2024-08-06`, `-latest`), so `gpt-4o` never prices `gpt-4o-mini`. Edit the table when prices change |
+| Custom servers | no price |
+
+A model with no price records its tokens and `cost_usd = null`. The web shows those tokens as "without a known price" instead of guessing, and budgets can't stop them.
+
+**Budgets.** Before each model call, `call_model` checks the bot's `monthlyBudgetUsd` and the organization's `monthlyBudgetUsd`. A month is the calendar month in UTC. The run stops when this month's spend is already at the budget, or when spend plus a small estimate of this call (prompt characters ÷ 4 as input tokens, plus 500 output tokens, at the model's price) would pass it. A bot budget of 0 and an org budget of null mean no limit; with neither set, nothing is summed. The spend is one SUM over the `(org_id, created_at)` index for both the bot and the org. A stopped run fails with a message such as `"Inbox Manager reached its $40 monthly budget. Raise it in the bot's settings."` (or `"<Org> reached its $200 monthly budget for all its bots. An owner or admin can raise it in Settings → Usage & budgets."`), and its `run_failed` event carries `code: "budget"`.
+
+**Routes** (any member):
+
+`GET /orgs/{id}/usage?days=14` (1–90):
+
+```json
+{
+  "days": [{"date": "2026-11-13", "modelsUsd": 1.25, "computersUsd": 0, "inputTokens": 12000, "outputTokens": 3000, "unpricedTokens": 0}],
+  "monthStart": "2026-11-01",
+  "monthToDateUsd": 33.5,
+  "orgBudgetUsd": 200,
+  "unpricedTokens": 4200,
+  "bots": [{"botId": "…", "name": "Scout", "spentUsd": 33.5, "budgetUsd": 40, "inputTokens": 900000, "outputTokens": 120000, "unpricedTokens": 0}],
+  "pricesChecked": "2026-11-13"
+}
+```
+
+`days` are UTC days, oldest first, today included, quiet days as zeros. `computersUsd` stays 0 until bots have computers. `budgetUsd` / `orgBudgetUsd` null = no limit. `monthToDateUsd` includes bots removed this month. `GET /orgs/{id}/bots/{botId}/usage?days=14` is one bot's entry plus its `days` and `monthStart`. The organization's budget is set with `PATCH /orgs/{id}` `{monthlyBudgetUsd}` (owners and admins; null or 0 removes it, leaving it out keeps it).
 
 ## Email
 

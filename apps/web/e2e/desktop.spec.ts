@@ -47,7 +47,7 @@ test("approving an action updates the card and the approvals count", async ({ pa
 
 test("editing an action before approving it", async ({ page }) => {
   await page.goto("/chat/t_inbox");
-  await page.getByRole("button", { name: "Edit" }).nth(1).click();
+  await page.getByRole("group", { name: "Approval: Decline vendor demo (Initech)" }).getByRole("button", { name: "Edit" }).click();
   const body = page.getByLabel("Body");
   await body.fill("Not this quarter. Thanks!");
   await page.getByRole("button", { name: "Approve edited version" }).click();
@@ -56,8 +56,9 @@ test("editing an action before approving it", async ({ page }) => {
 
 test("the edit form checks fields before approving", async ({ page }) => {
   await page.goto("/chat/t_inbox");
-  await page.getByRole("button", { name: "Edit" }).first().click();
-  await page.getByRole("textbox", { name: "To" }).fill("vicky");
+  const card = page.getByRole("group", { name: "Approval: Send reply to Vicky (Globex)" });
+  await card.getByRole("button", { name: "Edit" }).click();
+  await card.getByRole("textbox", { name: "To" }).fill("vicky");
   await page.getByRole("button", { name: "Approve edited version" }).click();
   await expect(page.getByText("Enter an email address, like sara@acme.dev.")).toBeVisible();
   await expect(page.locator("[data-sidebar=sidebar]").getByRole("link", { name: "Approvals, 3 waiting" })).toBeVisible();

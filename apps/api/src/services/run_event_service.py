@@ -2,13 +2,20 @@
 
 Every event is a row in `run_events` with a growing id. The live stream and the replay
 after a reconnect read the same table, so they can never disagree.
+
+On Postgres, ids come from a sequence when a row is inserted, but become visible when its
+transaction commits, and two transactions can commit in either order. A stream that has seen
+id 8 would never see an id 7 committed after it. So a transaction that adds events to a chat
+first takes that chat's advisory lock (held until it commits): within a chat, ids are taken
+and committed one transaction at a time, in order.
 """
 
 import uuid
 from typing import Any
 
-from sqlalchemy import func, select
+from sqlalchemy import event, func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import Session
 
 from src.models import RunEvent
 from src.schemas.run import RunEventOut
@@ -29,6 +36,24 @@ def add_event(
     event = RunEvent(org_id=org_id, thread_id=thread_id, run_id=run_id, kind=kind, payload=data)
     db.add(event)
     return event
+
+
+def thread_lock_key(thread_id: uuid.UUID) -> int:
+    """The chat's advisory lock: a signed 64-bit number from its id."""
+    return int.from_bytes(thread_id.bytes[:8], "big", signed=True)
+
+
+@event.listens_for(Session, "before_flush")
+def _lock_chats_before_adding_events(session: Session, _context: Any, _instances: Any) -> None:
+    """Before new events get their ids, wait for any other transaction adding events to the same
+    chat to commit (see the module docstring). One short lock per flush; the token batcher already
+    groups a reply's words into a few events a second. Locks are taken in a fixed order, so two
+    transactions that touch the same chats can't deadlock on them. SQLite writes one at a time anyway."""
+    if session.get_bind().dialect.name != "postgresql":
+        return
+    threads = {obj.thread_id for obj in session.new if isinstance(obj, RunEvent)}
+    for thread_id in sorted(threads):
+        session.connection().execute(text("SELECT pg_advisory_xact_lock(:key)"), {"key": thread_lock_key(thread_id)})
 
 
 async def events_after(db: AsyncSession, *, thread_id: uuid.UUID, after_id: int) -> list[RunEvent]:

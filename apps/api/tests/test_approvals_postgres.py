@@ -128,6 +128,12 @@ async def test_a_chat_opened_later_sees_the_paused_run_and_follows_on_from_there
     assert (run["id"], run["status"], run["error"]) == (run_id, "waiting_approval", None)
     events = await _events(pg.client, thread)
     assert active["lastEventId"] == events[-1]["id"]  # the approval_requested event
+    # Following from `replayFrom` instead rebuilds the paused run: its start, words and card.
+    first_of_run = next(event for event in events if event["data"]["runId"] == run_id)
+    assert first_of_run["event"] == "run_started"
+    assert active["replayFrom"] == first_of_run["id"] - 1
+    replay = await _events(pg.client, thread, last_event_id=active["replayFrom"])
+    assert [event["id"] for event in replay] == [event["id"] for event in events if event["id"] > active["replayFrom"]]
     await pg.client.post(f"{org}/approvals/{approval['id']}/decide", json={"decision": "approve"})
     await pg.runs.wait_until_idle()
     followed = await _events(pg.client, thread, last_event_id=active["lastEventId"])

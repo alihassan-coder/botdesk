@@ -314,15 +314,30 @@ THREAD_RUNS_LIMIT = 100
 class ThreadRuns:
     runs: list[Run]
     last_event_id: int  # the chat's newest event when the runs were read
+    replay_from: int  # just before the unfinished runs' first events (`last_event_id` if they have none)
 
 
 async def thread_runs(db: AsyncSession, thread_id: uuid.UUID, *, active: bool) -> ThreadRuns:
     """A chat's runs, newest first (only the unfinished ones when `active`), and the chat's
     newest event id, read in one statement so they describe the same moment: a stream that
     starts after that id misses nothing that changed these runs. Always one row comes back,
-    even with no runs (the position is the left side of the join)."""
+    even with no runs (the position is the left side of the join).
+
+    `replay_from` is where a stream that should rebuild the unfinished runs starts: just before
+    the first event of any of them. Replaying from there brings back a reply's words so far and
+    its tool lines, not only what comes after `last_event_id`."""
+    last_event_id = func.coalesce(func.max(RunEvent.id), 0)
+    unfinished = select(Run.id).where(Run.thread_id == thread_id, Run.status.in_(LIVE_STATUSES))
+    first_unfinished_event = (
+        select(func.min(RunEvent.id))
+        .where(RunEvent.thread_id == thread_id, RunEvent.run_id.in_(unfinished))
+        .scalar_subquery()
+    )
     position = (
-        select(func.coalesce(func.max(RunEvent.id), 0).label("last_event_id"))
+        select(
+            last_event_id.label("last_event_id"),
+            func.coalesce(first_unfinished_event - 1, last_event_id).label("replay_from"),
+        )
         .where(RunEvent.thread_id == thread_id)
         .subquery()
     )
@@ -331,14 +346,15 @@ async def thread_runs(db: AsyncSession, thread_id: uuid.UUID, *, active: bool) -
         joined.append(Run.status.in_(LIVE_STATUSES))
     rows = (
         await db.execute(
-            select(position.c.last_event_id, Run)
+            select(position.c.last_event_id, position.c.replay_from, Run)
             .select_from(position)
             .outerjoin(Run, and_(*joined))
             .order_by(Run.created_at.desc())
             .limit(THREAD_RUNS_LIMIT)
         )
     ).all()
-    return ThreadRuns(runs=[run for _, run in rows if run is not None], last_event_id=rows[0][0] if rows else 0)
+    first = rows[0] if rows else (0, 0, None)
+    return ThreadRuns(runs=[run for _, _, run in rows if run is not None], last_event_id=first[0], replay_from=first[1])
 
 
 def run_out(run: Run) -> RunOut:

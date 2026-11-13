@@ -70,7 +70,8 @@ async def test_a_chat_lists_its_unfinished_runs_and_where_its_stream_is(client: 
     org, (scout, _) = await _org_with_bots(client)
     thread = f"{org}/threads/{(await client.post(f'{org}/threads/dm', json={'botId': scout['id']})).json()['id']}"
 
-    assert (await client.get(f"{thread}/runs", params={"active": True})).json() == {"runs": [], "lastEventId": 0}
+    empty = (await client.get(f"{thread}/runs", params={"active": True})).json()
+    assert empty == {"runs": [], "lastEventId": 0, "replayFrom": 0}
 
     run_id = (await client.post(f"{thread}/messages", json={"text": "Hi"})).json()["runIds"][0]
     active = (await client.get(f"{thread}/runs", params={"active": True})).json()
@@ -78,10 +79,12 @@ async def test_a_chat_lists_its_unfinished_runs_and_where_its_stream_is(client: 
         (run_id, "queued", scout["id"], None)
     ]
     assert active["lastEventId"] == await _latest_event_id(client, thread) > 0
+    assert active["replayFrom"] == active["lastEventId"]  # the queued run has no events yet
 
     await client.post(f"{org}/runs/{run_id}/cancel")
     after_stop = (await client.get(f"{thread}/runs", params={"active": True})).json()
     assert after_stop["runs"] == []
     assert after_stop["lastEventId"] == await _latest_event_id(client, thread) > active["lastEventId"]
+    assert after_stop["replayFrom"] == after_stop["lastEventId"]
     every = (await client.get(f"{thread}/runs")).json()["runs"]
     assert [(run["id"], run["status"]) for run in every] == [(run_id, "cancelled")]

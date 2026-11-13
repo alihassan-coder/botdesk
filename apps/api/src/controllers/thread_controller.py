@@ -58,7 +58,11 @@ async def list_messages(
 async def list_runs(db: AsyncSession, access: Access, thread_id: uuid.UUID, *, active: bool) -> ThreadRunsOut:
     thread = await thread_service.get_thread(db, org_id=access.org.id, user_id=access.user.id, thread_id=thread_id)
     found = await run_service.thread_runs(db, thread.id, active=active)
-    return ThreadRunsOut(runs=[run_service.run_out(run) for run in found.runs], last_event_id=found.last_event_id)
+    return ThreadRunsOut(
+        runs=[run_service.run_out(run) for run in found.runs],
+        last_event_id=found.last_event_id,
+        replay_from=found.replay_from,
+    )
 
 
 async def post_message(

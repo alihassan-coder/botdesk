@@ -56,12 +56,15 @@ def create_app(settings: Settings | None = None, *, outbound: httpx.AsyncBaseTra
         async with (
             httpx.AsyncClient(timeout=OUTBOUND_TIMEOUT, transport=outbound) as http,
             httpx.AsyncClient(timeout=OUTBOUND_TIMEOUT, transport=custom_transport, follow_redirects=False) as custom,
-            run_manager(settings, app.state.sessionmaker, build_memory(settings), secrets) as runs,
         ):
             app.state.email = build_email_sender(settings, http)
+            # One catalog: Models & keys and runs (OpenRouter's prices) share its cache.
             app.state.models = ModelCatalog(http, allow_private_urls=allow_private, custom_http=custom)
-            app.state.runs = runs
-            yield
+            async with run_manager(
+                settings, app.state.sessionmaker, build_memory(settings), secrets, app.state.models
+            ) as runs:
+                app.state.runs = runs
+                yield
         await engine.dispose()
 
     app = FastAPI(

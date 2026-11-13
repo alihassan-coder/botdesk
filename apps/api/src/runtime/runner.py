@@ -41,7 +41,7 @@ from src.core.database import postgres_connect_args
 from src.core.secrets import SecretBox
 from src.models import Run
 from src.plugins.registry import ToolRegistry, build_registry
-from src.runtime.chat_model import ModelResolver
+from src.runtime.chat_model import ModelPrice, ModelResolver
 from src.runtime.event_bus import EventBus
 from src.runtime.graph import RunDeps, RunError, RunStopped, build_graph
 from src.runtime.limits import RunLimits, time_limit_message
@@ -49,6 +49,7 @@ from src.runtime.memory import MemoryService, NoMemory
 from src.runtime.reporter import RunReporter
 from src.runtime.tool_pipeline import NeedsAttention
 from src.services import approval_service, run_service
+from src.services.model_catalog import ModelCatalog
 
 logger = logging.getLogger(__name__)
 
@@ -78,6 +79,7 @@ class Outcome:
 
     status: str  # succeeded | failed | cancelled | waiting_approval | needs_attention
     error: str | None = None
+    code: str | None = None  # why it failed, for the web: "budget" when out of budget
     approval_id: str | None = None  # when waiting_approval: the approval it waits for
 
 
@@ -92,16 +94,18 @@ class RunManager:
         bus: EventBus | None = None,
         registry: ToolRegistry | None = None,
         secrets: SecretBox,
+        catalog: ModelCatalog | None = None,
     ) -> None:
         self.settings = settings
         self.sessionmaker = sessionmaker
         self.bus = bus or EventBus()
         self.memory: MemoryService = memory or NoMemory()
         self.registry = registry or build_registry(settings.plugin_ids)
+        resolver = ModelResolver(settings, sessionmaker, secrets, catalog)
         # (org id, model id) → the chat model, with the org's keys. Tests swap in a fake model here.
-        self.model_for: Callable[[uuid.UUID, str], Awaitable[BaseChatModel]] = ModelResolver(
-            settings, sessionmaker, secrets
-        )
+        self.model_for: Callable[[uuid.UUID, str], Awaitable[BaseChatModel]] = resolver
+        # (org id, model id) → its price, for budgets and usage records. Tests swap in prices here.
+        self.price_for: Callable[[uuid.UUID, str], Awaitable[ModelPrice]] = resolver.price
         # Tests about chats (not replies) switch this off: runs are created but never start.
         self.enabled = True
         self._graph = build_graph(checkpointer)
@@ -232,6 +236,7 @@ class RunManager:
             reporter=reporter,
             memory=self.memory,
             model_for=partial(self.model_for, ticket.org_id),
+            price_for=partial(self.price_for, ticket.org_id),
             in_background=self.in_background,
             registry=self.registry,
             tool_timeout_seconds=self.settings.tool_timeout_seconds,
@@ -256,7 +261,7 @@ class RunManager:
         except NeedsAttention as error:
             return Outcome("needs_attention", str(error))
         except RunError as error:
-            return Outcome("failed", str(error))
+            return Outcome("failed", str(error), code=getattr(error, "code", None))
         except Exception:
             logger.exception("Run %s failed", ticket.id)
             return Outcome("failed", SOMETHING_WENT_WRONG)
@@ -277,7 +282,10 @@ class RunManager:
                     reporter.add(db, "run_needs_attention", {"status": "needs_attention", "error": outcome.error})
             elif await run_service.finish_run(db, ticket.id, status=outcome.status, error=outcome.error):
                 if outcome.status == "failed":
-                    reporter.add(db, "run_failed", {"status": "failed", "error": outcome.error})
+                    failed: dict[str, Any] = {"status": "failed", "error": outcome.error}
+                    if outcome.code:
+                        failed["code"] = outcome.code
+                    reporter.add(db, "run_failed", failed)
                 else:
                     reporter.add(db, "run_finished", {"status": outcome.status})
             await db.commit()
@@ -340,12 +348,21 @@ async def checkpointer_for(settings: Settings) -> AsyncIterator[BaseCheckpointSa
 
 @asynccontextmanager
 async def run_manager(
-    settings: Settings, sessionmaker: async_sessionmaker[AsyncSession], memory: MemoryService, secrets: SecretBox
+    settings: Settings,
+    sessionmaker: async_sessionmaker[AsyncSession],
+    memory: MemoryService,
+    secrets: SecretBox,
+    catalog: ModelCatalog | None = None,
 ) -> AsyncIterator[RunManager]:
-    """The API's run manager, for the lifetime of the app."""
+    """The API's run manager, for the lifetime of the app. `catalog` gives OpenRouter's prices."""
     async with checkpointer_for(settings) as checkpointer:
         runs = RunManager(
-            settings=settings, sessionmaker=sessionmaker, checkpointer=checkpointer, memory=memory, secrets=secrets
+            settings=settings,
+            sessionmaker=sessionmaker,
+            checkpointer=checkpointer,
+            memory=memory,
+            secrets=secrets,
+            catalog=catalog,
         )
         await runs.recover_after_restart()
         try:

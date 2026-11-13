@@ -12,7 +12,16 @@ from src.schemas.organization import MemberOut, OrgOut
 
 
 def org_out(org: Organization, role: str) -> OrgOut:
-    return OrgOut.model_validate({"id": org.id, "name": org.name, "slug": org.slug, "plan": org.plan, "role": role})
+    return OrgOut.model_validate(
+        {
+            "id": org.id,
+            "name": org.name,
+            "slug": org.slug,
+            "plan": org.plan,
+            "role": role,
+            "monthly_budget_usd": org.monthly_budget_usd,
+        }
+    )
 
 
 async def create_personal_org(db: AsyncSession, owner: User) -> Organization:
@@ -63,6 +72,11 @@ async def update_org(db: AsyncSession, org: Organization, *, name: str | None, s
     if name and name.strip():
         org.name = name.strip()
     return org
+
+
+def set_budget(org: Organization, monthly_budget_usd: int | None) -> None:
+    """What all the organization's bots may spend a month. None or 0 removes the limit."""
+    org.monthly_budget_usd = monthly_budget_usd or None
 
 
 async def _owner_count(db: AsyncSession, org_id: uuid.UUID) -> int:

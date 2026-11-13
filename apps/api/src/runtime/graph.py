@@ -39,10 +39,11 @@ from langgraph.runtime import Runtime
 from langgraph.types import interrupt
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from src.core.database import utcnow
 from src.models.bot import Bot, SecurityLevel
 from src.plugins.registry import ToolRegistry
 from src.runtime import tool_pipeline
-from src.runtime.chat_model import ModelUnavailable, describe_model_error
+from src.runtime.chat_model import ModelPrice, ModelUnavailable, describe_model_error
 from src.runtime.limits import RunLimits, limit_reached
 from src.runtime.memory import MemoryScope, MemoryService
 from src.runtime.policy import LEVELS
@@ -50,7 +51,7 @@ from src.runtime.prompt import HistoryLine, build_prompt
 from src.runtime.reporter import RunReporter
 from src.runtime.token_batcher import BackgroundSender, TokenBatcher
 from src.runtime.tool_pipeline import ToolCallRequest, finished_event
-from src.services import run_service, thread_service, tool_execution_service
+from src.services import pricing, run_service, thread_service, tool_execution_service, usage_service
 from src.services.tool_execution_service import RunRef
 
 logger = logging.getLogger(__name__)
@@ -60,6 +61,13 @@ STEP_SEPARATOR = "\n\n"  # between the text of two model steps in one reply
 
 class RunError(Exception):
     """A run can't go on. The message is shown to people as the run's error."""
+
+
+class BudgetReached(RunError):
+    """The bot or its organization is out of budget this month. The run fails with `code` "budget",
+    so the web can show the message with a way to raise the budget."""
+
+    code = "budget"
 
 
 class RunStopped(Exception):
@@ -111,6 +119,7 @@ class RunDeps:
     reporter: RunReporter
     memory: MemoryService
     model_for: Callable[[str], Awaitable[BaseChatModel]]  # model id → chat model, with this org's keys
+    price_for: Callable[[str], Awaitable[ModelPrice]]  # model id → its price, for budgets and usage
     in_background: Callable[[Coroutine[Any, Any, None]], None]
     registry: ToolRegistry
     tool_timeout_seconds: float
@@ -191,6 +200,9 @@ async def call_model(state: RunState, runtime: Runtime[RunDeps]) -> RunState:
         history=[HistoryLine(from_this_bot=line["fromThisBot"], text=line["text"]) for line in state["history"]],
     )
     turns = state.get("turns", [])
+    messages = [*prompt, *messages_from_dict(turns)]
+    price = await deps.price_for(state["model_id"])
+    await _check_budget(deps, price, messages)
     # The reply's id is chosen at the first step, so every streamed piece and the saved message share it.
     message_id = state.get("reply_message_id") or str(uuid.uuid4())
     earlier = state.get("reply", "")
@@ -199,9 +211,8 @@ async def call_model(state: RunState, runtime: Runtime[RunDeps]) -> RunState:
     except ModelUnavailable as error:
         raise RunError(str(error)) from error
     model = _with_tools(chat_model, deps.registry)
-    answer = await _stream_reply(
-        deps, model, [*prompt, *messages_from_dict(turns)], message_id, separator=STEP_SEPARATOR if earlier else ""
-    )
+    answer = await _stream_reply(deps, model, messages, message_id, separator=STEP_SEPARATOR if earlier else "")
+    await _record_usage(deps, price, answer)
     text = answer.text
     calls = [{"id": call["id"], "name": call["name"], "args": call["args"]} for call in answer.tool_calls]
     return {
@@ -210,6 +221,43 @@ async def call_model(state: RunState, runtime: Runtime[RunDeps]) -> RunState:
         "turns": [*turns, message_to_dict(answer)] if calls else turns,
         "pending_calls": calls,
     }
+
+
+async def _check_budget(deps: RunDeps, price: ModelPrice, messages: list[BaseMessage]) -> None:
+    """Before each model call (§4.2): stop if this month's spend plus a small estimate of this call
+    would pass the bot's or the organization's budget."""
+    estimate = pricing.estimate_usd(price.pricing, sum(len(str(message.content)) for message in messages))
+    async with deps.sessionmaker() as db:
+        reason = await usage_service.budget_stop(
+            db, org_id=deps.org_id, bot_id=deps.bot_id, estimate_usd=estimate, now=utcnow()
+        )
+    if reason:
+        raise BudgetReached(reason)
+
+
+async def _record_usage(deps: RunDeps, price: ModelPrice, answer: AIMessage) -> None:
+    """After each model call: one short insert with its tokens and cost. Models that don't report
+    tokens (the stand-in, some custom servers) record nothing."""
+    usage = answer.usage_metadata
+    if not usage:
+        return
+    input_tokens, output_tokens = int(usage.get("input_tokens", 0)), int(usage.get("output_tokens", 0))
+    try:
+        async with deps.sessionmaker() as db:
+            usage_service.record(
+                db,
+                org_id=deps.org_id,
+                bot_id=deps.bot_id,
+                run_id=deps.run_id,
+                provider=price.provider,
+                model_id=price.model_id,
+                input_tokens=input_tokens,
+                output_tokens=output_tokens,
+                cost_usd=pricing.cost_usd(price.pricing, input_tokens, output_tokens),
+            )
+            await db.commit()
+    except Exception:  # the reply matters more than its bookkeeping
+        logger.exception("Couldn't record usage for run %s", deps.run_id)
 
 
 def _with_tools(model: BaseChatModel, registry: ToolRegistry) -> Runnable[Any, Any]:

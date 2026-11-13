@@ -104,6 +104,9 @@ class OpenAICompatibleAdapter:
     base_url: str | None
     read_model: ModelReader = _plain
     sort_by_name: bool = True
+    # Ask for token counts at the end of a streamed reply (`stream_options.include_usage`), which
+    # usage records need. The built-in providers support it; custom servers may refuse the field.
+    stream_usage: bool = True
 
     def _base(self, base_url: str | None) -> str:
         base = (self.base_url or base_url or "").rstrip("/")
@@ -129,6 +132,7 @@ class OpenAICompatibleAdapter:
             openai_api_base=self._base(base_url),
             max_retries=2,
             timeout=CHAT_TIMEOUT,
+            stream_usage=self.stream_usage,
             http_client=sync_chat_http_client(transport),
             http_async_client=chat_http_client(transport),
         )
@@ -138,4 +142,4 @@ OPENAI = OpenAICompatibleAdapter("https://api.openai.com/v1", _openai)
 GEMINI = OpenAICompatibleAdapter("https://generativelanguage.googleapis.com/v1beta/openai", _gemini)
 OPENROUTER = OpenAICompatibleAdapter("https://openrouter.ai/api/v1", _openrouter)
 GROQ = OpenAICompatibleAdapter("https://api.groq.com/openai/v1", _groq)
-CUSTOM = OpenAICompatibleAdapter(None)
+CUSTOM = OpenAICompatibleAdapter(None, stream_usage=False)

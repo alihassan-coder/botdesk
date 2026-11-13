@@ -16,6 +16,9 @@ class Organization(IdMixin, CreatedAtMixin, Base):
     name: Mapped[str] = mapped_column(String(120))
     slug: Mapped[str] = mapped_column(String(64), unique=True)
     plan: Mapped[str] = mapped_column(String(20), default="free")
+    # What all the organization's bots together may spend in a calendar month (UTC), in whole
+    # dollars. None = no limit. Each bot also has its own budget.
+    monthly_budget_usd: Mapped[int | None] = mapped_column(default=None)
 
 
 class Membership(CreatedAtMixin, Base):

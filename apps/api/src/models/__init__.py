@@ -8,6 +8,7 @@ from src.models.organization import Membership, Organization
 from src.models.provider_credential import ProviderCredential
 from src.models.run import Run, RunEvent, ToolExecution
 from src.models.thread import Message, Thread, ThreadParticipant
+from src.models.usage import UsageRecord
 from src.models.user import PasswordResetToken, Session, User
 
 __all__ = [
@@ -25,5 +26,6 @@ __all__ = [
     "Thread",
     "ThreadParticipant",
     "ToolExecution",
+    "UsageRecord",
     "User",
 ]

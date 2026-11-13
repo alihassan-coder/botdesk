@@ -97,6 +97,12 @@ class ModelCatalog:
         entry = _Entry(_fingerprint(connection), self.clock() + self.ttl_seconds, models)
         self._cache[(org_id, connection.provider_id)] = entry
 
+    def cached(self, org_id: uuid.UUID, provider_id: str) -> list[ModelInfo] | None:
+        """The last list fetched for this provider, even if it's past its 10 minutes: prices
+        read from it for usage records don't need to be fresh to the second. None if never fetched."""
+        entry = self._cache.get((org_id, provider_id))
+        return entry.models if entry else None
+
     def forget(self, org_id: uuid.UUID, provider_id: str) -> None:
         self._cache.pop((org_id, provider_id), None)
 

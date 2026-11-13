@@ -12,9 +12,11 @@ streaming, tools, approvals) works offline and in tests. The stand-in is determi
 """
 
 import json
+import logging
 import shlex
 import uuid
 from collections.abc import AsyncIterator, Callable, Iterator, Sequence
+from dataclasses import dataclass
 from typing import Any
 
 from langchain_core.callbacks import AsyncCallbackManagerForLLMRun, CallbackManagerForLLMRun
@@ -30,8 +32,11 @@ from src.core.config import Settings
 from src.core.errors import AppError
 from src.core.secrets import SecretBox
 from src.core.url_guard import GuardedTransport, check_base_url
-from src.model_providers import ProviderError, adapter_for, scrub
-from src.services import provider_service
+from src.model_providers import BUILT_IN, Pricing, ProviderError, adapter_for, scrub
+from src.services import pricing, provider_service
+from src.services.model_catalog import ModelCatalog
+
+logger = logging.getLogger(__name__)
 
 STAND_IN_REPLY = (
     "Hi! I'm a stand-in reply: BotDesk has no API key for {provider} yet, so I can't think for real. "
@@ -156,13 +161,59 @@ class ModelUnavailable(Exception):
     The message is safe to show as the run's error."""
 
 
+@dataclass(frozen=True)
+class ModelPrice:
+    """Which model a call uses, as recorded in usage, and its price (None = unknown)."""
+
+    model_id: str  # "provider:model", with the default model filled in
+    provider: str  # the provider id: "anthropic", "openrouter", "custom-<id>"…
+    pricing: Pricing | None
+
+
 class ModelResolver:
     """The chat model for one run: org key > environment key > stand-in."""
 
-    def __init__(self, settings: Settings, sessionmaker: async_sessionmaker[AsyncSession], secrets: SecretBox) -> None:
+    def __init__(
+        self,
+        settings: Settings,
+        sessionmaker: async_sessionmaker[AsyncSession],
+        secrets: SecretBox,
+        catalog: ModelCatalog | None = None,
+    ) -> None:
         self.settings = settings
         self.sessionmaker = sessionmaker
         self.secrets = secrets
+        self.catalog = catalog
+
+    async def price(self, org_id: uuid.UUID, model_id: str) -> ModelPrice:
+        """The model's price: OpenRouter's from its model list, the built-in providers' from
+        `pricing.PRICE_TABLE`, and none for custom servers. Never fails: an unknown price is None."""
+        full_id = model_id or self.settings.default_model_id
+        provider_id, _, model = full_id.partition(":")
+        spec = BUILT_IN.get(provider_id)
+        if spec is None:  # a custom server
+            return ModelPrice(full_id, provider_id, None)
+        if spec.kind != "openrouter":
+            return ModelPrice(full_id, provider_id, pricing.table_price(spec.kind, model))
+        return ModelPrice(full_id, provider_id, await self._openrouter_price(org_id, model))
+
+    async def _openrouter_price(self, org_id: uuid.UUID, model: str) -> Pricing | None:
+        if self.catalog is None:
+            return None
+        models = self.catalog.cached(org_id, "openrouter")
+        if models is None:  # not listed since the API started: fetch the list once (it's cached)
+            try:
+                async with self.sessionmaker() as db:
+                    connection = await provider_service.connection_for(
+                        db, org_id, "openrouter", self.settings, self.secrets
+                    )
+                if connection is None:
+                    return None
+                models = await self.catalog.models(org_id, connection)
+            except Exception as error:  # a price is never worth failing a run for
+                logger.warning("OpenRouter prices unavailable for org %s: %s", org_id, type(error).__name__)
+                return None
+        return next((info.pricing for info in models if info.model == model), None)
 
     async def __call__(self, org_id: uuid.UUID, model_id: str) -> BaseChatModel:
         """`model_id` is "provider:model" (e.g. "groq:llama-3.3-70b-versatile"). Empty = DEFAULT_MODEL_ID."""

@@ -14,6 +14,7 @@ from src.api.v1.routes import (
     providers,
     runs,
     threads,
+    usage,
 )
 
 api_router = APIRouter(prefix="/api/v1")
@@ -28,3 +29,4 @@ api_router.include_router(approvals.router)
 api_router.include_router(providers.router)
 api_router.include_router(plugins.router)
 api_router.include_router(memories.router)
+api_router.include_router(usage.router)

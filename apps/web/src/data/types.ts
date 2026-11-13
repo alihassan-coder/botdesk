@@ -13,6 +13,7 @@ export type ISODate = string;
 export type RiskClass =
   | "read"
   | "write-internal"
+  | "write-external"
   | "external-send"
   | "spend"
   | "destructive"
@@ -138,6 +139,19 @@ export interface ApprovalPart {
   approvalId: ID;
 }
 
+/**
+ * A tool the bot used while replying: "Used Send email · done". Live only: the API doesn't
+ * save these in the reply, so a reloaded chat shows just the approval cards and the text.
+ */
+export interface ToolCallPart {
+  type: "tool-call";
+  toolExecutionId: ID;
+  /** Plugin id + tool name, like "demo.send_email". */
+  tool: string;
+  status: "running" | "succeeded" | "failed" | "denied";
+  error?: string;
+}
+
 export interface QuestionPart {
   type: "question";
   question: string;
@@ -171,6 +185,7 @@ export type MessagePart =
   | WorkLogPart
   | ComputerTaskPart
   | ApprovalPart
+  | ToolCallPart
   | QuestionPart
   | RoutineCreatedPart
   | FilePart
@@ -191,21 +206,57 @@ export interface Message {
 
 /* ---------- Approvals ---------- */
 
-export type ApprovalStatus = "pending" | "approved" | "denied" | "expired";
+export type ApprovalStatus = "pending" | "approved" | "edited" | "denied" | "expired";
+
+/** The JSON Schema of a tool's arguments: enough of it to build an edit form. */
+export interface ArgsSchema {
+  type?: "object";
+  properties?: Record<string, ArgSchema>;
+  required?: string[];
+}
+
+export interface ArgSchema {
+  type?: "string" | "number" | "integer" | "boolean";
+  title?: string;
+  description?: string;
+  enum?: (string | number)[];
+  format?: string;
+  minLength?: number;
+  maxLength?: number;
+  minimum?: number;
+  maximum?: number;
+  default?: unknown;
+  /** Optional arguments: `[{type: "string"}, {type: "null"}]`. */
+  anyOf?: (ArgSchema | { type: "null" })[];
+}
 
 export interface Approval {
   id: ID;
   botId: ID;
   threadId: ID;
+  /** The paused run. Mock approvals have none. */
+  runId?: ID;
   riskClass: RiskClass;
   title: string;
   summary: string;
-  /** The exact action, shown as a preview the human can edit before approving. */
+  /** Why the policy asked, e.g. "level=Ask before acting · risk=external-send · tainted=no → ask". */
+  reason?: string;
+  /** The run had read outside content (an email, a web page) before asking. */
+  tainted?: boolean;
+  /** The exact action, as label/value rows. */
   preview: { label: string; value: string }[];
+  /** What the bot asked for, and the schema the Edit form is built from. */
+  args?: Record<string, unknown>;
+  argsSchema?: ArgsSchema | null;
+  /** What was approved: the edited arguments after an edit. */
+  finalArgs?: Record<string, unknown> | null;
   connectionId?: ID;
   status: ApprovalStatus;
   requestedAt: ISODate;
+  expiresAt?: ISODate;
   decidedBy?: ID;
+  /** The decider's name, for people the store doesn't know (say, someone who left). */
+  decidedByName?: string;
   decidedAt?: ISODate;
 }
 

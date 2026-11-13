@@ -4,6 +4,7 @@
  */
 import type {
   Approval,
+  ArgsSchema,
   Bot,
   Connection,
   Connector,
@@ -113,15 +114,34 @@ export const threads: Thread[] = [
   { id: "t_inbox", kind: "dm", title: "Inbox Manager", botId: "b_inbox", participants: [{ type: "user", id: "u_me" }, { type: "bot", id: "b_inbox" }], lastMessageAt: ago(22), lastMessagePreview: "Inbox at zero. 2 replies need your OK.", unread: 2 },
   { id: "t_launch", kind: "group", title: "Launch crew", participants: [{ type: "user", id: "u_me" }, { type: "user", id: "u_sara" }, { type: "bot", id: "b_chief" }, { type: "bot", id: "b_sales" }, { type: "bot", id: "b_bugs" }], lastMessageAt: ago(48), lastMessagePreview: "Sara: @bugs can you check the signup flow?", unread: 0 },
   { id: "t_sales", kind: "dm", title: "Sales Outbound", botId: "b_sales", participants: [{ type: "user", id: "u_me" }, { type: "bot", id: "b_sales" }], lastMessageAt: ago(120), lastMessagePreview: "36 drafts queued, 0 sent.", unread: 0 },
-  { id: "t_talent", kind: "dm", title: "Talent Scout", botId: "b_talent", participants: [{ type: "user", id: "u_me" }, { type: "bot", id: "b_talent" }], lastMessageAt: ago(300), lastMessagePreview: "3 intros drafted in your voice.", unread: 0 },
+  { id: "t_talent", kind: "dm", title: "Talent Scout", botId: "b_talent", participants: [{ type: "user", id: "u_me" }, { type: "bot", id: "b_talent" }], lastMessageAt: ago(300), lastMessagePreview: "3 intros written up in your voice.", unread: 0 },
   { id: "t_expense", kind: "dm", title: "Expense Manager", botId: "b_expense", participants: [{ type: "user", id: "u_me" }, { type: "bot", id: "b_expense" }], lastMessageAt: ago(400), lastMessagePreview: "Report filed. 9 receipts, nothing odd.", unread: 0 },
   { id: "t_bugs", kind: "dm", title: "Bug Fixer", botId: "b_bugs", participants: [{ type: "user", id: "u_me" }, { type: "bot", id: "b_bugs" }], lastMessageAt: ago(600), lastMessagePreview: "Staging login expired. Can you take over?", unread: 0 },
 ];
 
+/* The same schema the API sends for an email tool, so the demo's Edit form matches the real one. */
+const emailSchema: ArgsSchema = {
+  type: "object",
+  properties: {
+    to: { type: "string", title: "To", format: "email" },
+    subject: { type: "string", title: "Subject", minLength: 1, maxLength: 200 },
+    body: { type: "string", title: "Body", maxLength: 10_000, default: "" },
+  },
+  required: ["to", "subject"],
+};
+
+/* No expiry in the mock: its clock is fixed in the past, so any expiry would read as long gone. */
 export const approvals: Approval[] = [
   {
     id: "a_1", botId: "b_inbox", threadId: "t_inbox", riskClass: "external-send", status: "pending",
     title: "Send reply to Vicky (Globex)", summary: "Confirms the Thursday call and attaches the pricing sheet.",
+    reason: "level=Ask before acting · risk=external-send · tainted=yes → ask", tainted: true,
+    args: {
+      to: "vicky@globex.com",
+      subject: "Re: Thursday call",
+      body: "Hi Vicky,\n\nThursday at 3 PM works. I've attached our pricing sheet so we can go through it together.\n\nBest,\nAli",
+    },
+    argsSchema: emailSchema,
     preview: [
       { label: "To", value: "vicky@globex.com" },
       { label: "Subject", value: "Re: Thursday call" },
@@ -132,6 +152,13 @@ export const approvals: Approval[] = [
   {
     id: "a_2", botId: "b_inbox", threadId: "t_inbox", riskClass: "external-send", status: "pending",
     title: "Decline vendor demo (Initech)", summary: "Politely declines and asks them to check back in Q2.",
+    reason: "level=Ask before acting · risk=external-send · tainted=no → ask", tainted: false,
+    args: {
+      to: "sales@initech.com",
+      subject: "Re: Quick demo?",
+      body: "Thanks for reaching out. We're not evaluating tools this quarter. Happy to reconnect in Q2.",
+    },
+    argsSchema: emailSchema,
     preview: [
       { label: "To", value: "sales@initech.com" },
       { label: "Subject", value: "Re: Quick demo?" },
@@ -142,12 +169,17 @@ export const approvals: Approval[] = [
   {
     id: "a_3", botId: "b_bugs", threadId: "t_bugs", riskClass: "credential", status: "pending",
     title: "Take over to log in to staging", summary: "The staging session expired. Log in on the bot's computer so it can keep going.",
+    reason: "level=Ask before acting · risk=credential · tainted=no → ask", tainted: false,
+    args: { site: "staging.acme.dev/login" },
+    argsSchema: { type: "object", properties: { site: { type: "string", title: "Site", minLength: 1 } }, required: ["site"] },
     preview: [{ label: "Site", value: "staging.acme.dev/login" }],
     requestedAt: ago(600),
   },
   {
     id: "a_4", botId: "b_expense", threadId: "t_expense", riskClass: "spend", status: "approved",
     title: "Reimburse $742 to Omar", summary: "Conference travel, receipts attached.",
+    reason: "level=Autonomous within limits · risk=spend · tainted=no → ask", tainted: false,
+    args: { amount: 742, to: "Omar Farooq" }, finalArgs: { amount: 742, to: "Omar Farooq" },
     preview: [{ label: "Amount", value: "$742.00" }, { label: "To", value: "Omar Farooq" }],
     requestedAt: ago(60 * 26), decidedBy: "u_me", decidedAt: ago(60 * 25),
   },
@@ -207,7 +239,7 @@ export const messages: Message[] = [
   ] },
   // Talent
   { id: "m40", threadId: "t_talent", author: { type: "bot", id: "b_talent" }, createdAt: ago(300), parts: [
-    { type: "text", text: "3 intros drafted in your voice, held for review. I'm read-only, so I can't send them; promote me to “Ask before acting” if you want me to." },
+    { type: "text", text: "3 intros written up in your voice, kept here as notes for you to review. I'm read-only, so I can't draft or send them in Gmail; promote me to “Ask before acting” if you want me to." },
     { type: "file", name: "candidates-week-45.csv", mime: "text/csv", sizeBytes: 18_204 },
   ] },
   // Expense
@@ -233,9 +265,9 @@ export const connectors: Connector[] = [
     tools: [
       { name: "search", description: "Search messages", risk: "read" },
       { name: "read", description: "Read a thread", risk: "read" },
-      { name: "label", description: "Add or remove labels", risk: "write-internal" },
-      { name: "archive", description: "Archive threads", risk: "write-internal" },
-      { name: "draft", description: "Create a draft", risk: "write-internal" },
+      { name: "label", description: "Add or remove labels", risk: "write-external" },
+      { name: "archive", description: "Archive threads", risk: "write-external" },
+      { name: "draft", description: "Create a draft", risk: "write-external" },
       { name: "send", description: "Send an email", risk: "external-send" },
       { name: "delete", description: "Move to trash", risk: "destructive" },
     ],

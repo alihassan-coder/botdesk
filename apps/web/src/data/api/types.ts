@@ -95,6 +95,39 @@ export interface ApiSentMessage extends ApiMessage {
   runIds: string[];
 }
 
+/* ---------- Approvals ---------- */
+
+export type ApiRiskClass = "read" | "write-internal" | "write-external" | "external-send" | "spend" | "destructive" | "credential";
+export type ApiApprovalStatus = "pending" | "approved" | "edited" | "denied" | "expired";
+
+/** A tool call paused until a person decides. Same shape in the list, `decide` and the events. */
+export interface ApiApproval {
+  id: string;
+  runId: string;
+  threadId: string;
+  botId: string;
+  toolExecutionId: string;
+  /** Plugin id + tool name, like "demo.send_email". */
+  tool: string;
+  title: string;
+  summary: string;
+  riskClass: ApiRiskClass;
+  reason: string;
+  tainted: boolean;
+  args: Record<string, unknown>;
+  finalArgs: Record<string, unknown> | null;
+  /** JSON Schema of the tool's arguments; null if the tool is gone. */
+  argsSchema: Record<string, unknown> | null;
+  preview: { label: string; value: string }[];
+  status: ApiApprovalStatus;
+  requestedAt: string;
+  expiresAt: string;
+  decidedAt: string | null;
+  decidedBy: { id: string; name: string } | null;
+}
+
+export type ApiDecision = { decision: "approve" | "deny"; editedArgs?: Record<string, unknown> };
+
 /**
  * One live update from `GET /threads/{id}/events` (the SSE `data:` line).
  * The SSE `event:` name is the same as `kind`, and the SSE `id:` the same as `id`.
@@ -110,6 +143,18 @@ export type ApiRunEvent = {
   | { kind: "message_delta"; data: { messageId: string; botId: string; text: string } }
   | { kind: "run_finished"; data: { status: "succeeded" | "cancelled" } }
   | { kind: "run_failed"; data: { status: "failed"; error: string } }
+  | { kind: "tool_started"; data: { toolExecutionId: string; tool: string; risk: ApiRiskClass; args: Record<string, unknown> } }
+  | {
+      kind: "tool_finished";
+      data: { toolExecutionId: string; tool: string; status: "succeeded" | "failed" | "denied"; result: unknown; error: string | null };
+    }
+  | { kind: "approval_requested"; data: { approval: ApiApproval } }
+  | { kind: "approval_decided"; data: { approval: ApiApproval } }
+  | { kind: "run_resumed"; data: { botId: string } }
+  | { kind: "run_needs_attention"; data: { status: "needs_attention"; error: string } }
 );
 
-export const RUN_EVENT_KINDS = ["message_saved", "run_started", "message_delta", "run_finished", "run_failed"] as const;
+export const RUN_EVENT_KINDS = [
+  "message_saved", "run_started", "message_delta", "run_finished", "run_failed",
+  "tool_started", "tool_finished", "approval_requested", "approval_decided", "run_resumed", "run_needs_attention",
+] as const satisfies readonly ApiRunEvent["kind"][];

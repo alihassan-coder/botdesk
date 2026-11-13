@@ -1,5 +1,5 @@
-import type { Bot, Invitation, Message, MessagePart, Org, Thread, User } from "../types";
-import type { ApiBot, ApiBotInput, ApiInvitation, ApiMessage, ApiOrg, ApiRole, ApiThread, ApiUser } from "./types";
+import type { Approval, ArgsSchema, Bot, Invitation, Message, MessagePart, Org, Thread, User } from "../types";
+import type { ApiApproval, ApiBot, ApiBotInput, ApiInvitation, ApiMessage, ApiOrg, ApiRole, ApiThread, ApiUser } from "./types";
 
 /**
  * Turns API answers into the web app's own types, so screens never see API shapes.
@@ -75,5 +75,17 @@ export function toMessage({ id, threadId, author, parts, status, createdAt }: Ap
     id, threadId, status, createdAt: asUtc(createdAt),
     author: author.type === "system" || !author.id ? { type: "system", id: "system" } : { type: author.type, id: author.id },
     parts: parts.filter((part) => KNOWN_PARTS.has(part.type as MessagePart["type"])) as unknown as MessagePart[],
+  };
+}
+
+/** The decider comes with a name, so the card can say who even if they've left the org. */
+export function toApproval(a: ApiApproval): Approval {
+  return {
+    id: a.id, botId: a.botId, threadId: a.threadId, runId: a.runId,
+    riskClass: a.riskClass, title: a.title, summary: a.summary, reason: a.reason, tainted: a.tainted,
+    preview: a.preview, args: a.args, finalArgs: a.finalArgs, argsSchema: a.argsSchema as ArgsSchema | null,
+    status: a.status, requestedAt: asUtc(a.requestedAt), expiresAt: asUtc(a.expiresAt),
+    ...(a.decidedAt ? { decidedAt: asUtc(a.decidedAt) } : {}),
+    ...(a.decidedBy ? { decidedBy: a.decidedBy.id, decidedByName: a.decidedBy.name } : {}),
   };
 }

@@ -7,8 +7,9 @@
  * - Set: apps/api (see `./api`) holds accounts (sign-in, profile, password), your
  *   organizations, their members, invitations and bots, and your chats: the chat list,
  *   each bot's DM, message history, sending, and bot replies streamed live over the
- *   chat's event stream (with a Stop button). Approvals, routines, memories, apps,
- *   models and usage aren't on the API yet, so they start empty or stay mock.
+ *   chat's event stream (with a Stop button), and approvals: cards in the chat, live from
+ *   the stream, and the Approvals page from the list. Routines, memories, apps, models and
+ *   usage aren't on the API yet, so they start empty or stay mock.
  * - Not set (tests, e2e, demos): everything is the in-memory mock, with fake bot replies.
  * Guest mode ("Explore the demo") uses the mock in either case, so people can look
  * around without an account; it never calls the API.
@@ -17,10 +18,11 @@
 import { useCallback, useRef, useSyncExternalStore } from "react";
 import { makeHandle } from "@/lib/handle";
 import { parseMentions } from "@/lib/mentions";
-import { authApi, botApi, inviteApi, orgApi, runApi, threadApi } from "./api/botdesk";
+import { previewFromArgs } from "@/lib/args-form";
+import { approvalApi, authApi, botApi, inviteApi, orgApi, runApi, threadApi } from "./api/botdesk";
 import { ApiError, apiBaseUrl } from "./api/client";
-import { toApiBot, toBot, toInvitation, toMessage, toOrg, toThread, toUser } from "./api/map";
-import { applyRunEvent, withPreview, type ActiveRun } from "./api/run-events";
+import { toApiBot, toApproval, toBot, toInvitation, toMessage, toOrg, toThread, toUser } from "./api/map";
+import { applyRunEvent, upsertApproval, withPreview, withWaitingApprovals, type ActiveRun } from "./api/run-events";
 import type { ApiMe, ApiRunEvent, ApiThread } from "./api/types";
 import * as mock from "./mock/fixtures";
 import type { Approval, ApprovalStatus, Bot, Invitation, Membership, Message, Org, Participant, ProviderCredential, Routine, Thread, User } from "./types";
@@ -52,6 +54,12 @@ export interface ThreadLoad {
 
 /** What an action that can fail returns: screens show `error` as is. */
 export type ActionResult = { ok: true } | { ok: false; error: string };
+
+/**
+ * Deciding an approval: `conflict` when someone decided first or it expired (the card now shows
+ * what happened), `invalid` when the edited fields don't fit the action (`error` says which).
+ */
+export type DecideResult = { ok: true } | { ok: false; error: string; reason?: "conflict" | "invalid" };
 
 /** True when the mock data is in use: there's no API to talk to, or you're a guest. */
 export const isDemoMode = () => apiBaseUrl() === "" || state.guest;
@@ -563,19 +571,28 @@ function followChat(orgId: string, threadId: string): () => void {
 
 function onRunEvent(orgId: string, event: ApiRunEvent) {
   set((st) => (st.org.id === orgId ? withRunStatus({ ...st, ...applyRunEvent(st, event) }) : st));
+  // Someone asked or decided: the sidebar count may be behind on other chats too.
+  if (event.kind === "approval_requested" || event.kind === "approval_decided") void approvalActions.refreshPendingApprovals();
 }
 
-/** A bot with a reply in progress shows as working; when it's done, back to idle. */
+/** NEEDS_ATTENTION marks the "error" status this file set, so it can be cleared again. */
+const NEEDS_ATTENTION = "Needs attention";
+
+/**
+ * A bot's status follows its run: working while it replies, waiting while a decision is
+ * pending, needs attention when a person must check; back to idle when it's done.
+ */
 function withRunStatus(st: State): State {
   let changed = false;
   const bots = st.bots.map((bot) => {
-    const run = st.runs.find((r) => r.botId === bot.id);
-    const statusText = run?.messageId ? "Replying…" : "Thinking…";
-    if (run && (bot.status !== "working" || bot.statusText !== statusText)) {
+    const runs = st.runs.filter((r) => r.botId === bot.id);
+    const next = runStatus(runs);
+    if (next && (bot.status !== next.status || bot.statusText !== next.statusText)) {
       changed = true;
-      return { ...bot, status: "working" as const, statusText };
+      return { ...bot, ...next };
     }
-    if (!run && bot.status === "working") {
+    const setByRuns = bot.status === "working" || bot.status === "waiting-approval" || bot.statusText === NEEDS_ATTENTION;
+    if (!next && setByRuns) {
       changed = true;
       return { ...bot, status: "idle" as const, statusText: undefined };
     }
@@ -584,25 +601,42 @@ function withRunStatus(st: State): State {
   return changed ? { ...st, bots } : st;
 }
 
+/** The most urgent of a bot's runs decides how it shows. */
+function runStatus(runs: ActiveRun[]): Pick<Bot, "status" | "statusText"> | undefined {
+  if (runs.some((r) => r.status === "needs_attention")) return { status: "error", statusText: NEEDS_ATTENTION };
+  if (runs.some((r) => r.status === "waiting_approval")) return { status: "waiting-approval", statusText: "Waiting for approval" };
+  const running = runs[0];
+  if (!running) return undefined;
+  return { status: "working", statusText: running.messageId ? "Replying…" : "Thinking…" };
+}
+
 const setThreadLoad = (threadId: string, load: ThreadLoad) =>
   set((st) => ({ ...st, threadLoads: { ...st.threadLoads, [threadId]: load } }));
 
-/** The newest page of messages. Ones that arrived on the stream meanwhile are kept. */
+/**
+ * The newest page of messages, and the chat's approvals so their cards can show (a waiting one
+ * gets a stand-in reply, see withWaitingApprovals). Messages that arrived on the stream meanwhile are kept.
+ */
 async function loadMessages(orgId: string, threadId: string) {
   setThreadLoad(threadId, { status: "loading", hasOlder: state.threadLoads[threadId]?.hasOlder ?? false });
   try {
-    const page = (await threadApi.messages(orgId, threadId, { limit: PAGE_SIZE })).map(toMessage);
+    const [apiPage, apiApprovals] = await Promise.all([
+      threadApi.messages(orgId, threadId, { limit: PAGE_SIZE }),
+      approvalApi.list(orgId, { status: "all", threadId }).catch(() => []),
+    ]);
+    const page = apiPage.map(toMessage);
     set((st) => {
       if (st.org.id !== orgId) return st;
       const inPage = new Set(page.map((m) => m.id));
       const newest = page.at(-1)?.createdAt ?? "";
       const others = st.messages.filter((m) => m.threadId !== threadId);
       const newer = st.messages.filter((m) => m.threadId === threadId && !inPage.has(m.id) && Date.parse(m.createdAt) >= Date.parse(newest || "1970-01-01"));
-      return {
+      const loaded = {
         ...st,
         messages: [...others, ...page, ...newer],
-        threadLoads: { ...st.threadLoads, [threadId]: { status: "ready", hasOlder: page.length === PAGE_SIZE } },
+        threadLoads: { ...st.threadLoads, [threadId]: { status: "ready" as const, hasOlder: page.length === PAGE_SIZE } },
       };
+      return withRunStatus({ ...loaded, ...withWaitingApprovals(loaded, apiApprovals.map(toApproval)) });
     });
   } catch {
     if (state.org.id === orgId) setThreadLoad(threadId, { status: "error", hasOlder: false });
@@ -648,6 +682,17 @@ const chatActions = {
     const orgId = state.org.id;
     try {
       await Promise.all(runs.map((r) => runApi.cancel(orgId, r.id)));
+      return { ok: true };
+    } catch (error) {
+      return failure(error);
+    }
+  },
+
+  /** Stop one run, say one that needs attention. Its waiting approvals expire. API only. */
+  async stopRun(runId: string): Promise<ActionResult> {
+    if (isDemoMode()) return { ok: true };
+    try {
+      await runApi.cancel(state.org.id, runId);
       return { ok: true };
     } catch (error) {
       return failure(error);
@@ -719,10 +764,110 @@ async function sendApiMessage(threadId: string, text: string, mentions: Particip
   }
 }
 
+/* ---------- Approvals ----------
+ * On the API, cards in a chat come from its event stream; the Approvals page and the sidebar
+ * count come from the list, which the shell polls (there's no org-wide stream yet).
+ * In the mock, deciding updates the card and the bot confirms in its chat.
+ */
+const approvalActions = {
+  /**
+   * Approve or deny. Approving with `editedArgs` runs the action with your changes ("edited").
+   * If someone else decided first (409), the card is refreshed to show what happened.
+   */
+  async decideApproval(approvalId: string, decision: "approve" | "deny", editedArgs?: Record<string, unknown>): Promise<DecideResult> {
+    if (isDemoMode()) {
+      decideMockApproval(approvalId, decision, editedArgs);
+      return { ok: true };
+    }
+    const orgId = state.org.id;
+    try {
+      const decided = await approvalApi.decide(orgId, approvalId, { decision, ...(editedArgs ? { editedArgs } : {}) });
+      putApprovals(orgId, [toApproval(decided)]);
+      return { ok: true };
+    } catch (error) {
+      const { error: message } = failure(error);
+      const status = error instanceof ApiError ? error.status : 0;
+      if (status === 409 || status === 404) {
+        const latest = await approvalApi.get(orgId, approvalId).catch(() => null);
+        if (latest) putApprovals(orgId, [toApproval(latest)]);
+      }
+      const reason = status === 409 ? "conflict" : status === 400 ? "invalid" : undefined;
+      return { ok: false, error: message, ...(reason ? { reason } : {}) };
+    }
+  },
+
+  /** Every approval in your chats (the newest 100), for the Approvals page. API only. */
+  async loadApprovals(): Promise<ActionResult> {
+    if (isDemoMode()) return { ok: true };
+    const orgId = state.org.id;
+    try {
+      putApprovals(orgId, (await approvalApi.list(orgId, { status: "all" })).map(toApproval));
+      return { ok: true };
+    } catch (error) {
+      return failure(error);
+    }
+  },
+
+  /**
+   * What's waiting now, for the sidebar count. One we thought was waiting but isn't in the list
+   * any more was decided somewhere we weren't watching, so it's fetched again. API only.
+   */
+  async refreshPendingApprovals(): Promise<void> {
+    if (isDemoMode() || state.authStatus !== "signed-in") return;
+    const orgId = state.org.id;
+    const pending = await approvalApi.list(orgId, { status: "pending" }).catch(() => null);
+    if (!pending) return;
+    const stillPending = new Set(pending.map((a) => a.id));
+    const settled = state.approvals.filter((a) => a.status === "pending" && !stillPending.has(a.id));
+    const refetched = await Promise.all(settled.map((a) => approvalApi.get(orgId, a.id).catch(() => null)));
+    putApprovals(orgId, [...pending, ...refetched.filter((a) => a !== null)].map(toApproval));
+  },
+};
+
+/** Adds or updates approvals, unless you switched org meanwhile. */
+function putApprovals(orgId: string, approvals: Approval[]) {
+  set((st) => (st.org.id === orgId ? { ...st, approvals: approvals.reduce(upsertApproval, st.approvals) } : st));
+}
+
+/** MOCK: decide at once; the bot's status follows, and it confirms in the chat. */
+function decideMockApproval(approvalId: string, decision: "approve" | "deny", editedArgs?: Record<string, unknown>) {
+  const before = state.approvals.find((a) => a.id === approvalId);
+  if (!before || before.status !== "pending") return;
+  const edited = decision === "approve" && editedArgs !== undefined && JSON.stringify(editedArgs) !== JSON.stringify(before.args);
+  const status: ApprovalStatus = decision === "deny" ? "denied" : edited ? "edited" : "approved";
+  const decidedAt = now();
+  set((st) => ({
+    ...st,
+    approvals: st.approvals.map((a) =>
+      a.id === approvalId
+        ? {
+            ...a, status, decidedBy: st.currentUserId, decidedAt,
+            ...(decision === "approve" ? { finalArgs: editedArgs ?? a.args ?? null } : {}),
+            ...(edited ? { preview: previewFromArgs(editedArgs) } : {}),
+          }
+        : a,
+    ),
+  }));
+
+  // Keep the bot's status honest: how many decisions does it still need from you?
+  const stillWaiting = state.approvals.filter((x) => x.botId === before.botId && x.status === "pending").length;
+  actions.updateBot(
+    before.botId,
+    stillWaiting > 0
+      ? { status: "waiting-approval", statusText: `${stillWaiting} waiting for you` }
+      : { status: "idle", statusText: "All caught up" },
+  );
+
+  // MOCK: the bot confirms. Real bots report the actual result of the action.
+  const text = decision === "approve" ? `Done: ${before.title}.` : `Okay, I won't go ahead with “${before.title}”.`;
+  later(() => pushBotMessage(before.threadId, before.botId, [{ type: "text", text }]), 700);
+}
+
 export const actions = {
   ...authActions,
   ...orgActions,
   ...chatActions,
+  ...approvalActions,
 
   /** Sends your message. Bots reply in a moment: in a DM that bot, in a group the ones you @mention. */
   sendMessage(threadId: string, text: string) {
@@ -754,39 +899,6 @@ export const actions = {
         ? thread.botId
         : (mentions.find((m) => m.type === "bot")?.id ?? thread?.participants.find((p) => p.type === "bot")?.id);
     if (replyBotId) fakeBotReply(threadId, replyBotId, text);
-  },
-
-  decideApproval(approvalId: string, status: Extract<ApprovalStatus, "approved" | "denied">) {
-    set((st) => ({
-      ...st,
-      approvals: st.approvals.map((a) =>
-        a.id === approvalId ? { ...a, status, decidedBy: st.currentUserId, decidedAt: now() } : a,
-      ),
-    }));
-    const a = state.approvals.find((x) => x.id === approvalId);
-    if (!a) return;
-
-    // Keep the bot's status honest: how many decisions does it still need from you?
-    const stillWaiting = state.approvals.filter((x) => x.botId === a.botId && x.status === "pending").length;
-    actions.updateBot(
-      a.botId,
-      stillWaiting > 0
-        ? { status: "waiting-approval", statusText: `${stillWaiting} waiting for you` }
-        : { status: "idle", statusText: "All caught up" },
-    );
-
-    // MOCK: the bot confirms. Real bots report the actual result of the action.
-    const text = status === "approved" ? `Done: ${a.title}.` : `Okay, I won't go ahead with “${a.title}”.`;
-    later(() => pushBotMessage(a.threadId, a.botId, [{ type: "text", text }]), 700);
-  },
-
-  /** The member changed the action's details (e.g. the email body), then approved it. */
-  editAndApprove(approvalId: string, preview: Approval["preview"]) {
-    set((st) => ({
-      ...st,
-      approvals: st.approvals.map((a) => (a.id === approvalId ? { ...a, preview } : a)),
-    }));
-    actions.decideApproval(approvalId, "approved");
   },
 
   answerQuestion(messageId: string, answer: string) {
@@ -1120,6 +1232,12 @@ export const useThreadMessages = (threadId: string) =>
   useStore(useCallback((s: State) => s.messages.filter((m) => m.threadId === threadId), [threadId]));
 
 export const useApproval = (id: string) => useStore(useCallback((s: State) => s.approvals.find((a) => a.id === id), [id]));
+
+export type { ActiveRun };
+
+/** API only: runs in this chat that stopped until a person checks on them. */
+export const useRunsNeedingAttention = (threadId: string) =>
+  useStore(useCallback((s: State) => s.runs.filter((r) => r.threadId === threadId && r.status === "needs_attention"), [threadId]));
 export const usePendingApprovalCount = () => useStore(useCallback((s: State) => selectPendingApprovals(s).length, []));
 
 export const useBotRoutines = (botId?: string) =>

@@ -1,6 +1,9 @@
 import { apiBaseUrl, apiFetch } from "./client";
 import {
   RUN_EVENT_KINDS,
+  type ApiApproval,
+  type ApiApprovalStatus,
+  type ApiDecision,
   type ApiBot,
   type ApiBotInput,
   type ApiInvitation,
@@ -104,7 +107,19 @@ export const threadApi = {
   },
 };
 
+export const approvalApi = {
+  /** Approvals in chats you're in, newest first (at most 100). */
+  list: (orgId: string, filter: { status?: ApiApprovalStatus | "all"; botId?: string; threadId?: string } = {}) => {
+    const query = new URLSearchParams(Object.entries(filter).filter((entry): entry is [string, string] => Boolean(entry[1])));
+    return apiFetch<ApiApproval[]>(`/api/v1/orgs/${orgId}/approvals?${query}`);
+  },
+  get: (orgId: string, approvalId: string) => apiFetch<ApiApproval>(`/api/v1/orgs/${orgId}/approvals/${approvalId}`),
+  /** Decides once: 409 if someone already did (or it expired), 400 if edited args don't fit the tool. */
+  decide: (orgId: string, approvalId: string, decision: ApiDecision) =>
+    apiFetch<ApiApproval>(`/api/v1/orgs/${orgId}/approvals/${approvalId}/decide`, { method: "POST", body: decision }),
+};
+
 export const runApi = {
-  /** The Stop button: a queued run stops at once, a running one within moments. */
+  /** The Stop button: a queued or paused run stops at once, a running one within moments. */
   cancel: (orgId: string, runId: string) => apiFetch<unknown>(`/api/v1/orgs/${orgId}/runs/${runId}/cancel`, { method: "POST" }),
 };

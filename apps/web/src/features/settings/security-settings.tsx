@@ -5,10 +5,10 @@ import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { actions, useBots } from "@/data/store";
-import type { PolicyDecision, RiskClass, SecurityLevel } from "@/data/types";
+import type { PolicyDecision, SecurityLevel } from "@/data/types";
 import { RISK } from "@/features/approvals/risk";
 import { BotAvatar } from "@/features/bots/bot-avatar";
-import { POLICY, SECURITY_LEVELS } from "@/features/bots/security-levels";
+import { POLICY, RISK_CLASSES, SECURITY_LEVELS } from "@/features/bots/security-levels";
 import { SecurityLevelPicker } from "@/features/bots/security-level-picker";
 import { SettingsSection } from "./settings-shell";
 
@@ -67,7 +67,7 @@ export function SecuritySettings() {
               </tr>
             </thead>
             <tbody>
-              {(Object.keys(RISK) as RiskClass[]).map((risk) => {
+              {RISK_CLASSES.map((risk) => {
                 const { label, icon: Icon } = RISK[risk];
                 return (
                   <tr key={risk} className="border-b last:border-b-0">
@@ -88,6 +88,10 @@ export function SecuritySettings() {
             </tbody>
           </table>
         </div>
+        <p className="mt-3 text-sm text-muted-foreground">
+          Once a bot reads outside content in a run (an email, a web page), it asks before anything beyond internal notes for
+          the rest of that run, at every level. Outside text can try to trick a bot; a person decides.
+        </p>
       </SettingsSection>
     </div>
   );

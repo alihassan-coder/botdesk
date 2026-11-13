@@ -52,41 +52,52 @@ describe("sendMessage", () => {
   });
 });
 
-describe("decideApproval", () => {
-  it("records the decision and who made it", () => {
-    actions.decideApproval("a_1", "approved");
+describe("decideApproval (mock)", () => {
+  it("records the decision and who made it", async () => {
+    await expect(actions.decideApproval("a_1", "approve")).resolves.toEqual({ ok: true });
     const approval = state().approvals.find((a) => a.id === "a_1");
     expect(approval?.status).toBe("approved");
     expect(approval?.decidedBy).toBe("u_me");
+    expect(approval?.finalArgs).toEqual(approval?.args);
   });
 
-  it("keeps the bot's status in step with what's still waiting", () => {
-    actions.decideApproval("a_1", "approved");
+  it("keeps the bot's status in step with what's still waiting", async () => {
+    await actions.decideApproval("a_1", "approve");
     expect(state().bots.find((b) => b.id === "b_inbox")?.statusText).toBe("1 waiting for you");
 
-    actions.decideApproval("a_2", "denied");
+    await actions.decideApproval("a_2", "deny");
     const inbox = state().bots.find((b) => b.id === "b_inbox");
     expect(inbox?.status).toBe("idle");
     expect(inbox?.statusText).toBe("All caught up");
   });
 
-  it("has the bot confirm in the thread", () => {
+  it("has the bot confirm in the thread", async () => {
     vi.useFakeTimers();
-    actions.decideApproval("a_2", "denied");
+    await actions.decideApproval("a_2", "deny");
     vi.advanceTimersByTime(1_000);
     expect(lastMessageIn("t_inbox").parts[0]).toEqual({
       type: "text",
       text: "Okay, I won't go ahead with “Decline vendor demo (Initech)”.",
     });
   });
-});
 
-describe("editAndApprove", () => {
-  it("saves your edits and approves the edited version", () => {
-    actions.editAndApprove("a_1", [{ label: "Body", value: "Thursday works. Best, Ali" }]);
+  it("approving changed arguments marks it edited and shows your version", async () => {
+    const edited = { to: "vicky@globex.com", subject: "Re: Thursday call", body: "Thursday works. Best, Ali" };
+    await actions.decideApproval("a_1", "approve", edited);
     const approval = state().approvals.find((a) => a.id === "a_1");
-    expect(approval?.preview).toEqual([{ label: "Body", value: "Thursday works. Best, Ali" }]);
-    expect(approval?.status).toBe("approved");
+    expect(approval).toMatchObject({ status: "edited", finalArgs: edited });
+    expect(approval?.preview).toContainEqual({ label: "Body", value: "Thursday works. Best, Ali" });
+  });
+
+  it("approving the same arguments is a plain approval", async () => {
+    const args = state().approvals.find((a) => a.id === "a_2")!.args!;
+    await actions.decideApproval("a_2", "approve", { ...args });
+    expect(state().approvals.find((a) => a.id === "a_2")?.status).toBe("approved");
+  });
+
+  it("a decided approval can't be decided again", async () => {
+    await actions.decideApproval("a_4", "deny");
+    expect(state().approvals.find((a) => a.id === "a_4")?.status).toBe("approved");
   });
 });
 

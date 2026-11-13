@@ -96,6 +96,7 @@ When you finish something, tick it here in the same pull request.
 
 ### Later
 - [x] Usage and budgets on the API
+- [ ] Model prices (`apps/api/src/services/pricing.py`): on **2026-12-01** Gemini 4 Carbon and Argon double, and gemini-2.5-pro / 2.5-flash switch models (remove them); on **2027-01-01** gemini-3.8-flash doubles
 - [ ] Unread counts in the chat list
 - [ ] Bot computers (live screen, take over) and routine recording
 - [ ] Desktop app, then mobile

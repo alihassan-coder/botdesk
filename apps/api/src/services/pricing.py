@@ -19,52 +19,64 @@ PRICES_CHECKED = "2026-11-13"
 # US dollars per million tokens (input, output), standard rates without caching or batch
 # discounts. Keys are the provider's model id without a date suffix (see `_base_model`).
 PRICE_TABLE: dict[str, dict[str, Pricing]] = {
+    # https://platform.claude.com/docs/en/about-claude/pricing
     "anthropic": {
         "claude-fable-5-2": Pricing(8.0, 40.0),
         "claude-mythos-5-2": Pricing(8.0, 40.0),
         "claude-fable-5-1": Pricing(10.0, 50.0),
         "claude-mythos-5-1": Pricing(10.0, 50.0),
         "claude-fable-5": Pricing(10.0, 50.0),
+        "claude-mythos-5": Pricing(10.0, 50.0),
         "claude-opus-5-5": Pricing(4.0, 20.0),
         "claude-opus-5": Pricing(5.0, 25.0),
         "claude-opus-4-8": Pricing(5.0, 25.0),
         "claude-opus-4-7": Pricing(5.0, 25.0),
         "claude-opus-4-6": Pricing(5.0, 25.0),
         "claude-opus-4-5": Pricing(5.0, 25.0),
-        "claude-opus-4-1": Pricing(15.0, 75.0),
-        "claude-opus-4": Pricing(15.0, 75.0),
         "claude-sonnet-5-5": Pricing(2.0, 10.0),
         "claude-sonnet-5": Pricing(2.0, 10.0),
         "claude-sonnet-4-6": Pricing(3.0, 15.0),
         "claude-sonnet-4-5": Pricing(3.0, 15.0),
-        "claude-sonnet-4": Pricing(3.0, 15.0),
-        "claude-haiku-5-5": Pricing(0.10, 0.50),
+        "claude-haiku-5-5": Pricing(0.10, 0.50),  # prompts up to 100K tokens
         "claude-haiku-4-5": Pricing(1.0, 5.0),
-        "claude-3-5-haiku": Pricing(0.80, 4.0),
     },
+    # https://developers.openai.com/api/docs/pricing (formerly platform.openai.com/docs/pricing)
     "openai": {
+        "gpt-6-astra": Pricing(10.0, 50.0),  # prompts up to 272K tokens
+        "gpt-6.1-sol": Pricing(2.0, 10.0),  # prompts up to 272K tokens
+        "gpt-6.1-terra": Pricing(1.0, 5.0),  # prompts up to 272K tokens
+        "gpt-6-luna": Pricing(0.10, 0.50),  # prompts up to 272K tokens
+        "gpt-5.5": Pricing(5.0, 30.0),  # prompts up to 272K tokens
+        "gpt-5.4": Pricing(2.50, 15.0),  # prompts up to 272K tokens
+        "gpt-5.4-mini": Pricing(0.75, 4.50),
+        "gpt-5.4-nano": Pricing(0.20, 1.25),
         "gpt-5": Pricing(1.25, 10.0),
         "gpt-5-mini": Pricing(0.25, 2.0),
         "gpt-5-nano": Pricing(0.05, 0.40),
         "gpt-4.1": Pricing(2.0, 8.0),
         "gpt-4.1-mini": Pricing(0.40, 1.60),
-        "gpt-4.1-nano": Pricing(0.10, 0.40),
         "gpt-4o": Pricing(2.50, 10.0),
         "gpt-4o-mini": Pricing(0.15, 0.60),
         "o3": Pricing(2.0, 8.0),
-        "o3-mini": Pricing(1.10, 4.40),
-        "o4-mini": Pricing(1.10, 4.40),
     },
+    # https://ai.google.dev/gemini-api/docs/pricing (now served at aistudio.google.com/docs/pricing)
     "gemini": {
-        "gemini-2.5-pro": Pricing(1.25, 10.0),  # prompts up to 200K tokens
-        "gemini-2.5-flash": Pricing(0.30, 2.50),
+        "gemini-4-carbon": Pricing(2.0, 10.0),  # rises to $4 / $20 on 2026-12-01
+        "gemini-4-argon": Pricing(2.0, 10.0),  # rises to $4 / $20 on 2026-12-01
+        "gemini-4-hydrogen": Pricing(1.50, 7.50),
+        "gemini-3.8-flash": Pricing(0.75, 3.75),  # rises to $1.50 / $7.50 on 2027-01-01
+        "gemini-3.5-flash-lite": Pricing(0.30, 2.50),
+        "gemini-3.1-pro-preview": Pricing(2.0, 12.0),  # prompts up to 200K tokens
+        "gemini-3.1-flash-lite": Pricing(0.25, 1.50),  # text, image and video input
+        "gemini-2.5-pro": Pricing(1.25, 10.0),  # prompts up to 200K; deprecated, routes to 3.8 Flash on 2026-12-01
+        "gemini-2.5-flash": Pricing(0.30, 2.50),  # deprecated, routes to 3.5 Flash-Lite on 2026-12-01
         "gemini-2.5-flash-lite": Pricing(0.10, 0.40),
-        "gemini-2.0-flash": Pricing(0.10, 0.40),
-        "gemini-2.0-flash-lite": Pricing(0.075, 0.30),
     },
+    # https://console.groq.com/docs/models (groq.com/pricing links here for per-model prices)
     "groq": {
-        "llama-3.3-70b-versatile": Pricing(0.59, 0.79),
-        "llama-3.1-8b-instant": Pricing(0.05, 0.08),
+        "openai/gpt-oss-120b": Pricing(0.15, 0.60),
+        "openai/gpt-oss-20b": Pricing(0.075, 0.30),
+        "qwen/qwen3.8-27b": Pricing(0.80, 4.0),
     },
 }
 

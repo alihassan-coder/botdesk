@@ -25,7 +25,7 @@ def test_the_price_table_knows_common_models_and_drops_date_suffixes() -> None:
     assert pricing.table_price("anthropic", "claude-sonnet-4-5-20250929") == Pricing(3.0, 15.0)
     assert pricing.table_price("openai", "gpt-4o-2024-08-06") == Pricing(2.50, 10.0)
     assert pricing.table_price("gemini", "models/gemini-2.5-flash") == Pricing(0.30, 2.50)
-    assert pricing.table_price("groq", "llama-3.3-70b-versatile") == Pricing(0.59, 0.79)
+    assert pricing.table_price("groq", "openai/gpt-oss-120b") == Pricing(0.15, 0.60)
 
 
 def test_a_model_missing_from_the_table_has_an_unknown_price() -> None:

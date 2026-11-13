@@ -136,6 +136,8 @@ POST /threads/{id}/messages       one transaction: the message, a queued run per
 GET /threads/{id}/events          SSE: replays run_events after Last-Event-ID, then follows new ones
 ```
 
+A chat opened later (or in a second tab) first asks `GET /threads/{id}/runs?active=true`: the runs still going and the chat's newest event id, read in one statement. It then follows `/events?after={lastEventId}`, so nothing between the two is missed, and loads the messages.
+
 The web app reads one stream per open chat. Tokens arrive in batches (about every 50 ms) as `message_delta`; when the reply is saved, `message_saved` carries the whole message, which replaces the streamed text.
 
 A service raises `NotFound("…")`, `Conflict("…")` and so on. `main.py` turns those into `{"detail": "…"}` with the right status, so services never touch HTTP. Controllers own the transaction (`db.commit()`).
@@ -174,6 +176,7 @@ A service raises `NotFound("…")`, `Conflict("…")` and so on. `main.py` turns
 | `GET /api/v1/orgs/{id}/threads/{threadId}` | One chat (404 unless you're in it) |
 | `GET /api/v1/orgs/{id}/threads/{threadId}/messages` | Messages oldest first; `limit` (1–200) and `before` to page back |
 | `POST /api/v1/orgs/{id}/threads/{threadId}/messages` | Send a message (`{text}`). In a DM the bot replies; in a group, the @mentioned bots in it do. Returns the message plus `runIds` |
+| `GET /api/v1/orgs/{id}/threads/{threadId}/runs` | The chat's runs, newest first (max 100). `?active=true`: only `queued`, `running`, `waiting_approval` and `needs_attention`. Returns `{runs, lastEventId}` (see below) |
 | `GET /api/v1/orgs/{id}/threads/{threadId}/events` | Live updates (SSE). Resumes after the `Last-Event-ID` header, or `?after=`; otherwise from now. `?follow=false` sends what's saved and closes |
 | `GET /api/v1/orgs/{id}/runs/{runId}` | One run: status, steps used, limits, error |
 | `POST /api/v1/orgs/{id}/runs/{runId}/cancel` | Stop a run (queued or paused: at once, and its pending approval expires; running: within moments) |
@@ -206,6 +209,28 @@ Each SSE message has `id:` (a growing number), `event:` (the kind) and `data:` J
 | `run_needs_attention` | `{status: "needs_attention", error}`: a tool may have half run (e.g. the API restarted mid-call); a person must check. Stop is the only action so far |
 
 Run `status` values: `queued`, `running`, `waiting_approval`, `needs_attention`, `succeeded`, `failed`, `cancelled`.
+
+#### A chat's runs
+
+`GET …/threads/{threadId}/runs?active=true` answers:
+
+```jsonc
+{
+  "runs": [
+    {
+      "id": "uuid", "botId": "uuid", "threadId": "uuid",
+      "triggerMessageId": "uuid", "replyMessageId": null,
+      "status": "waiting_approval",          // queued | running | waiting_approval | needs_attention (active=true)
+      "stepsUsed": 1, "maxSteps": 25, "maxSeconds": 900,
+      "error": null,                         // why it needs attention (or failed); ready to show
+      "createdAt": "…", "startedAt": "…", "finishedAt": null
+    }
+  ],
+  "lastEventId": 42                          // follow /events?after=42 from here; 0 for a chat with no events
+}
+```
+
+`lastEventId` comes from the same SQL statement as the runs (a one-row `max(run_events.id)` subquery, left-joined to the runs), so the two describe the same moment on Postgres. Indexes `ix_runs_thread_id_status` and `ix_run_events_thread_id_id` cover both. 404 unless you're in the chat.
 
 Error messages match the web app's wording, e.g. `401 "That email and password don't match."`.
 
@@ -327,9 +352,9 @@ Build step 3 ([ADR 0006](../adr/0006-repo-structure-plugins-and-project.md)). Th
 }
 ```
 
-`decide` body: `{"decision": "approve"}`, `{"decision": "deny"}`, or `{"decision": "approve", "editedArgs": {…all args…}}` (checked against `argsSchema`; 400 `"Those changes don't fit this action: …"`). Errors: 409 `"This approval was already decided."`, 409 `"This approval expired, so the bot didn't do it."`, 404 `"This approval doesn't exist."`.
+`decide` body: `{"decision": "approve"}`, `{"decision": "deny"}`, or `{"decision": "approve", "editedArgs": {…all args…}}` (checked against `argsSchema`; 400 `"Those changes don't fit this action: …"`). An edit also rebuilds `summary` from the edited arguments (the tool's own summary function, as when it asked), so the card describes what runs; `preview` follows `finalArgs` too. Errors: 409 `"This approval was already decided."`, 409 `"This approval expired, so the bot didn't do it."`, 404 `"This approval doesn't exist."`.
 
-The bot's final reply starts with one `{"type": "approval", "approvalId"}` part per approval asked for in that run, then the text part, so a reloaded chat can show the cards. There is no org-wide approvals stream yet: the inbox polls the list, chats get the events.
+The bot's final reply starts with its cards, in the order the calls were made, then the text part, so a reloaded chat shows what showed live. Per call: its `{"type": "approval", "approvalId"}` card if it asked, then `{"type": "tool-call", "toolExecutionId", "tool", "status", "error"?}` (the same fields as `tool_finished`; `status` is `succeeded`, `failed` or `denied`, `error` only when it didn't succeed). A call a person denied (or that expired) has only its card, which already says so. They are built from `tool_executions` (one query) when the reply is saved. There is no org-wide approvals stream yet: the inbox polls the list, chats get the events.
 
 ### Try it without an API key
 

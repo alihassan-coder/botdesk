@@ -2,6 +2,16 @@
 
 A short history of BotDesk, newest first. For one checklist of what is done and what is next, see [ROADMAP.md](ROADMAP.md).
 
+## 2026-11-13: approvals follow-ups: live state for chats opened later, saved tool lines
+
+Gaps found while building approvals, fixed on the API and the web.
+
+- **A chat opened later sees what's going on.** New `GET /orgs/{id}/threads/{threadId}/runs?active=true` lists the chat's runs that are queued, running, waiting for approval or needing attention, with `lastEventId`, read in the same statement. The web asks for it first, then follows the event stream after that id and loads the messages, so nothing in between is missed: a running bot shows "Thinking…", a paused one "Waiting for approval", a stuck one the needs-attention notice with Stop.
+- **Tool lines survive a reload.** The saved reply keeps one `tool-call` part per call, in the order the calls were made, after the call's approval card: the same "Used Send email · done" lines the chat showed live.
+- **An edited approval's summary is rebuilt** from the edited arguments, with the tool's own summary function.
+- **No hydration warning in API mode.** The store's server snapshot is fixed and has no demo data in API mode, so the server and the browser's first render agree (the chat list shows its skeleton until the API answers). Checked in a browser: 4 warnings before, 0 after.
+- **Approvals, from a review:** decisions are final in the store (a slow poll or a replayed event can't bring the buttons back, and a finished run is never paused again); a 409 counts as "someone decided" only when the approval really is decided, so an edit survives "this tool isn't available any more", and an open form says who decided instead of vanishing; focus moves to the first field on Edit, back to Edit on Cancel, and to the decision line after deciding, inside a live region that announces it; edited arguments leave out optional fields the bot didn't send and keep numeric choices as numbers; the Approvals page shows a load error with Try again and reloads on an org switch.
+
 ## 2026-11-13: Models & keys hardened after a security review
 
 An independent review of Models & keys found eight problems; all are fixed, with tests. Details: [backend guide](backend/README.md#custom-servers-and-ssrf).

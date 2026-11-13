@@ -54,6 +54,10 @@ When you finish something, tick it here in the same pull request.
 - [x] Web: Approve, Edit (with the tool's fields) and Deny against the API
 - [x] Web: policy table with all 7 risk classes (`write-external`) and the `edited` status
 - [x] Web: waiting and "needs attention" states for a run
+- [x] Tool lines saved with the reply, so a reload shows "Used Send email · done"
+- [x] A chat opened later shows its runs' live state (`GET /threads/{id}/runs?active=true`, then the stream after `lastEventId`)
+- [x] An edited approval's summary follows the edited arguments
+- [x] Approval cards: focus moves with Edit, Cancel and a decision; decisions announced; edits kept on a 409 that isn't a decision
 
 ### Developer experience
 - [x] `pnpm dev` (web + API), `pnpm dev:web`, `pnpm dev:api`, reload on save, busy-port check

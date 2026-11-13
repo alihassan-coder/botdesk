@@ -755,7 +755,7 @@ const chatActions = {
     let closed = false;
     let stopFollowing = () => {};
     void (async () => {
-      // The chat's runs first. The stream starts at their `replayFrom`, just before the unfinished
+      // The chat's runs first. The stream starts at their `replayFrom`, just before the running
       // runs' first events, so it replays a reply's words and tool lines so far; the messages are
       // read after that, so nothing that happens in between is missed. If the list fails, the
       // stream starts from now, as a best effort.
@@ -1290,6 +1290,7 @@ export const actions = {
     }
     set((st) => ({ ...st, memories: st.memories.filter((m) => m.id !== memoryId) }));
     updateMemoryList(botId, (items) => items.filter((m) => m.id !== memoryId));
+    supersedeMemoryLoads(botId);
     return { ok: true };
   },
 
@@ -1310,6 +1311,7 @@ export const actions = {
     const corrected = saved;
     set((st) => ({ ...st, memories: st.memories.map((m) => (m.id === memoryId ? corrected : m)) }));
     updateMemoryList(botId, (items) => items.map((m) => (m.id === memoryId ? corrected : m)));
+    supersedeMemoryLoads(botId);
     return { ok: true };
   },
 
@@ -1324,6 +1326,7 @@ export const actions = {
     }
     set((st) => ({ ...st, memories: st.memories.filter((m) => m.botId !== botId) }));
     updateMemoryList(botId, () => []);
+    supersedeMemoryLoads(botId);
     return { ok: true };
   },
 
@@ -1587,6 +1590,18 @@ const memoryRequests = new Map<string, number>();
 
 function setMemoryList(botId: string, list: MemoryList) {
   set((st) => ({ ...st, memoryLists: { ...st.memoryLists, [botId]: list } }));
+}
+
+/**
+ * After a memory change is saved: a load or search sent before it may answer with the memory as
+ * it was (a forgotten one brought back), so its answer is ignored. A list still loading is loaded
+ * again, so it settles on the state after the change.
+ */
+function supersedeMemoryLoads(botId: string) {
+  if (isDemoMode()) return;
+  memoryRequests.set(botId, (memoryRequests.get(botId) ?? 0) + 1);
+  const list = state.memoryLists[botId];
+  if (list?.status === "loading") void actions.loadMemories(botId, list.query);
 }
 
 /** Changes the items of a bot's open list, if it has one. */

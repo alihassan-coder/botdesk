@@ -99,6 +99,44 @@ describe("Memory on the API", () => {
     expect(state().memoryLists.b1.items.map((m) => m.id)).toEqual(["m1"]);
   });
 
+  it("a search sent before a forget, answering after it, doesn't bring the forgotten memory back", async () => {
+    await actions.loadMemories("b1");
+    let answerSlow: (r: Response) => void = () => {};
+    const fetchMock = vi.mocked(fetch);
+    const original = fetchMock.getMockImplementation()!;
+    fetchMock.mockImplementationOnce(() => new Promise((resolve) => (answerSlow = resolve)));
+    const slow = actions.loadMemories("b1", "short"); // still in flight...
+    routes[`DELETE ${BOT}/m2`] = { status: 204 };
+    routes[`GET ${BOT}?q=short`] = { status: 200, body: [] }; // ...asked again after the forget
+    await expect(actions.forgetMemory("b1", "m2")).resolves.toEqual({ ok: true });
+    answerSlow(Response.json([short])); // the old answer still has m2
+    await slow;
+    await vi.waitFor(() => expect(state().memoryLists.b1.status).toBe("ready"));
+    expect(state().memoryLists.b1).toMatchObject({ query: "short", items: [] });
+    fetchMock.mockImplementation(original);
+  });
+
+  it("correcting or forgetting everything also outdates searches still in flight", async () => {
+    await actions.loadMemories("b1");
+    const fetchMock = vi.mocked(fetch);
+    const original = fetchMock.getMockImplementation()!;
+    routes[`PATCH ${BOT}/m2`] = { status: 200, body: { ...short, text: "Likes bullet points" } };
+    routes[`DELETE ${BOT}`] = { status: 204 };
+    routes[`GET ${BOT}?q=likes`] = { status: 200, body: [] };
+    const changes = [() => actions.correctMemory("b1", "m2", "Likes bullet points"), () => actions.forgetAllMemories("b1")];
+    for (const change of changes) {
+      let answerSlow: (r: Response) => void = () => {};
+      fetchMock.mockImplementationOnce(() => new Promise((resolve) => (answerSlow = resolve)));
+      const slow = actions.loadMemories("b1", "likes");
+      await change();
+      answerSlow(Response.json([short]));
+      await slow;
+      await vi.waitFor(() => expect(state().memoryLists.b1.status).toBe("ready"));
+      expect(state().memoryLists.b1.items.map((m) => m.text)).not.toContain("Likes short answers");
+    }
+    fetchMock.mockImplementation(original);
+  });
+
   it("correcting sends the new text and shows what the API saved", async () => {
     await actions.loadMemories("b1");
     routes[`PATCH ${BOT}/m2`] = { status: 200, body: { ...short, text: "Likes bullet points", updatedAt: "2026-11-13T09:00:00+00:00" } };

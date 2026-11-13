@@ -6,7 +6,7 @@ The real pause and resume (LangGraph + Postgres checkpoints) is in test_approval
 import uuid
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
-from datetime import timedelta
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import httpx
@@ -469,3 +469,38 @@ async def test_the_reply_keeps_each_call_as_a_card_in_the_order_they_were_made(w
         # Denied by a person: the card says so, no tool line repeats it.
         {"type": "approval", "approvalId": str(denied.approval.id)},
     ]
+
+
+def odd_plugin(returns: Any) -> PluginManifest:
+    """A plugin whose one tool returns whatever it's given (after doing its side effect)."""
+
+    async def run(_args: CountArgs, _ctx: ToolContext) -> Any:
+        return returns
+
+    spec = ToolSpec(
+        name="odd", title="Odd", description="odd", args_model=CountArgs, risk="write-internal", handler=run
+    )
+    return PluginManifest(id="odd", name="Odd", version="1", description="test", tools=(spec,))
+
+
+@pytest.mark.parametrize(
+    ("returns", "why"),
+    [
+        ({"when": datetime(2026, 11, 13, tzinfo=UTC)}, "couldn't be saved as JSON"),
+        ({"id": uuid.uuid4()}, "couldn't be saved as JSON"),
+        (["not", "a", "dict"], "returned a list"),
+        (None, "returned None"),
+    ],
+)
+async def test_a_tool_that_returns_something_unusable_fails_cleanly(world: World, returns: Any, why: str) -> None:
+    world.registry.register(odd_plugin(returns))
+    recorded = await world.record("odd.odd", {}, level="autonomous")
+
+    outcome = await tool_pipeline.execute(world.execute_deps(), recorded.execution.id)
+
+    assert outcome.text.startswith("The tool failed: odd.odd ")
+    assert why in outcome.text
+    async with world.runs.sessionmaker() as db:
+        row = await db.get(ToolExecution, recorded.execution.id)
+    assert row is not None and row.status == "failed"
+    assert row.error is not None and why in row.error

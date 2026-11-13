@@ -184,7 +184,24 @@ async def _run_tool(
     except Exception as error:
         logger.exception("Tool %s failed in run %s", tool.name, deps.run.run_id)
         return None, str(error) or type(error).__name__
-    return result, None
+    return _checked_result(tool.name, result)
+
+
+def _checked_result(tool_name: str, result: Any) -> tuple[dict[str, Any] | None, str | None]:
+    """A plugin must return a JSON object. Anything else (a list, None, a datetime or UUID inside)
+    counts as the tool failing, so its row ends `failed` instead of staying `started` and crashing
+    the run. The result is saved as it round-trips through JSON, which is what the model sees."""
+    if not isinstance(result, dict):
+        return None, f"{tool_name} returned {_kind_of(result)}, not a JSON object."
+    try:
+        return json.loads(json.dumps(result, ensure_ascii=False, allow_nan=False)), None
+    except (TypeError, ValueError) as error:
+        logger.error("Tool %s returned a result that isn't JSON: %s", tool_name, error)
+        return None, f"{tool_name} returned a result that couldn't be saved as JSON ({error})."
+
+
+def _kind_of(value: Any) -> str:
+    return "None" if value is None else f"a {type(value).__name__}"
 
 
 def _success(tool_name: str, result: dict[str, Any], *, untrusted: bool) -> ToolOutcome:

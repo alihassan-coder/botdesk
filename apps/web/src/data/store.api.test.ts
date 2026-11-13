@@ -651,6 +651,31 @@ describe("approvals on the API", () => {
     expect(state().bots[0]).toMatchObject({ status: "waiting-approval", statusText: "Waiting for approval" });
   });
 
+  it("a chat reloaded while its run waits for approval follows on from now, and the run picks up from there", async () => {
+    // The API doesn't replay a paused run (`replayFrom` is `lastEventId`): the list and the card rebuild it.
+    const pausedRun = {
+      id: "r1", botId: "b1", threadId: "t1", triggerMessageId: "m1", replyMessageId: null, status: "waiting_approval", stepsUsed: 1,
+      maxSteps: 10, maxSeconds: 300, error: null, createdAt: "2026-11-12T09:00:00Z", startedAt: "2026-11-12T09:00:01Z", finishedAt: null,
+    };
+    routes["GET /api/v1/orgs/o1/approvals?status=all&threadId=t1"] = { status: 200, body: [approval()] };
+    routes["GET /api/v1/orgs/o1/threads/t1/runs?active=true"] = {
+      status: 200, body: { runs: [pausedRun], lastEventId: 40, replayFrom: 40 },
+    };
+    actions.openThread("t1");
+    await vi.waitFor(() => expect(state().threadLoads.t1?.status).toBe("ready"));
+    expect(FakeEventSource.last?.url).toBe("http://api.test/api/v1/orgs/o1/threads/t1/events?after=40");
+    expect(state().runs).toMatchObject([{ id: "r1", status: "waiting_approval" }]);
+    expect(state().messages.at(-1)).toMatchObject({ id: "typing-r1", parts: [{ type: "approval", approvalId: "a1" }, { type: "text", text: "" }] });
+    expect(state().bots[0]).toMatchObject({ status: "waiting-approval", statusText: "Waiting for approval" });
+
+    const stream = FakeEventSource.last!;
+    stream.emit("approval_decided", { id: 41, runId: "r1", data: { approval: decided("approved") } });
+    stream.emit("run_resumed", { id: 42, runId: "r1", data: { botId: "b1" } });
+    expect(state().bots[0]).toMatchObject({ status: "working", statusText: "Thinking…" });
+    stream.emit("message_delta", { id: 43, runId: "r1", data: { messageId: "m9", botId: "b1", text: "Sent." } });
+    expect(state().messages.at(-1)).toMatchObject({ parts: [{ type: "approval", approvalId: "a1" }, { type: "text", text: "Sent." }] });
+  });
+
   it("a slow pending list after you approved doesn't bring the buttons back", async () => {
     await actions.loadApprovals();
     routes["POST /api/v1/orgs/o1/approvals/a1/decide"] = { status: 200, body: decided("approved", { decidedBy: { id: "u1", name: "Zara" } }) };

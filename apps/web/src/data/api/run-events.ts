@@ -18,8 +18,8 @@ import type { ApiRun, ApiRunEvent } from "./types";
  * Cards and tool lines sit above the reply's text in the order they arrived, which is the
  * order the saved reply has them too, so nothing jumps when the reply is saved.
  *
- * A chat that opens mid-reply replays the unfinished runs' events from their start (see
- * `replayFrom` in withActiveRuns), so events can arrive twice. Every event is safe to apply
+ * A chat that opens mid-reply replays the streaming (queued or running) runs' events from their
+ * start (see `replayFrom` in withActiveRuns), so events can arrive twice. Every event is safe to apply
  * again except `message_delta`, which adds words: a run remembers the newest event id it has
  * seen, and a delta at or below it is skipped.
  */
@@ -200,9 +200,10 @@ export function withWaitingApprovals(chat: ChatSlice, approvals: Approval[], act
  * aren't in it have ended, except ones the list may predate: one you just started, or one heard
  * on the stream after the list's `lastEventId`.
  *
- * The stream follows from the list's `replayFrom`, so it replays the listed runs' events from their
- * start: their words so far, tool lines and cards. A run the stream has already applied events for
- * is left to the stream.
+ * The stream follows from the list's `replayFrom`, so it replays the running runs' events from
+ * their start: their words so far and tool lines. A paused run isn't replayed (it may wait for
+ * days): it's rebuilt from this list and the approvals list (its card), and its words come with
+ * the saved reply. A run the stream has already applied events for is left to the stream.
  */
 export function withActiveRuns(chat: ChatSlice, threadId: string, apiRuns: ApiRun[], lastEventId?: number): ChatSlice {
   const listed = new Set(apiRuns.map((r) => r.id));

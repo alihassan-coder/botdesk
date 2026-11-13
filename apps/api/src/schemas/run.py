@@ -24,8 +24,9 @@ class RunOut(ApiModel):
 
 class ThreadRunsOut(ApiModel):
     """A chat's runs, and where its event stream should start: `after=lastEventId` so nothing
-    that happens after this answer is missed, or `after=replayFrom` to also replay the unfinished
-    runs' events so far (their words, tool lines and cards)."""
+    that happens after this answer is missed, or `after=replayFrom` to also replay the events so
+    far of the runs still streaming (queued or running): their words and tool lines. Paused runs
+    don't move `replayFrom`; they're rebuilt from `runs` and the approvals list."""
 
     runs: list[RunOut]
     last_event_id: int

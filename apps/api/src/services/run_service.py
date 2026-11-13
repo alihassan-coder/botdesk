@@ -314,7 +314,7 @@ THREAD_RUNS_LIMIT = 100
 class ThreadRuns:
     runs: list[Run]
     last_event_id: int  # the chat's newest event when the runs were read
-    replay_from: int  # just before the unfinished runs' first events (`last_event_id` if they have none)
+    replay_from: int  # just before the queued/running runs' first events (`last_event_id` if none)
 
 
 async def thread_runs(db: AsyncSession, thread_id: uuid.UUID, *, active: bool) -> ThreadRuns:
@@ -323,20 +323,23 @@ async def thread_runs(db: AsyncSession, thread_id: uuid.UUID, *, active: bool) -
     starts after that id misses nothing that changed these runs. Always one row comes back,
     even with no runs (the position is the left side of the join).
 
-    `replay_from` is where a stream that should rebuild the unfinished runs starts: just before
-    the first event of any of them. Replaying from there brings back a reply's words so far and
-    its tool lines, not only what comes after `last_event_id`."""
+    `replay_from` is where a stream that should rebuild the streaming runs (queued or running)
+    starts: just before the first event of any of them. Replaying from there brings back a
+    reply's words so far and its tool lines, not only what comes after `last_event_id`.
+    Paused runs don't count: their state comes from this list and the approvals list, and one
+    can wait for days, so pinning the replay to its start would replay an ever-growing range on
+    every page load. (Their words before the pause come back with the reply, when it's saved.)"""
     last_event_id = func.coalesce(func.max(RunEvent.id), 0)
-    unfinished = select(Run.id).where(Run.thread_id == thread_id, Run.status.in_(LIVE_STATUSES))
-    first_unfinished_event = (
+    streaming = select(Run.id).where(Run.thread_id == thread_id, Run.status.in_(ACTIVE_STATUSES))
+    first_streaming_event = (
         select(func.min(RunEvent.id))
-        .where(RunEvent.thread_id == thread_id, RunEvent.run_id.in_(unfinished))
+        .where(RunEvent.thread_id == thread_id, RunEvent.run_id.in_(streaming))
         .scalar_subquery()
     )
     position = (
         select(
             last_event_id.label("last_event_id"),
-            func.coalesce(first_unfinished_event - 1, last_event_id).label("replay_from"),
+            func.coalesce(first_streaming_event - 1, last_event_id).label("replay_from"),
         )
         .where(RunEvent.thread_id == thread_id)
         .subquery()

@@ -10,7 +10,7 @@ from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
 from typing import Any
 
-from sqlalchemy import ColumnElement, case, func, select
+from sqlalchemy import ColumnElement, case, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.models import Bot, Organization, UsageRecord
@@ -73,17 +73,18 @@ class MonthSpend:
     org_usd: float
 
 
+def _month_sums(org_id: uuid.UUID, bot_id: uuid.UUID, now: datetime) -> Any:
+    """The bot's and the organization's spend since the start of this month, over the
+    (org_id, created_at) index."""
+    return select(
+        func.sum(case((UsageRecord.bot_id == bot_id, UsageRecord.cost_usd), else_=0.0)),
+        func.sum(UsageRecord.cost_usd),
+    ).where(UsageRecord.org_id == org_id, UsageRecord.created_at >= month_start(now))
+
+
 async def month_spend(db: AsyncSession, org_id: uuid.UUID, bot_id: uuid.UUID, now: datetime) -> MonthSpend:
-    """What the bot and its organization spent since the start of this month: one SUM query
-    over the (org_id, created_at) index."""
-    row = (
-        await db.execute(
-            select(
-                func.sum(case((UsageRecord.bot_id == bot_id, UsageRecord.cost_usd), else_=0.0)),
-                func.sum(UsageRecord.cost_usd),
-            ).where(UsageRecord.org_id == org_id, UsageRecord.created_at >= month_start(now))
-        )
-    ).one()
+    """What the bot and its organization spent since the start of this month: one SUM query."""
+    row = (await db.execute(_month_sums(org_id, bot_id, now))).one()
     return MonthSpend(bot_usd=_money(row[0]), org_usd=_money(row[1]))
 
 
@@ -112,20 +113,34 @@ class BudgetCheck:
 async def check_budget(
     db: AsyncSession, *, org_id: uuid.UUID, bot_id: uuid.UUID, estimate_usd: float, now: datetime
 ) -> BudgetCheck:
-    """Checked before each model call: stop, or carry on with this much left to spend."""
+    """Checked before each model call: stop, or carry on with this much left to spend.
+
+    One round trip: the budgets and this month's spend in one statement. The spend is summed
+    only when a budget is set (Postgres runs a CASE's subquery only when that branch is taken)."""
+    sums = _month_sums(org_id, bot_id, now).subquery()
+    has_budget = or_(
+        func.coalesce(Bot.monthly_budget_usd, 0) != 0, func.coalesce(Organization.monthly_budget_usd, 0) != 0
+    )
     limits = (
         await db.execute(
-            select(Bot.name, Bot.monthly_budget_usd, Organization.name, Organization.monthly_budget_usd)
+            select(
+                Bot.name,
+                Bot.monthly_budget_usd,
+                Organization.name,
+                Organization.monthly_budget_usd,
+                case((has_budget, select(sums.c[0]).scalar_subquery())),
+                case((has_budget, select(sums.c[1]).scalar_subquery())),
+            )
             .join(Organization, Organization.id == Bot.org_id)
             .where(Bot.id == bot_id, Bot.org_id == org_id)
         )
     ).first()
     if limits is None:
         return BudgetCheck(None, None)
-    bot_name, bot_budget, org_name, org_budget = limits
+    bot_name, bot_budget, org_name, org_budget, bot_spent, org_spent = limits
     if not bot_budget and not org_budget:
-        return BudgetCheck(None, None)  # no limits: skip the sum
-    spent = await month_spend(db, org_id, bot_id, now)
+        return BudgetCheck(None, None)  # no limits: nothing was summed
+    spent = MonthSpend(bot_usd=_money(bot_spent), org_usd=_money(org_spent))
     if bot_budget and _over(spent.bot_usd, estimate_usd, bot_budget):
         return BudgetCheck(bot_budget_message(bot_name, bot_budget), 0.0)
     if org_budget and _over(spent.org_usd, estimate_usd, org_budget):

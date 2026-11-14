@@ -6,7 +6,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.core.errors import NotFound
-from src.core.handles import make_handle
+from src.core.handles import handle_prefix, make_handle
 from src.models import Bot
 from src.schemas.bot import BotIn, BotUpdate
 
@@ -23,15 +23,17 @@ async def get_bot(db: AsyncSession, org_id: uuid.UUID, bot_id: uuid.UUID) -> Bot
     return bot
 
 
-async def _taken_handles(db: AsyncSession, org_id: uuid.UUID, *, except_bot: uuid.UUID | None = None) -> set[str]:
-    query = select(Bot.handle).where(Bot.org_id == org_id)
+async def _taken_handles(
+    db: AsyncSession, org_id: uuid.UUID, name: str, *, except_bot: uuid.UUID | None = None
+) -> set[str]:
+    query = select(Bot.handle).where(Bot.org_id == org_id, Bot.handle.like(handle_prefix(name)))
     if except_bot:
         query = query.where(Bot.id != except_bot)
     return set(await db.scalars(query))
 
 
 async def create_bot(db: AsyncSession, *, org_id: uuid.UUID, created_by: uuid.UUID, data: BotIn) -> Bot:
-    handle = make_handle(data.name, await _taken_handles(db, org_id))
+    handle = make_handle(data.name, await _taken_handles(db, org_id, data.name))
     bot = Bot(**data.model_dump(), org_id=org_id, handle=handle, created_by=created_by)
     db.add(bot)
     await db.flush()
@@ -44,7 +46,9 @@ async def update_bot(db: AsyncSession, bot: Bot, changes: BotUpdate) -> Bot:
     if "name" in fields:
         fields["name"] = fields["name"].strip()
         if fields["name"] != bot.name:
-            bot.handle = make_handle(fields["name"], await _taken_handles(db, bot.org_id, except_bot=bot.id))
+            bot.handle = make_handle(
+                fields["name"], await _taken_handles(db, bot.org_id, fields["name"], except_bot=bot.id)
+            )
     for field, value in fields.items():
         setattr(bot, field, value)
     return bot

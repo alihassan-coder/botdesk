@@ -1,13 +1,17 @@
 """Database setup: the model base class, the engine, and one session per request."""
 
+import time
 import uuid
-from collections.abc import AsyncIterator
+import weakref
+from collections.abc import AsyncIterator, Callable
 from datetime import UTC, datetime
 from typing import Any, ClassVar
 
 from fastapi import Request
+from psycopg_pool import AsyncConnectionPool, ConnectionPool
 from sqlalchemy import JSON, DateTime, Dialect, MetaData, TypeDecorator, event
 from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.exc import DisconnectionError
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 from sqlalchemy.pool import StaticPool
@@ -90,18 +94,50 @@ def is_in_memory(url: str) -> bool:
     return url.startswith("sqlite") and (":memory:" in url or url.endswith("://"))
 
 
-def create_engine(url: str) -> AsyncEngine:
+# Neon suspends after 5 idle minutes and closes every connection; networks drop idle TLS
+# connections too. A connection that sat unused this long is tested before it's used again
+# (one short round trip), so a dead one is replaced instead of failing the request or run.
+# Busy connections are never tested: no extra round trip while the app is in use.
+IDLE_PING_SECONDS = 10.0
+# psycopg_pool pools also replace connections this old, or idle this long (beyond `min_size`),
+# like SQLAlchemy's `pool_recycle`: both under Neon's 5 minutes. (Its defaults are 1 h and 10 min.)
+POOL_MAX_LIFETIME_SECONDS = 240.0
+_IDLE_SINCE = "botdesk_idle_since"
+
+
+def _ping_after_idle(engine: AsyncEngine, seconds: float) -> None:
+    """SQLAlchemy's `pool_pre_ping`, but only for connections idle at least `seconds`: on checkout
+    such a connection runs `SELECT 1`, and if that fails the pool connects again (raising
+    `DisconnectionError` from a checkout listener is SQLAlchemy's documented way to ask for that)."""
+
+    @event.listens_for(engine.sync_engine, "checkin")
+    def returned(_dbapi_connection: Any, record: Any) -> None:
+        record.info[_IDLE_SINCE] = time.monotonic()
+
+    @event.listens_for(engine.sync_engine, "checkout")
+    def check(dbapi_connection: Any, record: Any, _proxy: Any) -> None:
+        idle_since = record.info.get(_IDLE_SINCE)  # none on a new connection (`info` goes with it)
+        if idle_since is None or time.monotonic() - idle_since < seconds:
+            return
+        try:
+            engine.dialect.do_ping(dbapi_connection)
+        except Exception as error:
+            raise DisconnectionError(f"connection died while idle: {error}") from error
+
+
+def create_engine(url: str, *, idle_ping_seconds: float = IDLE_PING_SECONDS) -> AsyncEngine:
     if not url.startswith("sqlite"):
-        return create_async_engine(
+        engine = create_async_engine(
             url,
-            # Neon suspends after 5 idle minutes, which closes every connection. Replacing
-            # connections older than 4 minutes means we never use one from before a suspend,
-            # without `pool_pre_ping`'s extra round trip on every request.
+            # Replace connections older than 4 minutes, so most never reach Neon's 5-minute
+            # suspend; the idle check below catches the ones that die anyway.
             pool_recycle=240,
             pool_size=5,
             max_overflow=5,
             connect_args=postgres_connect_args(url),
         )
+        _ping_after_idle(engine, idle_ping_seconds)
+        return engine
     in_memory = is_in_memory(url)
     # In memory: one shared connection, so the test database lives for the whole app.
     options: dict[str, Any] = (
@@ -110,6 +146,43 @@ def create_engine(url: str) -> AsyncEngine:
     engine = create_async_engine(url, **options)
     _enforce_sqlite_foreign_keys(engine)
     return engine
+
+
+class IdleCheck:
+    """The same idea for psycopg_pool pools (LangGraph's checkpoints, mem0): pass `configure`,
+    `check` and `reset` to the pool. `configure` and `reset` note when a connection opened or came
+    back; `check` runs psycopg_pool's own `check_connection` (an empty query) only on a connection
+    idle at least `seconds`. A failed check makes the pool discard that connection and hand out
+    another."""
+
+    def __init__(self, seconds: float = IDLE_PING_SECONDS, clock: Callable[[], float] = time.monotonic) -> None:
+        self.seconds = seconds
+        self.clock = clock
+        self._returned_at: weakref.WeakKeyDictionary[Any, float] = weakref.WeakKeyDictionary()
+
+    def _idle_too_long(self, connection: Any) -> bool:
+        returned_at = self._returned_at.pop(connection, None)
+        return returned_at is not None and self.clock() - returned_at >= self.seconds
+
+    async def reset(self, connection: Any) -> None:
+        self._returned_at[connection] = self.clock()
+
+    # A new connection counts as returned when it opens: one that waits in the pool long enough
+    # (the first one, opened at startup) is checked like any other.
+    configure = reset
+
+    async def check(self, connection: Any) -> None:
+        if self._idle_too_long(connection):
+            await AsyncConnectionPool.check_connection(connection)
+
+    def reset_sync(self, connection: Any) -> None:
+        self._returned_at[connection] = self.clock()
+
+    configure_sync = reset_sync
+
+    def check_sync(self, connection: Any) -> None:
+        if self._idle_too_long(connection):
+            ConnectionPool.check_connection(connection)
 
 
 def create_sessionmaker(engine: AsyncEngine) -> async_sessionmaker[AsyncSession]:

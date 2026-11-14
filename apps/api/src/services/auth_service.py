@@ -9,7 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src.core import security
 from src.core.database import as_utc, utcnow
 from src.core.errors import BadRequest, Conflict, Unauthorized
-from src.core.handles import make_handle
+from src.core.handles import handle_prefix, make_handle
 from src.models import PasswordResetToken, Session, User
 from src.services import organization_service
 
@@ -24,7 +24,7 @@ async def sign_up(db: AsyncSession, *, name: str, email: str, password: str) -> 
     if await db.scalar(select(User.id).where(User.email == email)):
         raise Conflict(EMAIL_TAKEN)
 
-    taken_handles = set(await db.scalars(select(User.handle)))
+    taken_handles = set(await db.scalars(select(User.handle).where(User.handle.like(handle_prefix(name)))))
     user = User(
         name=name,
         email=email,

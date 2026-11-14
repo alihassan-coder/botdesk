@@ -37,7 +37,7 @@ from psycopg_pool import AsyncConnectionPool
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from src.core.config import Settings
-from src.core.database import postgres_connect_args
+from src.core.database import POOL_MAX_LIFETIME_SECONDS, IdleCheck, postgres_connect_args
 from src.core.secrets import SecretBox
 from src.models import Run
 from src.plugins.registry import ToolRegistry, build_registry
@@ -255,7 +255,7 @@ class RunManager:
             sessionmaker=self.sessionmaker,
             reporter=reporter,
             memory=self.memory,
-            model_for=partial(self.model_for, ticket.org_id),
+            model_for=_once_per_model(partial(self.model_for, ticket.org_id)),
             price_for=partial(self.price_for, ticket.org_id),
             in_background=self.in_background,
             unstoppable=self.unstoppable,
@@ -343,21 +343,47 @@ class RunManager:
             logger.exception("Background work failed")
 
 
-@asynccontextmanager
-async def checkpointer_for(settings: Settings) -> AsyncIterator[BaseCheckpointSaver[Any]]:
-    """Postgres checkpoints (a small pool of its own, on the direct address), or in memory for SQLite."""
-    if not settings.uses_postgres:
-        yield InMemorySaver()
-        return
-    url = settings.direct_url
-    pool: AsyncConnectionPool[AsyncConnection[DictRow]] = AsyncConnectionPool(
+def _once_per_model(
+    model_for: Callable[[str], Awaitable[BaseChatModel]],
+) -> Callable[[str], Awaitable[BaseChatModel]]:
+    """Look each model up once per stretch of a run, not at every step: a lookup reads the
+    organization's keys from the database (a round trip each time)."""
+    models: dict[str, BaseChatModel] = {}
+
+    async def cached(model_id: str) -> BaseChatModel:
+        if model_id not in models:
+            models[model_id] = await model_for(model_id)
+        return models[model_id]
+
+    return cached
+
+
+def checkpoint_pool(url: str, *, idle_check: IdleCheck | None = None) -> AsyncConnectionPool[AsyncConnection[DictRow]]:
+    """The checkpoints' small pool of their own (not opened yet). A connection that sat idle is
+    tested before use, so one that Neon closed while suspended is replaced, not handed to a run."""
+    idle_check = idle_check or IdleCheck()
+    return AsyncConnectionPool(
         url,
         min_size=1,
         max_size=3,
         open=False,
+        configure=idle_check.configure,
+        check=idle_check.check,
+        reset=idle_check.reset,
+        max_lifetime=POOL_MAX_LIFETIME_SECONDS,
+        max_idle=POOL_MAX_LIFETIME_SECONDS,
         # LangGraph needs autocommit and dict rows.
         kwargs={"autocommit": True, "row_factory": dict_row, **postgres_connect_args(url)},
     )
+
+
+@asynccontextmanager
+async def checkpointer_for(settings: Settings) -> AsyncIterator[BaseCheckpointSaver[Any]]:
+    """Postgres checkpoints (a small pool of their own, on the direct address), or in memory for SQLite."""
+    if not settings.uses_postgres:
+        yield InMemorySaver()
+        return
+    pool = checkpoint_pool(settings.direct_url)
     await pool.open()
     try:
         checkpointer = AsyncPostgresSaver(pool)

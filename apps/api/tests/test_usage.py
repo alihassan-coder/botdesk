@@ -30,7 +30,7 @@ from src.runtime.graph import Streamed, TokensUsed, usage_of
 from src.services import pricing, provider_service, usage_service
 from src.services.model_catalog import ModelCatalog
 from src.services.provider_service import Connection
-from tests.conftest import TEST_SETTINGS, FakeProviders, api_client, sign_up
+from tests.conftest import TEST_SETTINGS, FakeProviders, api_client, sign_up, sql_statements
 
 # Prices and costs
 
@@ -459,3 +459,14 @@ async def test_a_member_cant_change_a_bots_budget_but_an_admin_can(acme: Org) ->
         assert (await sara.post(f"{acme.path}/bots", json={"name": "Small", "monthlyBudgetUsd": 20})).status_code == 201
 
     assert (await acme.client.patch(scout, json={"monthlyBudgetUsd": 500})).json()["monthlyBudgetUsd"] == 500
+
+
+async def test_the_budget_check_is_one_query(acme: Org) -> None:
+    await acme.add_usage("Inbox Manager", 39.995, NOW - timedelta(days=2))
+    async with sql_statements(acme.app) as seen:
+        assert await acme.budget_stop("Inbox Manager", NOW, estimate=0.01) is not None
+    assert len(seen) == 1
+    await acme.set_bot_budget("Scout", 0)
+    async with sql_statements(acme.app) as seen:
+        assert await acme.budget_stop("Scout", NOW) is None
+    assert len(seen) == 1

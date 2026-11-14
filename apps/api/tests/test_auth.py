@@ -1,6 +1,6 @@
 import httpx
 
-from tests.conftest import PASSWORD, sign_up
+from tests.conftest import PASSWORD, TEST_SETTINGS, FakeProviders, api_client, sign_up, sql_statements
 
 AUTH = "/api/v1/auth"
 
@@ -137,3 +137,15 @@ async def test_changing_your_password_signs_out_other_devices(client: httpx.Asyn
     old = await client.post(f"{AUTH}/sign-in", json={"email": "ali@acme.dev", "password": PASSWORD})
     new = await client.post(f"{AUTH}/sign-in", json={"email": "ali@acme.dev", "password": "a-new-password"})
     assert (old.status_code, new.status_code) == (401, 200)
+
+
+async def test_a_new_handle_reads_only_the_handles_like_it(providers: FakeProviders) -> None:
+    async with api_client(TEST_SETTINGS, providers) as (app, client):
+        await sign_up(client, name="Sara Khan", email="sara@acme.dev")
+        async with sql_statements(app) as seen:
+            me = await sign_up(client, name="Sara Khan", email="sara2@acme.dev")
+    assert me["user"]["handle"] == "sara-khan-2"
+    assert me["organizations"][0]["slug"] == "sara-s-team-2"
+    reads = [s for s in seen if s.startswith(("SELECT users.handle", "SELECT organizations.slug"))]
+    assert len(reads) == 2
+    assert all(" LIKE " in s for s in reads), reads

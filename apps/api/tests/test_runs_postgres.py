@@ -182,7 +182,7 @@ async def test_runs_in_one_chat_take_turns(pg: Postgres) -> None:
     two = (await pg.client.get(f"{org}/runs/{second}")).json()
     assert one["status"] == two["status"] == "succeeded"
     assert two["startedAt"] >= one["finishedAt"]
-    # The second run saw the first reply.
+    # Each reply follows its own message (the second run reads the chat up to "Two").
     messages = (await pg.client.get(f"{thread}/messages")).json()
     assert [m["author"]["type"] for m in messages] == ["user", "user", "bot", "bot"]
 
@@ -305,3 +305,17 @@ async def test_the_bot_recalls_memories_before_answering_and_saves_new_ones_afte
     assert memory.remembered == [
         (scope, [{"role": "user", "content": "Summarise my week"}, {"role": "assistant", "content": "Sure."}])
     ]
+
+
+async def test_two_queued_runs_each_answer_their_own_message(pg: Postgres) -> None:
+    model = ScriptedModel(tokens=["a", "b", "c"], delay=0.05)
+    use_model(pg, model)
+    _org, thread = await _bot_chat(pg.client)
+
+    await _send(pg.client, thread, "One")
+    await _send(pg.client, thread, "Two")  # queued while the first run replies
+    await pg.runs.wait_until_idle()
+
+    first, second = model.prompts
+    assert [m.content for m in first[1:]] == ["One"]
+    assert [m.content for m in second[1:]] == ["One", "Two"]  # the reply to One came after Two

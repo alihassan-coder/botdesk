@@ -26,7 +26,10 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Protocol
 
+from psycopg_pool import ConnectionPool
+
 from src.core.config import Settings
+from src.core.database import POOL_MAX_LIFETIME_SECONDS, IdleCheck, postgres_connect_args
 
 logger = logging.getLogger(__name__)
 
@@ -279,6 +282,26 @@ def memory_off_reason(settings: Settings) -> str | None:
     return None
 
 
+def memory_pool(url: str, *, idle_check: IdleCheck | None = None) -> ConnectionPool:
+    """mem0's connections (it uses a sync psycopg pool), made here rather than by mem0 so that one
+    that sat idle is tested before use: Neon closes them when it suspends. Same size as mem0's own."""
+    idle_check = idle_check or IdleCheck()
+    pool: ConnectionPool = ConnectionPool(
+        url,
+        min_size=1,
+        max_size=5,
+        open=False,
+        configure=idle_check.configure_sync,
+        check=idle_check.check_sync,
+        reset=idle_check.reset_sync,
+        max_lifetime=POOL_MAX_LIFETIME_SECONDS,
+        max_idle=POOL_MAX_LIFETIME_SECONDS,
+        kwargs=postgres_connect_args(url),
+    )
+    pool.open(wait=False)  # like mem0: don't hold up startup
+    return pool
+
+
 def build_memory(settings: Settings) -> MemoryService:
     """mem0 when it's switched on and can work (Postgres + an OpenAI key for its model and
     embeddings); otherwise no memory, with the reason."""
@@ -294,7 +317,7 @@ def build_memory(settings: Settings) -> MemoryService:
             "vector_store": {
                 "provider": "pgvector",
                 "config": {
-                    "connection_string": settings.direct_url,
+                    "connection_pool": memory_pool(settings.direct_url),
                     "collection_name": "bot_memories",
                     "embedding_model_dims": 1536,
                     "hnsw": True,

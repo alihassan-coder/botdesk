@@ -10,7 +10,7 @@ import uuid
 from dataclasses import dataclass
 from typing import Any
 
-from sqlalchemy import and_, exists, func, select, update
+from sqlalchemy import and_, exists, func, or_, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
@@ -19,13 +19,13 @@ from src.core.config import Settings
 from src.core.database import utcnow
 from src.core.errors import NotFound
 from src.core.handles import mentioned_handles
-from src.models import Bot, Message, Run, RunEvent, Thread, ThreadParticipant
+from src.models import Bot, Message, Run, RunEvent, Thread, ThreadParticipant, User
 from src.models.run import ACTIVE_STATUSES, PAUSED_STATUSES
 from src.schemas.run import RunOut
 from src.services.thread_service import text_of, text_part
 from src.services.tool_execution_service import runs_with_a_started_call
 
-HISTORY_LENGTH = 30  # recent messages the bot sees
+HISTORY_LENGTH = 30  # messages the bot sees: the newest ones up to its trigger
 RESTART_ERROR = "Interrupted by a restart. Send your message again."
 LOST_PAUSE_ERROR = "This run can't continue: its saved progress is gone (the API restarted). Send your message again."
 
@@ -138,6 +138,16 @@ async def start_step(db: AsyncSession, run_id: uuid.UUID) -> StepStart:
 
 
 @dataclass(frozen=True)
+class ChatLine:
+    """One message as the run sees it."""
+
+    from_this_bot: bool
+    author_type: str  # user | bot | system
+    author: str  # "Sara (@sara)"; empty when the account or bot is gone
+    text: str
+
+
+@dataclass(frozen=True)
 class RunContext:
     """What a run needs to know before it calls the model."""
 
@@ -145,13 +155,28 @@ class RunContext:
     instructions: str
     model_id: str
     security_level: str
+    memory_enabled: bool
+    # Set when the run itself read outside text, or its history holds a reply written by a run
+    # that did (a bot quoting an email must not turn it into a clean instruction for the next run).
     tainted: bool
+    group: bool
     member_id: uuid.UUID | None  # in a DM, the person the bot is talking to
-    history: list[tuple[bool, str]]  # (from this bot?, text), oldest first
+    history: list[ChatLine]  # oldest first, ending with the run's trigger message
+
+
+def _label(name: str | None, handle: str | None) -> str:
+    return f"{name} (@{handle})" if name and handle else ""
 
 
 async def run_context(db: AsyncSession, run_id: uuid.UUID) -> RunContext:
-    """The bot and the chat so far: two queries, only the columns used."""
+    """The bot and the chat so far, in two queries: the run with its bot, chat and trigger, then the
+    last `HISTORY_LENGTH` messages up to and including the trigger, each with its author and
+    whether a tainted run wrote it. A queued run answers its own message, not whatever is newest
+    when its turn comes.
+
+    When the history carries taint into a clean run, the run is marked tainted here (one UPDATE);
+    the caller commits."""
+    trigger = aliased(Message)
     row = (
         await db.execute(
             select(
@@ -162,30 +187,70 @@ async def run_context(db: AsyncSession, run_id: uuid.UUID) -> RunContext:
                 Bot.instructions,
                 Bot.model_id,
                 Bot.security_level,
+                Bot.memory_enabled,
                 Thread.kind,
                 Thread.created_by,
+                trigger.created_at.label("trigger_at"),
+                trigger.id.label("trigger_id"),
             )
             .join(Bot, Bot.id == Run.bot_id)
             .join(Thread, Thread.id == Run.thread_id)
+            .outerjoin(trigger, trigger.id == Run.trigger_message_id)
             .where(Run.id == run_id)
         )
     ).one()
-    newest_first = await db.execute(
-        select(Message.author_type, Message.author_id, Message.parts)
+    author_bot, reply_of = aliased(Bot), aliased(Run)
+    written_by_tainted_run = (
+        exists()
+        .where(reply_of.thread_id == row.thread_id, reply_of.reply_message_id == Message.id, reply_of.tainted)
+        .label("tainted")
+    )
+    query = (
+        select(
+            Message.author_type,
+            Message.author_id,
+            Message.parts,
+            User.name.label("user_name"),
+            User.handle.label("user_handle"),
+            author_bot.name.label("bot_name"),
+            author_bot.handle.label("bot_handle"),
+            written_by_tainted_run,
+        )
+        .outerjoin(User, and_(Message.author_type == "user", User.id == Message.author_id))
+        .outerjoin(author_bot, and_(Message.author_type == "bot", author_bot.id == Message.author_id))
         .where(Message.thread_id == row.thread_id)
-        .order_by(Message.created_at.desc())
+        .order_by(Message.created_at.desc(), Message.id.desc())
         .limit(HISTORY_LENGTH)
     )
+    if row.trigger_at is not None:  # up to the trigger; ties on the time go by id
+        query = query.where(
+            or_(
+                Message.created_at < row.trigger_at,
+                and_(Message.created_at == row.trigger_at, Message.id <= row.trigger_id),
+            )
+        )
+    lines = list(reversed((await db.execute(query)).all()))
     history = [
-        (author_type == "bot" and author_id == row.bot_id, text_of(parts))
-        for author_type, author_id, parts in reversed(list(newest_first))
+        ChatLine(
+            from_this_bot=line.author_type == "bot" and line.author_id == row.bot_id,
+            author_type=line.author_type,
+            author=_label(line.user_name, line.user_handle) or _label(line.bot_name, line.bot_handle),
+            text=text_of(line.parts),
+        )
+        for line in lines
     ]
+    tainted = row.tainted
+    if not tainted and any(line.tainted for line in lines):
+        await db.execute(update(Run).where(Run.id == run_id).values(tainted=True))
+        tainted = True
     return RunContext(
         bot_name=row.name,
         instructions=row.instructions,
         model_id=row.model_id,
         security_level=row.security_level,
-        tainted=row.tainted,
+        memory_enabled=row.memory_enabled,
+        tainted=tainted,
+        group=row.kind == "group",
         member_id=row.created_by if row.kind == "dm" else None,
         history=history,
     )

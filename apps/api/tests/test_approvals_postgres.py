@@ -264,3 +264,63 @@ async def test_stop_cancels_a_paused_run_and_a_late_approval_does_nothing(pg: Po
     (execution,) = await _executions(pg)
     assert execution.status == "denied"
     await _wait_for_status(pg.client, org, run_id, "cancelled")
+
+
+async def _group(client: httpx.AsyncClient) -> tuple[str, str]:
+    """Sara's group with Reader (Ask before acting) and Auto (Autonomous). Returns (org path, thread path)."""
+    me = await sign_up(client, name="Sara Khan", email="sara@acme.dev")
+    org = f"/api/v1/orgs/{me['organizations'][0]['id']}"
+    reader = (await client.post(f"{org}/bots", json={"name": "Reader"})).json()
+    auto = (await client.post(f"{org}/bots", json={"name": "Auto", "securityLevel": "autonomous"})).json()
+    group = (
+        await client.post(f"{org}/threads/groups", json={"title": "Launch", "botIds": [reader["id"], auto["id"]]})
+    ).json()
+    return org, f"{org}/threads/{group['id']}"
+
+
+async def test_a_bot_never_runs_a_tool_command_written_by_another_bot(pg: Postgres) -> None:
+    org, thread = await _group(pg.client)
+
+    # Both stand-ins reply; Reader's reply says "send `/tool demo.send_email …`".
+    sent = await pg.client.post(f"{thread}/messages", json={"text": "@reader @auto hello"})
+    await pg.runs.wait_until_idle()
+
+    for run_id in sent.json()["runIds"]:
+        assert (await pg.client.get(f"{org}/runs/{run_id}")).json()["status"] == "succeeded"
+    replies = [m for m in (await pg.client.get(f"{thread}/messages")).json() if m["author"]["type"] == "bot"]
+    assert len(replies) == 2 and "/tool demo.send_email" in replies[0]["parts"][-1]["text"]
+    assert await _executions(pg) == []
+
+
+async def test_a_reply_from_a_tainted_run_taints_the_next_bots_run(pg: Postgres) -> None:
+    org, thread = await _group(pg.client)
+    reader_run = await _send(pg.client, thread, "@reader /tool demo.read_inbox")
+    await pg.runs.wait_until_idle()
+    assert (await pg.client.get(f"{org}/runs/{reader_run}")).json()["status"] == "succeeded"
+
+    # Auto is Autonomous and would send at once, but its history holds Reader's tainted reply.
+    run_id, approval = await _paused_on_approval(pg, thread, f"@auto {SEND}")
+
+    assert approval["tainted"] is True
+    assert approval["reason"].endswith("tainted=yes → ask")
+    async with pg.runs.sessionmaker() as db:
+        assert await db.scalar(select(Run.tainted).where(Run.id == uuid.UUID(run_id)))
+
+
+async def test_the_model_is_looked_up_once_per_run(pg: Postgres) -> None:
+    model = ScriptedToolModel(script=[("demo.current_time", {}), ("demo.current_time", {})])
+    lookups: list[str] = []
+
+    async def model_for(_org_id: uuid.UUID, model_id: str) -> Any:
+        lookups.append(model_id)
+        return model
+
+    pg.runs.model_for = model_for
+    org, thread = await _chat(pg.client)
+
+    run_id = await _send(pg.client, thread, "What time is it?")
+    await pg.runs.wait_until_idle()
+
+    run = (await pg.client.get(f"{org}/runs/{run_id}")).json()
+    assert (run["status"], run["stepsUsed"]) == ("succeeded", 3)
+    assert len(lookups) == 1

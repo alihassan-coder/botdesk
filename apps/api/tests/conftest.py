@@ -18,7 +18,7 @@ from typing import Any
 import httpx
 import pytest
 from fastapi import FastAPI
-from sqlalchemy import text
+from sqlalchemy import event, text
 
 # `src.main` builds an app when imported, and without an explicit ENVIRONMENT that app refuses to
 # start without SECRET_KEY (it fails closed). Tests are a test environment; CI sets nothing.
@@ -159,3 +159,19 @@ async def sign_up(client: httpx.AsyncClient, name: str = "Ali Hassan", email: st
     assert response.status_code == 201, response.text
     me: dict[str, Any] = response.json()
     return me
+
+
+@asynccontextmanager
+async def sql_statements(app: FastAPI) -> AsyncIterator[list[str]]:
+    """Every SQL statement the app sends while inside the block (to count round trips)."""
+    seen: list[str] = []
+
+    def record(_conn: Any, _cursor: Any, statement: str, *_: Any) -> None:
+        seen.append(" ".join(statement.split()))
+
+    engine = app.state.engine.sync_engine
+    event.listen(engine, "before_cursor_execute", record)
+    try:
+        yield seen
+    finally:
+        event.remove(engine, "before_cursor_execute", record)

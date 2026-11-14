@@ -8,6 +8,12 @@ def slugify(name: str) -> str:
     return slug or "untitled"
 
 
+def handle_prefix(name: str) -> str:
+    """A LIKE pattern for the handles `make_handle` could clash with: the ones starting with its base
+    (slugs hold only a-z, 0-9 and "-", so nothing needs escaping). Reads a few rows, not the table."""
+    return f"{slugify(name)}%"
+
+
 def make_handle(name: str, taken: set[str]) -> str:
     """`Release Notes` -> `release-notes`; adds -2, -3… if the handle is taken."""
     base = slugify(name)

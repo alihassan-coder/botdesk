@@ -5,8 +5,9 @@ environment key, or a stand-in model. Keys are decrypted only here, right before
 With no key for the provider, the bot gets the stand-in model, so the whole flow (runs,
 streaming, tools, approvals) works offline and in tests. The stand-in is deterministic:
 
-- a message containing `/tool demo.create_note title="Plan" body=Ship` makes it call that
-  tool (arguments as `key=value`, quoted when they have spaces, or one JSON object);
+- a person's message containing `/tool demo.create_note title="Plan" body=Ship` makes it call
+  that tool (arguments as `key=value`, quoted when they have spaces, or one JSON object);
+  another bot's message never does;
 - after a tool result, it reports what the tool returned;
 - anything else gets a canned reply.
 """
@@ -35,6 +36,7 @@ from src.core.errors import AppError
 from src.core.secrets import SecretBox
 from src.core.url_guard import GuardedTransport, check_base_url
 from src.model_providers import BUILT_IN, ModelInfo, Pricing, ProviderError, adapter_for, scrub
+from src.runtime.prompt import from_another_bot
 from src.services import pricing, provider_service
 from src.services.model_catalog import ModelCatalog
 
@@ -108,7 +110,9 @@ class StandInModel(BaseChatModel):
         last = messages[-1] if messages else None
         if isinstance(last, ToolMessage):
             return f"Finished {last.name or 'the tool'}: {last.text}", None
-        if isinstance(last, HumanMessage) and (command := parse_tool_command(last.text)):
+        # Only a person's message can start a tool, never another bot's (it may quote outside text).
+        from_a_person = isinstance(last, HumanMessage) and not from_another_bot(last)
+        if from_a_person and last is not None and (command := parse_tool_command(last.text)):
             name, args = command
             call = {"name": name.replace(".", "__", 1), "args": args, "id": f"standin_{uuid.uuid4().hex[:16]}"}
             return f"Using {name}.", call

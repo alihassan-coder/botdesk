@@ -6,7 +6,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.core.errors import Conflict, Forbidden, NotFound
-from src.core.handles import make_handle
+from src.core.handles import handle_prefix, make_handle
 from src.models import Membership, Organization, User
 from src.schemas.organization import MemberOut, OrgOut
 
@@ -26,7 +26,7 @@ def org_out(org: Organization, role: str) -> OrgOut:
 async def create_personal_org(db: AsyncSession, owner: User) -> Organization:
     """Everyone starts with their own organization, which they own."""
     name = f"{owner.name.split()[0]}'s team"
-    taken_slugs = set(await db.scalars(select(Organization.slug)))
+    taken_slugs = set(await db.scalars(select(Organization.slug).where(Organization.slug.like(handle_prefix(name)))))
     org = Organization(name=name, slug=make_handle(name, taken_slugs))
     db.add(org)
     await db.flush()

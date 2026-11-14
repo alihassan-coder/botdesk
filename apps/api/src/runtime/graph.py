@@ -101,7 +101,11 @@ class RunState(TypedDict, total=False):
     security_level: str
     tainted: bool
     member_id: str | None
-    history: list[dict[str, Any]]  # {"fromThisBot": bool, "text": str}, oldest first
+    group: bool  # a group chat: messages are labelled with who wrote them (missing in old checkpoints: a DM)
+    memory_on: bool  # the bot's memory switch when the run started (missing in old checkpoints)
+    # Oldest first, ending with the trigger: {"fromThisBot", "text", "authorType", "author"}
+    # (checkpoints saved before speaker labels have only the first two).
+    history: list[dict[str, Any]]
     memories: list[str]
     reply_message_id: str
     reply: str  # the text of every model step so far, joined
@@ -154,8 +158,28 @@ async def _bot_memory_on(deps: RunDeps) -> bool:
 
 
 def _last_human_text(state: RunState) -> str:
-    """The message the bot is answering: the newest one not written by this bot."""
-    return next((line["text"] for line in reversed(state["history"]) if not line["fromThisBot"]), "")
+    """The message the bot is answering: its trigger, the newest message from a person in its
+    history (which ends at the trigger). Another bot's message is never the question."""
+    return next(
+        (
+            line["text"]
+            for line in reversed(state["history"])
+            if not line["fromThisBot"] and line.get("authorType", "user") != "bot"
+        ),
+        "",
+    )
+
+
+def _history_lines(state: RunState) -> list[HistoryLine]:
+    return [
+        HistoryLine(
+            from_this_bot=line["fromThisBot"],
+            text=line["text"],
+            author_type=line.get("authorType", "user"),
+            author=line.get("author", ""),
+        )
+        for line in state["history"]
+    ]
 
 
 def _security_level(state: RunState) -> SecurityLevel:
@@ -167,6 +191,7 @@ def _security_level(state: RunState) -> SecurityLevel:
 async def load_context(state: RunState, runtime: Runtime[RunDeps]) -> RunState:
     async with runtime.context.sessionmaker() as db:
         context = await run_service.run_context(db, runtime.context.run_id)
+        await db.commit()  # taint carried over from the history is saved on the run
     return {
         "bot_name": context.bot_name,
         "instructions": context.instructions,
@@ -174,7 +199,17 @@ async def load_context(state: RunState, runtime: Runtime[RunDeps]) -> RunState:
         "security_level": context.security_level,
         "tainted": context.tainted,
         "member_id": str(context.member_id) if context.member_id else None,
-        "history": [{"fromThisBot": mine, "text": text} for mine, text in context.history],
+        "group": context.group,
+        "memory_on": context.memory_enabled,
+        "history": [
+            {
+                "fromThisBot": line.from_this_bot,
+                "text": line.text,
+                "authorType": line.author_type,
+                "author": line.author,
+            }
+            for line in context.history
+        ],
         "turns": [],
         "pending_calls": [],
         "approval_ids": [],
@@ -184,7 +219,7 @@ async def load_context(state: RunState, runtime: Runtime[RunDeps]) -> RunState:
 async def recall(state: RunState, runtime: Runtime[RunDeps]) -> RunState:
     """The top memories for the message being answered. A memory failure never fails a run."""
     deps = runtime.context
-    if not await _bot_memory_on(deps):
+    if not state.get("memory_on", True):  # read with the run's context, a moment ago
         return {"memories": []}
     try:
         memories = await deps.memory.recall(_memory_scope(state, deps), _last_human_text(state))
@@ -208,7 +243,8 @@ async def call_model(state: RunState, runtime: Runtime[RunDeps]) -> RunState:
         bot_name=state["bot_name"],
         instructions=state["instructions"],
         memories=state.get("memories", []),
-        history=[HistoryLine(from_this_bot=line["fromThisBot"], text=line["text"]) for line in state["history"]],
+        history=_history_lines(state),
+        group=state.get("group", False),
     )
     turns = state.get("turns", [])
     messages = [*prompt, *messages_from_dict(turns)]
@@ -486,7 +522,8 @@ async def remember(state: RunState, runtime: Runtime[RunDeps]) -> RunState:
     held up. Runs that read outside text (tainted) don't save memories (§9), and neither do
     bots with memory turned off."""
     deps = runtime.context
-    if state.get("tainted") or not await _bot_memory_on(deps):
+    # Memory off when the run started: skip the read. On: read it again, so turning it off applies at once.
+    if state.get("tainted") or not state.get("memory_on", True) or not await _bot_memory_on(deps):
         return {}
     conversation = [
         {"role": "user", "content": _last_human_text(state)},

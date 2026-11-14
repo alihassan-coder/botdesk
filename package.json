@@ -1,7 +1,7 @@
 {
   "name": "botdesk",
   "private": true,
-  "description": "BotDesk: open-source AI assistant for teams. Any model, shared memory, agents you can @mention.",
+  "description": "BotDesk: your open-source AI team. Always-on bots that work in your apps, talk with you in chat, and ask before anything risky.",
   "license": "MIT",
   "packageManager": "pnpm@12.14.0",
   "engines": {

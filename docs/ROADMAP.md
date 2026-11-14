@@ -80,18 +80,23 @@ When you finish something, tick it here in the same pull request.
 ### Gmail (step 5)
 - [ ] Connect with your own Google client; read, label, draft, and send only after approval
 
-### Memory, routines, handoffs (steps 6–7)
+### Multi-bot (from the 2026-11-14 test)
+- [ ] Speaker names in group history, so a bot knows who said what
+- [ ] Bot-to-bot @mentions start runs, with a hop limit
+- [ ] Handoffs and Chief delegation: a handoff tool and tasks
+- [ ] A default responder when no bot is mentioned in a group
+
+### Memory and routines (steps 6–7)
 - [x] Memory screen: see, search, correct and forget what a bot remembers; a memory switch per bot
 - [ ] Routines: bots work on a schedule
-- [ ] Handoffs: one bot passes work to another
 
 ### MCP (step 8)
 - [ ] Connect a remote MCP server; its tools become bot tools
 
-### Hosting
+### Self-hosting
 - [ ] Job queue and a separate worker process ([ADR 0005](adr/0005-job-queue-and-scaling.md)); approvals expire on a timer
 - [ ] `deploy/docker-compose.yml` for one-command self-hosting
-- [ ] Row-level security in Postgres before a hosted launch
+- [ ] Row-level security in Postgres, before one install serves teams that don't trust each other
 - [ ] Rate limits (forgot password, sign-in) and your own email domain in Brevo
 
 ### Later

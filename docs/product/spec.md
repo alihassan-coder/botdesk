@@ -52,35 +52,19 @@ Layout: bot sidebar (left) · thread (centre) · bot details pane (right, collap
 
 ## Build order
 
-1. **UI first, on mock data** (current phase). Every screen clickable against `apps/web/src/data/mock/`.
-2. **API** (`apps/api`, with the worker inside it, [ADR 0005](../adr/0005-job-queue-and-scaling.md)): auth, orgs, bots, threads, runs, approvals; swap the mock source for the API.
+1. **UI first, on mock data** (done). Every screen clickable against `apps/web/src/data/mock/`.
+2. **API** (`apps/api`; runs start inside the API process until the job queue arrives, [ADR 0007](../adr/0007-runs-in-the-api-process-for-now.md)): auth, orgs, bots, threads, runs, approvals; swap the mock source for the API (current phase).
 3. **Gmail plugin**, memory, computers, routines.
 4. Desktop, then mobile.
 
-## Status (2026-11-12)
-
-History: [PROGRESS.md](../PROGRESS.md).
+## Status (2026-11-14)
 
 **Done**
 
-- Docs: this spec, vision, ADRs 0001–0006, architecture, research, glossary.
-- API (`apps/api`): sign-in, password reset and invite emails (Brevo), organizations, invitations, bots, direct and group chats, bot replies streamed live (LangGraph, optional mem0 memory), tools with a 7-class risk policy and approvals that pause and resume a run (demo plugin). Details: [docs/backend](../backend/README.md).
-- Web on the API: everything above except the approval cards, which come next.
-- Logo: the botdesk wordmark with an online light on the o, with all files in [docs/design/logo](../design/logo/README.md).
-- Web frontend on mock data (`apps/web`, Next.js 16, React 19, Tailwind 4, shadcn/ui). Plan and rules: [docs/frontend](../frontend/README.md).
-  - App shell: sidebar that collapses to an icon rail, workspace header with org switcher, light/dark, phone/tablet/desktop layouts.
-  - DM and group threads with all 9 message cards, composer with streaming mock replies, inline approval card (Approve / Deny / Edit), details pane.
-  - Pages: create bot, marketplace, approvals inbox, routines, create routine, connect apps, ⌘K command palette.
-  - Settings (opens on Profile): profile, organization, appearance (theme, accent presets or a custom colour), models & keys, security matrix, members, usage & budgets, memory.
-  - Mock accounts: sign in, sign up, forgot password, sign out. An auth gate sends signed-out people to sign in.
-  - Tests: Vitest logic and UI component tests; Playwright end-to-end tests at desktop and phone size.
+- Web app (`apps/web`): screens 2, 3 and 5–10 above, on demo data or on the API. Not built yet: onboarding, the computer full view and an `@mention` picker. Which screens are still mock in API mode: [docs/frontend](../frontend/README.md#talking-to-the-api).
+- API (`apps/api`): accounts, organizations, invitations, bots, direct and group chats, bot replies streamed live, tools with approvals (demo plugin), plugin SDK, models and keys, memory, usage and budgets. Details: [docs/backend](../backend/README.md).
+- Docs: this spec, vision, ADRs 0001–0008, architecture, research, glossary, logo.
 
-**In progress**
-
-- Backend changes to Python (ADR 0003, `docs/adr/0003-python-backend.md`): FastAPI, SQLAlchemy + Alembic, LangGraph for durable runs and approvals, mem0 for memory, own email/password auth, Neon Postgres for dev.
-- Wiring the web app to the API in `store.ts` (bots are done).
-- Next backend step: bots reply (job queue, worker, streaming). Build order: [agents-and-plugins.md §14](../architecture/agents-and-plugins.md#14-build-order-each-step-small-tested-and-usable).
-
-**Next:** see the checklist in [ROADMAP.md](../ROADMAP.md).
+**Next:** the checklist in [ROADMAP.md](../ROADMAP.md). Dated history: [PROGRESS.md](../PROGRESS.md).
 
 **Open:** the remaining owner questions in [high-level.md §16](../architecture/high-level.md#16-questions-for-the-owner) (computers, approvers, pricing, retention, marketplace).

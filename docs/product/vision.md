@@ -15,7 +15,7 @@ Scope and screens: [spec.md](spec.md).
 Grok Bot, OpenAI dots and Meta Muse are closed, cloud-only and tied to one model vendor
 ([competitors](../research/competitors.md)). BotDesk's edge:
 
-1. **Own it.** MIT, self-hostable, or use the hosted SaaS. Multi-tenant teams from day one.
+1. **Own it.** MIT and free forever: you host it and bring your own AI keys ([ADR 0008](../adr/0008-free-and-open-source.md)). Multi-tenant teams from day one.
 2. **Any model.** Every major provider or a custom endpoint; member keys and org keys.
 3. **Safe by design.** One computer per bot, risk-classed tools, security levels, and an approvals inbox.
 4. **Transparent.** Memory you can see and edit; cost per bot and per run; budgets that pause a bot.

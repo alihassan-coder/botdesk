@@ -3,7 +3,7 @@
 **Status:** decided (2026-11-12). See §15 and ADRs [0004](../adr/0004-agent-runtime-and-safety.md), [0005](../adr/0005-job-queue-and-scaling.md), [0006](../adr/0006-repo-structure-plugins-and-project.md).
 **Reading time:** about 30 minutes. Every picture has a "how to read it" note.
 **Replaces:** [high-level.md](high-level.md) §5 (runtime), §7 (streaming), §8 (plugins), §9 (security) and §10 (approvals), which were written for the old TypeScript stack ([ADR 0003](../adr/0003-python-backend.md)).
-**Built today vs planned:** the API has sign-in, organizations, bots and chats, and bots reply: runs (load_context → recall → call_model → save_reply → remember, no tools yet), run events streamed over SSE, run limits, and mem0 memory behind a setting. Runs start inside the API process for now; the job queue and worker are deferred by [ADR 0007](../adr/0007-runs-in-the-api-process-for-now.md). Tools, plugins and approvals are the plan; §14 gives the order.
+**Built today vs planned:** the API has sign-in, organizations, bots and chats, and bots reply: runs streamed over SSE, run limits, and mem0 memory behind a setting. The tool pipeline, the 3 × 7 policy with taint, and approvals that pause and resume a run are built, with the plugin SDK (`packages/plugin-sdk`), allowlisted plugin loading and a built-in demo plugin. Runs start inside the API process for now; the job queue and worker are deferred by [ADR 0007](../adr/0007-runs-in-the-api-process-for-now.md), and so is everything on a timer (approval expiry, triggers, routines). §14 gives the order; [ROADMAP.md](../ROADMAP.md) ticks what's done.
 **See also:** [repo-structure.md](repo-structure.md) for where each piece of this lives in the repo.
 
 > **Reading order if you're short on time:** 1 → 2 → 4 → 5 → 6 → 10 → 12. That covers the whole idea: a bot *run* is a loop, every action goes through one *pipeline*, risky actions *pause for you*, integrations are *plugins* the core never has to know about, and the same code *grows* from a laptop to many servers.
@@ -143,7 +143,7 @@ A run stops with a clear message when it reaches any of these. All are settings 
 
 - **Fixed rules:** `credential` (logins, keys, sharing) is never automatic, and in v1 neither is `destructive`.
 - **Effective level** = the strictest of: organization ceiling, bot level, routine level.
-- **In the code:** the API applies this table in `apps/api/src/runtime/policy.py` (with a table test). The web app's `POLICY` table (`apps/web/src/features/bots/security-levels.ts`) still has six classes; adding `write-external` there is a to-do from ADR 0004.
+- **In the code:** the API applies this table in `apps/api/src/runtime/policy.py` (with a table test). The web app's `POLICY` table (`apps/web/src/features/bots/security-levels.ts`) mirrors it with all seven classes.
 
 > **Taint still applies:** after a run reads outside text, everything above *write-internal* asks, even for *Autonomous* bots (see below).
 
@@ -228,7 +228,7 @@ RETURNING run_id;      -- no row back = somebody already decided → 409
 - **Routines** are the same, but started by the clock. The queue library makes sure a scheduled job is created once even when several workers are running.
 - **Webhooks** (later) are public addresses: check the sender's signature, save the event, answer fast, do the work in a job.
 
-> **Gmail and Google's rules.** Reading or changing mail uses Google's *restricted* scopes. A public hosted app needs Google's verification **and a yearly paid security assessment (CASA)**. An app left in "Testing" is limited to 100 users and its sign-ins expire every 7 days. So for v1: **every self-hoster creates their own Google OAuth client** (Workspace admins can mark it "Internal" and skip verification). A hosted BotDesk needs the assessment before it can offer Gmail to the public. Plan for it early; it takes weeks.
+> **Gmail and Google's rules.** Reading or changing mail uses Google's *restricted* scopes. A public app needs Google's verification **and a yearly paid security assessment (CASA)**. An app left in "Testing" is limited to 100 users and its sign-ins expire every 7 days. So **every install creates its own Google OAuth client** (Workspace admins can mark it "Internal" and skip verification). BotDesk has no hosted service ([ADR 0008](../adr/0008-free-and-open-source.md)), so there is no shared client to verify.
 
 ## 8. Bots working together
 
@@ -408,7 +408,7 @@ Why a queue from day one, even on a laptop: the API saves your message, the run 
 
 | | Stage 1 · Laptop | Stage 2 · Server | Stage 3 · Many |
 |---|---|---|---|
-| **Who it's for** | You, developing | A self-hosted team; the first hosted users | Many organizations |
+| **Who it's for** | You, developing | A self-hosted team | A large install serving many organizations |
 | **Processes** | 1: the API starts a worker inside itself | 2 + Postgres: `api`, `worker` (plus a one-shot `migrate`) in docker compose | `api` × N behind a load balancer, `worker` × M |
 | **Setting** | `WORKER_MODE=embedded` | `WORKER_MODE=separate` | same |
 | **Event bus** | in memory | Postgres `LISTEN/NOTIFY` | Postgres still; **Valkey** (optional compose profile) when NOTIFY becomes the limit |
@@ -452,7 +452,7 @@ Also:
 
 - **`org_id` is on every new table** (`runs`, `run_steps`, `approval_requests`, `tool_executions`, `run_events`, `connections`…) and every query filters by it. LangGraph's checkpoint tables have no `org_id`; they are only ever reached through a `runs` row that was already checked.
 - **A test tries to cross the wall.** For every route and every job: create two organizations, and check that one can never read or change the other's rows.
-- **Row-level security later, as a second wall.** Before the hosted service takes strangers, add Postgres RLS: the app connects as a role that doesn't own the tables, tables use `FORCE ROW LEVEL SECURITY`, and each transaction sets the organization with `set_config('app.current_org', …, true)` (transaction-scoped, so it is safe behind a pooler). It's cheap insurance against one forgotten `WHERE`.
+- **Row-level security later, as a second wall.** Before one install serves organizations that don't trust each other, add Postgres RLS: the app connects as a role that doesn't own the tables, tables use `FORCE ROW LEVEL SECURITY`, and each transaction sets the organization with `set_config('app.current_org', …, true)` (transaction-scoped, so it is safe behind a pooler). It's cheap insurance against one forgotten `WHERE`.
 - **Fair sharing.** Per-organization caps on running jobs, per-organization model keys, and backing off politely when a model provider says "slow down", so one busy organization can't starve the rest. Sign-in and API rate limits are counted in Postgres (or Valkey at stage 3), not in process memory, or they stop working the day there are two API copies.
 
 ### 12.6 Seeing what is going on
@@ -489,8 +489,8 @@ Plus the tables that procrastinate and LangGraph create for themselves (created 
 
 0. **Foundations (short).** A local Postgres in docker compose for development, and the API tests able to run on Postgres as well as SQLite (the queue, checkpoints, locks and pgvector don't exist in SQLite). CI that runs the checks on every push (done: `.github/workflows/ci.yml` runs `pnpm check`, on SQLite for now).
 1. **Bots reply.** (done) The run graph without tools: load_context → recall → call_model → save_reply → remember. Runs start inside the API process ([ADR 0007](../adr/0007-runs-in-the-api-process-for-now.md); the job queue comes later). Events and SSE with the in-memory bus, including `Last-Event-ID` replay. A stand-in model when there's no API key. Run limits (§4.2). mem0 memory behind `MEMORY_ENABLED` (moved up from step 6).
-2. **Pipeline + policy + approvals.** One fake built-in plugin (`demo-echo` with read / external-send tools) to prove auto, ask (interrupt/resume), deny, expiry, double-click, and "worker killed mid-tool" end to end. Tests include the injection file.
-3. **Plugin SDK + registry.** The root uv workspace, `packages/plugin-sdk`, entry points + allowlist, manifest generated from code and validated.
+2. **Pipeline + policy + approvals.** (done, except expiry, which needs the queue) One fake built-in plugin (`demo-echo` with read / external-send tools) to prove auto, ask (interrupt/resume), deny, expiry, double-click, and "worker killed mid-tool" end to end. Tests include the injection file.
+3. **Plugin SDK + registry.** (done, except the generated manifest and its CI check) The root uv workspace, `packages/plugin-sdk`, entry points + allowlist, manifest generated from code and validated.
 4. **The job queue, and two processes.** procrastinate with the worker embedded, then `WORKER_MODE=separate`, the Postgres event bus, the docker compose file. (Small, because of the rule in §12.)
 5. **Gmail plugin** (T0) with encrypted OAuth connections and the `new_email` trigger (polling first).
 6. **Memory** with mem0: Settings → Memory, `memory_audit`, tainted memories. (Recall and save are in step 1.)
@@ -503,7 +503,7 @@ Plus the tables that procrastinate and LangGraph create for themselves (created 
 The owner accepted the review's recommendations. They are recorded as:
 
 - **[ADR 0004](../adr/0004-agent-runtime-and-safety.md): agent runtime and safety.** Nodes and the `tool_executions` record, so nothing runs twice. Atomic approvals. 3 levels with 7 risk classes. Strict run-level taint. Concurrency per chat. One tool call per step.
-- **[ADR 0005](../adr/0005-job-queue-and-scaling.md): job queue and scaling.** procrastinate on Postgres. The worker sits inside `apps/api` (embedded, then separate). `LISTEN/NOTIFY` + `run_events` for live updates. A direct database URL for the queue. Postgres for runtime tests. Row-level security before hosted launch.
+- **[ADR 0005](../adr/0005-job-queue-and-scaling.md): job queue and scaling.** procrastinate on Postgres. The worker sits inside `apps/api` (embedded, then separate). `LISTEN/NOTIFY` + `run_events` for live updates. A direct database URL for the queue. Postgres for runtime tests. Row-level security before hosted launch (now: before a multi-tenant install serves teams that don't trust each other; [ADR 0008](../adr/0008-free-and-open-source.md) dropped the hosted service).
 - **[ADR 0006](../adr/0006-repo-structure-plugins-and-project.md): repo, plugins and project.** The repo layout. A uv workspace and a separate plugin SDK. Only allowlisted plugins load. MCP-only third-party plugins in v1. Gmail with your own Google client first. DCO sign-off. release-please.
 
 ## Sources

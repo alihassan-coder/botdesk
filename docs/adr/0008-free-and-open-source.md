@@ -20,3 +20,11 @@ ADR 0001 planned BotDesk as self-hosted and a hosted SaaS, and the code carried 
 
 - No revenue to pay for a hosted service, so there is none to sign up for.
 - Budgets protect people's own provider bills, not a BotDesk quota.
+
+## Consequences for earlier docs
+
+Accepted ADRs are not rewritten; read their hosted-service wording through this one:
+
+- [ADR 0001](0001-product-scope-and-deployment.md) decision 1: self-hosted only; the backend stays multi-tenant.
+- [ADR 0005](0005-job-queue-and-scaling.md) decision 7 ("before hosted sign-ups open") and stage 3 ("hosted service"): read as a large self-hosted install serving teams that don't trust each other.
+- [ADR 0006](0006-repo-structure-plugins-and-project.md) decision 5: every install uses its own Google OAuth client; there is no public hosted app to put through Google's verification and CASA.

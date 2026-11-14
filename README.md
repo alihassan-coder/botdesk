@@ -67,8 +67,9 @@ BotDesk is in **early development**. Here's what works today:
 | Bots (create, edit, remove) | ✅ API done, web connected |
 | Chats: direct and group, history, sending | ✅ API done, web connected |
 | Bots that reply, streamed live, with optional memory (mem0) | ✅ API done, web connected |
-| Tools and approvals (risky actions wait for Approve / Edit / Deny) | ✅ API done · 🚧 web next |
-| Plugin SDK, Gmail, routines, MCP | 📋 Planned |
+| Tools and approvals (risky actions wait for Approve / Edit / Deny) | ✅ API done, web connected |
+| Plugin SDK (`packages/plugin-sdk`) with a built-in demo plugin | ✅ API done |
+| Gmail, routines, handoffs, MCP | 📋 Planned |
 
 What is done and what comes next, as one checklist: [docs/ROADMAP.md](docs/ROADMAP.md). The dated history is in [docs/PROGRESS.md](docs/PROGRESS.md).
 

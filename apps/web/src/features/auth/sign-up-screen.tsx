@@ -48,16 +48,16 @@ export function SignUpScreen() {
         <FieldGroup>
           {error && <FormError>{error}</FormError>}
           <Field>
-            <FieldLabel htmlFor="name">Your name</FieldLabel>
-            <Input id="name" autoComplete="name" value={name} onChange={(e) => setName(e.target.value)} placeholder="Ali Hassan" />
+            <FieldLabel htmlFor="sign-up-name">Your name</FieldLabel>
+            <Input id="sign-up-name" autoComplete="name" value={name} onChange={(e) => setName(e.target.value)} placeholder="Ali Hassan" />
           </Field>
           <Field data-invalid={email.length > 0 && !emailValid}>
-            <FieldLabel htmlFor="email">Work email</FieldLabel>
-            <Input id="email" type="email" autoComplete="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="you@company.com" aria-invalid={email.length > 0 && !emailValid} />
+            <FieldLabel htmlFor="sign-up-email">Work email</FieldLabel>
+            <Input id="sign-up-email" type="email" autoComplete="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="you@company.com" aria-invalid={email.length > 0 && !emailValid} />
           </Field>
           <Field>
-            <FieldLabel htmlFor="password">Password</FieldLabel>
-            <PasswordInput id="password" autoComplete="new-password" value={password} onChange={(e) => setPassword(e.target.value)} />
+            <FieldLabel htmlFor="sign-up-password">Password</FieldLabel>
+            <PasswordInput id="sign-up-password" autoComplete="new-password" value={password} onChange={(e) => setPassword(e.target.value)} />
             <FieldDescription className={password && !passwordLongEnough ? "text-destructive" : undefined}>
               At least {MIN_PASSWORD} characters{password ? ` · ${password.length}/${MIN_PASSWORD}` : ""}
             </FieldDescription>
@@ -73,7 +73,7 @@ export function SignUpScreen() {
 
       <p className="text-center text-sm text-muted-foreground">
         Already have an account?{" "}
-        <Link href="/sign-in" className="font-medium text-foreground hover:underline">
+        <Link href="/sign-in" className="tap-target font-medium text-foreground hover:underline">
           Sign in
         </Link>
       </p>

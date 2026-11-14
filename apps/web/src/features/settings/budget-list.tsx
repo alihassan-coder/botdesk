@@ -26,20 +26,21 @@ export function BudgetList({ bots }: { bots: Bot[] }) {
         return (
           <li key={bot.id} className="flex items-center gap-3 p-3">
             <BotAvatar name={bot.name} color={bot.avatarColor} size="sm" />
-            <div className="flex min-w-0 flex-1 flex-col gap-1.5 sm:flex-row sm:items-center sm:gap-3">
-              <Link href={thread ? `/chat/${thread.id}` : "#"} className="truncate text-sm font-medium hover:underline sm:w-36 sm:shrink-0">
+            {/* Narrow: name and amount on one line, the bar under them. Wide: name, bar, amount in a row. */}
+            <div className="grid min-w-0 flex-1 grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3 gap-y-1.5 @lg:grid-cols-[9rem_minmax(0,1fr)_auto]">
+              <Link href={thread ? `/chat/${thread.id}` : "#"} className="-my-1 truncate py-1 text-sm font-medium hover:underline">
                 {bot.name}
               </Link>
+              <span className="text-right text-sm whitespace-nowrap tabular-nums text-muted-foreground @lg:order-last @lg:min-w-36">
+                {formatUsd(bot.spentThisMonthUsd)}
+                {use.level !== "none" && <> / {formatUsd(bot.monthlyBudgetUsd)}</>}
+              </span>
               {use.level === "none" ? (
-                <span className="text-xs text-muted-foreground sm:flex-1">No limit</span>
+                <span className="col-span-2 text-xs text-muted-foreground @lg:col-span-1">No limit</span>
               ) : (
-                <Progress value={use.percent} className={cn("sm:flex-1", barColor(use.level))} aria-label={`${bot.name} budget used`} />
+                <Progress value={use.percent} className={cn("col-span-2 @lg:col-span-1", barColor(use.level))} aria-label={`${bot.name} budget used`} />
               )}
             </div>
-            <span className="shrink-0 text-right text-sm tabular-nums text-muted-foreground sm:w-36">
-              {formatUsd(bot.spentThisMonthUsd)}
-              {use.level !== "none" && <> / {formatUsd(bot.monthlyBudgetUsd)}</>}
-            </span>
             <LevelIcon level={use.level} />
           </li>
         );

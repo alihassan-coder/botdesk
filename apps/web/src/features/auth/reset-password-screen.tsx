@@ -58,8 +58,8 @@ export function ResetPasswordScreen({ token }: { token: string | null }) {
         <FieldGroup>
           {error && <FormError>{error}</FormError>}
           <Field>
-            <FieldLabel htmlFor="password">New password</FieldLabel>
-            <PasswordInput id="password" autoComplete="new-password" value={password} onChange={(e) => setPassword(e.target.value)} />
+            <FieldLabel htmlFor="reset-password">New password</FieldLabel>
+            <PasswordInput id="reset-password" autoComplete="new-password" value={password} onChange={(e) => setPassword(e.target.value)} />
             <FieldDescription className={password && !longEnough ? "text-destructive" : undefined}>
               At least {MIN_PASSWORD} characters{password ? ` · ${password.length}/${MIN_PASSWORD}` : ""}
             </FieldDescription>

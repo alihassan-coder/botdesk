@@ -48,7 +48,7 @@ export function RoutineCard({ routine }: { routine: Routine }) {
       </div>
 
       <Collapsible className="group/steps mt-3">
-        <CollapsibleTrigger className="flex items-center gap-1 rounded-md text-xs font-medium text-muted-foreground hover:text-foreground">
+        <CollapsibleTrigger className="tap-target flex items-center gap-1 rounded-md text-xs font-medium text-muted-foreground hover:text-foreground">
           <ChevronRight className="size-3.5 transition-transform group-data-[state=open]/steps:rotate-90" /> {pluralize(routine.steps.length, "step")}
         </CollapsibleTrigger>
         <CollapsibleContent>

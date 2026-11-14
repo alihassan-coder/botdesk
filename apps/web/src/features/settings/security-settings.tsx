@@ -47,7 +47,7 @@ export function SecuritySettings() {
               <BotAvatar name={bot.name} color={bot.avatarColor} size="sm" />
               <span className="min-w-0 flex-1 truncate text-sm font-medium">{bot.name}</span>
               <Select value={bot.securityLevel} onValueChange={(v) => changeLevel(bot.id, v as SecurityLevel)}>
-                <SelectTrigger className="w-40 sm:w-56" aria-label={`Security level for ${bot.name}`}><SelectValue /></SelectTrigger>
+                <SelectTrigger className="w-40 @md:w-56" aria-label={`Security level for ${bot.name}`}><SelectValue /></SelectTrigger>
                 <SelectContent>
                   {SECURITY_LEVELS.map((l) => <SelectItem key={l.value} value={l.value}>{l.label}</SelectItem>)}
                 </SelectContent>

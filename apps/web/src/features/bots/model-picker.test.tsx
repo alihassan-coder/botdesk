@@ -12,11 +12,13 @@ describe("ModelPicker", () => {
     expect(screen.getByRole("group", { name: "Anthropic" })).toBeInTheDocument();
     expect(screen.getByRole("group", { name: "OpenRouter" })).toBeInTheDocument();
 
-    await user.type(screen.getByPlaceholderText("Search models"), "grok");
+    // Paste, not type: each keystroke re-filters every model, which is slow in jsdom under load.
+    await user.click(screen.getByPlaceholderText("Search models"));
+    await user.paste("grok");
     expect(screen.queryByRole("option", { name: /Claude Opus/ })).not.toBeInTheDocument();
     await user.click(screen.getByRole("option", { name: /Grok 4.5/ }));
     expect(onChange).toHaveBeenCalledWith("openrouter:x-ai/grok-4.5");
-  });
+  }, 15_000); // a big Radix popover + cmdk list; 5s isn't enough when the machine is busy
 
   it("points to Models & keys when no provider is connected", async () => {
     for (const id of ["anthropic", "openai", "gemini", "openrouter", "custom-gpu-box"]) await actions.removeProviderKey(id);

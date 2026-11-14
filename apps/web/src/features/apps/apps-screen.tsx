@@ -97,7 +97,7 @@ export function AppsScreen() {
 function ToolList({ connector }: { connector: Connector }) {
   return (
     <Collapsible className="group/tools">
-      <CollapsibleTrigger className="flex items-center gap-1 text-xs font-medium text-muted-foreground hover:text-foreground">
+      <CollapsibleTrigger className="tap-target flex items-center gap-1 text-xs font-medium text-muted-foreground hover:text-foreground">
         <ChevronRight className="size-3.5 transition-transform group-data-[state=open]/tools:rotate-90" />
         What bots can do ({connector.tools.length})
       </CollapsibleTrigger>

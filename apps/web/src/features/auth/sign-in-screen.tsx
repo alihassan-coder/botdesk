@@ -39,17 +39,17 @@ export function SignInScreen() {
         <FieldGroup>
           {error && <FormError>{error}</FormError>}
           <Field>
-            <FieldLabel htmlFor="email">Email</FieldLabel>
-            <Input id="email" type="email" autoComplete="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="you@company.com" required />
+            <FieldLabel htmlFor="sign-in-email">Email</FieldLabel>
+            <Input id="sign-in-email" type="email" autoComplete="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="you@company.com" required />
           </Field>
           <Field>
             <div className="flex items-center">
-              <FieldLabel htmlFor="password">Password</FieldLabel>
-              <Link href="/forgot-password" className="ml-auto text-sm text-muted-foreground hover:text-foreground">
+              <FieldLabel htmlFor="sign-in-password">Password</FieldLabel>
+              <Link href="/forgot-password" className="tap-target ml-auto text-sm text-muted-foreground [--tap-size:32px] hover:text-foreground">
                 Forgot password?
               </Link>
             </div>
-            <PasswordInput id="password" autoComplete="current-password" value={password} onChange={(e) => setPassword(e.target.value)} required />
+            <PasswordInput id="sign-in-password" autoComplete="current-password" value={password} onChange={(e) => setPassword(e.target.value)} required />
           </Field>
           <Button type="submit" size="lg" disabled={!email || !password || signingIn}>
             {signingIn ? "Signing in…" : "Sign in"}
@@ -64,7 +64,7 @@ export function SignInScreen() {
 
       <p className="text-center text-sm text-muted-foreground">
         New to botdesk?{" "}
-        <Link href="/sign-up" className="font-medium text-foreground hover:underline">
+        <Link href="/sign-up" className="tap-target font-medium text-foreground hover:underline">
           Create an account
         </Link>
       </p>

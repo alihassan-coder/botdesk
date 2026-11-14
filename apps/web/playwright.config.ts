@@ -38,6 +38,7 @@ export default defineConfig({
     // E2E always runs on the mock data: an empty value beats the API URL in .env.local.
     env: { NEXT_PUBLIC_API_URL: "" },
     reuseExistingServer: !process.env.CI,
-    timeout: 180_000,
+    // `next build` alone takes 3–4 minutes on a slow machine.
+    timeout: 600_000,
   },
 });

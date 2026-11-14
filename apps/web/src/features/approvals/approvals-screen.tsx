@@ -156,7 +156,7 @@ function ApprovalEntry({ approval }: { approval: Approval }) {
         {thread && (
           <>
             <span className="text-muted-foreground">in</span>
-            <Link href={`/chat/${approval.threadId}`} className="truncate text-muted-foreground underline-offset-4 hover:text-foreground hover:underline">
+            <Link href={`/chat/${approval.threadId}`} className="-my-2 truncate py-2 text-muted-foreground underline-offset-4 hover:text-foreground hover:underline">
               {thread.kind === "dm" ? "your chat" : thread.title}
             </Link>
           </>

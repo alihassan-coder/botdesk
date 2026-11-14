@@ -51,9 +51,9 @@ export function MemberRow({ member, isMe, yourRole }: { member: User; isMe: bool
           <SelectContent>{rolesYouCanGive(yourRole).map((r) => <SelectItem key={r.value} value={r.value}>{r.label}</SelectItem>)}</SelectContent>
         </Select>
       ) : (
-        <span className="shrink-0 px-3 text-sm text-muted-foreground capitalize sm:w-32">{member.role}</span>
+        <span className="shrink-0 px-3 text-sm text-muted-foreground capitalize @md:w-32">{member.role}</span>
       )}
-      {editable && !isMe ? <RemoveMember member={member} /> : <span className="hidden size-9 sm:block" aria-hidden />}
+      {editable && !isMe ? <RemoveMember member={member} /> : <span className="hidden size-9 @md:block" aria-hidden />}
       <ConfirmOwner member={member} open={confirmingOwner} onOpenChange={setConfirmingOwner} onConfirm={() => changeRole("owner")} />
     </li>
   );

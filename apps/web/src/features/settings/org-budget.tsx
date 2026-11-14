@@ -18,10 +18,11 @@ export function OrgBudget({ spentUsd, budgetUsd, loading }: { spentUsd: number; 
   const [editing, setEditing] = useState(false);
   const use = budgetUse(spentUsd, budgetUsd);
 
+  // The third usage tile: full width when the tiles sit two to a row.
   return (
-    <div className="flex flex-col gap-2 rounded-2xl border p-4">
+    <div className="flex min-w-0 flex-col gap-2 rounded-2xl border p-4 @md:col-span-2 @2xl:col-span-1">
       <div className="flex items-start justify-between gap-2">
-        <p className="text-sm text-muted-foreground">Organization budget</p>
+        <p className="min-w-0 truncate text-sm text-muted-foreground">Organization budget</p>
         {canEdit && !editing && !loading && (
           <Button variant="ghost" size="sm" className="-mt-1.5 -mr-2 h-7" onClick={() => setEditing(true)}>
             {budgetUsd ? "Change" : "Set"}
@@ -34,7 +35,7 @@ export function OrgBudget({ spentUsd, budgetUsd, loading }: { spentUsd: number; 
         <BudgetForm budgetUsd={budgetUsd} onDone={() => setEditing(false)} />
       ) : (
         <>
-          <p className="text-2xl font-semibold tracking-tight tabular-nums">{budgetUsd ? formatUsd(budgetUsd) : "No limit"}</p>
+          <p className="truncate text-2xl font-semibold tracking-tight tabular-nums">{budgetUsd ? formatUsd(budgetUsd) : "No limit"}</p>
           {use.level !== "none" && (
             <Progress value={use.percent} className={barColor(use.level)} aria-label="Organization budget used" />
           )}

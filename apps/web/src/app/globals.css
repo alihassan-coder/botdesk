@@ -136,6 +136,24 @@
   --sidebar-ring: oklch(0.556 0 0);
 }
 
+/*
+ * A bigger hit area without a bigger look: an invisible box at least 44px (or --tap-size)
+ * square, centred on the control. For small text buttons and links on touch screens.
+ * Not for elements that clip (truncate / overflow-hidden): use padding there.
+ */
+@utility tap-target {
+  position: relative;
+  &::after {
+    content: "";
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    width: max(100%, var(--tap-size, 44px));
+    height: max(100%, var(--tap-size, 44px));
+    translate: -50% -50%;
+  }
+}
+
 @layer base {
   * {
     @apply border-border outline-ring/50;

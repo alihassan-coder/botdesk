@@ -14,8 +14,8 @@ import { looksLikeEmail } from "@/lib/email";
 import { INVITE_ROLES } from "./roles";
 
 /**
- * Invite someone by email. With the API there's no email sending yet, so the dialog
- * shows the one-time invite link to copy and share. In the demo they join at once.
+ * Invite someone by email. With the API, the invite is emailed to them and the dialog also
+ * shows the one-time invite link to copy and share. In the demo no email is sent: they join at once.
  */
 export function InviteDialog() {
   const [open, setOpen] = useState(false);
@@ -58,7 +58,7 @@ function InviteForm({ onInvited, onCancel }: { onInvited: (inviteUrl?: string) =
       <DialogHeader>
         <DialogTitle>Invite someone</DialogTitle>
         <DialogDescription>
-          {isDemoMode() ? "They'll get an email with a link to join." : "You'll get a link to send them. It works once."}
+          {isDemoMode() ? "In the demo they join straight away. No email is sent." : "We'll email them a link to join. It works once."}
         </DialogDescription>
       </DialogHeader>
       <form
@@ -115,9 +115,10 @@ function InviteLink({ url, onDone }: { url: string; onDone: () => void }) {
   return (
     <>
       <DialogHeader>
-        <DialogTitle>Send them this link</DialogTitle>
+        <DialogTitle>Invite sent</DialogTitle>
         <DialogDescription>
-          Anyone signed in with the invited email can use it to join. You won&apos;t see it again after closing.
+          We&apos;ve emailed the invite; you can also share this link. Anyone signed in with the invited email can use
+          it to join, once. You won&apos;t see the link again after closing.
         </DialogDescription>
       </DialogHeader>
       <div className="flex gap-2">

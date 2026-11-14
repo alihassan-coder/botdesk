@@ -32,7 +32,7 @@ export function ProviderCard({ provider, canManage }: { provider: ModelProvider;
             {provider.status === "invalid" ? <Badge variant="destructive">Key not working</Badge>
               : provider.connected && <Badge variant="secondary">Connected</Badge>}
           </p>
-          <p className="text-sm text-muted-foreground">{provider.hint}</p>
+          <p className="text-sm text-pretty break-words text-muted-foreground">{provider.hint}</p>
         </div>
       </div>
       {provider.connected && (

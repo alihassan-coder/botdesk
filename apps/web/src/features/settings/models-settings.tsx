@@ -33,7 +33,7 @@ export function ModelsSettings() {
           : "Owners and admins add API keys. Here's what's connected."}
         action={canManage && <AddKeyDialog trigger={<Button size="sm" variant="outline"><Plus /> Custom server</Button>} />}
       >
-        <ul className="grid gap-3 sm:grid-cols-2">
+        <ul className="grid gap-3 @xl:grid-cols-2">
           {providers.map((p) => <ProviderCard key={p.id} provider={p} canManage={canManage} />)}
         </ul>
       </SettingsSection>

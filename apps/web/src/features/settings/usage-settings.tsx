@@ -25,7 +25,7 @@ export function UsageSettings() {
   return (
     <div className="flex flex-col gap-8">
       <SettingsSection title="Usage" description="Model tokens and computer time across all bots. Days and months are in UTC.">
-        <div className="grid gap-3 sm:grid-cols-3">
+        <div className="grid gap-3 @md:grid-cols-2 @2xl:grid-cols-3">
           <Stat label={`Last ${usage.days.length || 14} days`} value={loading ? null : formatUsd(lastDays)} />
           <Stat label="Spent this month" value={loading ? null : formatUsd(usage.monthToDateUsd)} />
           <OrgBudget spentUsd={usage.monthToDateUsd} budgetUsd={usage.orgBudgetUsd} loading={loading} />
@@ -51,12 +51,12 @@ export function UsageSettings() {
 
 function Stat({ label, value }: { label: string; value: string | null }) {
   return (
-    <div className="rounded-2xl border p-4">
-      <p className="text-sm text-muted-foreground">{label}</p>
+    <div className="min-w-0 rounded-2xl border p-4">
+      <p className="truncate text-sm text-muted-foreground">{label}</p>
       {value === null ? (
         <Skeleton className="mt-2 h-7 w-24" />
       ) : (
-        <p className="mt-1 text-2xl font-semibold tracking-tight tabular-nums">{value}</p>
+        <p className="mt-1 truncate text-2xl font-semibold tracking-tight tabular-nums">{value}</p>
       )}
     </div>
   );

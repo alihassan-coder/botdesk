@@ -35,7 +35,7 @@ export function MarketplaceScreen() {
   return (
     <div className="flex h-full flex-col">
       <PageHeader title="Marketplace" />
-      <div className="flex-1 overflow-y-auto">
+      <div className="@container flex-1 overflow-y-auto">
         <div className="mx-auto flex max-w-6xl flex-col gap-6 p-4 md:p-8">
           <section className="flex flex-col gap-4">
             <div>
@@ -64,7 +64,7 @@ export function MarketplaceScreen() {
             </div>
           </section>
 
-          <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3" aria-label="Bots you can hire">
+          <section className="grid gap-4 @xl:grid-cols-2 @5xl:grid-cols-3" aria-label="Bots you can hire">
             {shown.map((t) => (
               <TemplateCard key={t.id} template={t} onHire={() => hire(t.id, t.name)} />
             ))}

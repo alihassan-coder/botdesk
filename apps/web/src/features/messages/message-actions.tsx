@@ -48,7 +48,7 @@ function CopyMessageButton({ text }: { text: string }) {
         variant="ghost"
         size="icon-xs"
         aria-label={copied ? "Copied" : "Copy message"}
-        className="text-muted-foreground hover:text-foreground"
+        className="tap-target text-muted-foreground hover:text-foreground"
         onClick={() => {
           navigator.clipboard
             .writeText(text)

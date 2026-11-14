@@ -1,6 +1,7 @@
 "use client";
 
 import { useTheme } from "next-themes";
+import { useMounted } from "@/hooks/use-mounted";
 import { Check, Monitor, Moon, Pipette, Sun } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { isHexColor, readableTextOn } from "@/lib/color";
@@ -26,7 +27,9 @@ const COVER = "absolute inset-0 z-10 size-full cursor-pointer rounded-[inherit] 
  * Both pickers are radio groups: one Tab stop each, arrow keys move and select.
  */
 export function AppearanceSettings() {
-  const { theme, setTheme } = useTheme();
+  const { theme: savedTheme, setTheme } = useTheme();
+  // next-themes knows the theme only in the browser; until hydration ends, nothing is selected.
+  const theme = useMounted() ? savedTheme : undefined;
   const [accent, setAccent] = useAccent();
   const pickAccent = (next: Accent) => {
     setAccent(next);

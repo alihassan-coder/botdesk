@@ -57,8 +57,9 @@ export function ForgotPasswordScreen() {
         <FieldGroup>
           {error && <FormError>{error}</FormError>}
           <Field>
-            <FieldLabel htmlFor="email">Email</FieldLabel>
-            <Input id="email" type="email" autoComplete="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="you@company.com" />
+            {/* Ids are unique per screen: Next keeps the page you came from in the DOM (hidden), so a shared "email" id would point this label at the wrong field. */}
+            <FieldLabel htmlFor="forgot-email">Email</FieldLabel>
+            <Input id="forgot-email" type="email" autoComplete="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="you@company.com" />
           </Field>
           <Button type="submit" size="lg" disabled={!valid || sending}>
             {sending ? "Sending…" : "Send reset link"}

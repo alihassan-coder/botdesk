@@ -1,4 +1,4 @@
-import { Suspense } from "react";
+import { Suspense, useEffect, useRef } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { Brain, Building2, Gauge, KeyRound, Palette, Shield, User, Users } from "lucide-react";
@@ -21,16 +21,54 @@ export const SETTINGS_SECTIONS = [
  */
 export function SettingsNav() {
   return (
-    <Suspense fallback={<nav className="h-10 md:w-52" />}>
+    <Suspense fallback={<nav className="h-10 @3xl:w-52" />}>
       <SectionLinks />
     </Suspense>
   );
 }
 
+/*
+ * When the links are a scrolling row (narrow), the edges fade where more links hide, and the
+ * open section is scrolled into view. The fades are CSS variables set straight on the element
+ * on scroll, so scrolling doesn't re-render.
+ */
+const ROW_FADE =
+  "[--fade-l:0px] [--fade-r:0px] [mask-image:linear-gradient(to_right,transparent,#000_var(--fade-l),#000_calc(100%-var(--fade-r)),transparent)] @3xl:[mask-image:none]";
+
+function updateFades(nav: HTMLElement) {
+  const max = nav.scrollWidth - nav.clientWidth;
+  nav.style.setProperty("--fade-l", nav.scrollLeft > 1 ? "24px" : "0px");
+  nav.style.setProperty("--fade-r", nav.scrollLeft < max - 1 ? "24px" : "0px");
+}
+
 function SectionLinks() {
   const pathname = usePathname();
+  const navRef = useRef<HTMLElement>(null);
+
+  useEffect(() => {
+    const nav = navRef.current;
+    const active = nav?.querySelector<HTMLElement>("[aria-current=page]");
+    if (!nav) return;
+    if (active && nav.scrollWidth > nav.clientWidth) {
+      const offset = active.getBoundingClientRect().left - nav.getBoundingClientRect().left + nav.scrollLeft;
+      nav.scrollLeft = offset - (nav.clientWidth - active.offsetWidth) / 2;
+    }
+    updateFades(nav);
+    const onResize = () => updateFades(nav);
+    window.addEventListener("resize", onResize);
+    return () => window.removeEventListener("resize", onResize);
+  }, [pathname]);
+
   return (
-    <nav aria-label="Settings sections" className="-mx-1 flex gap-1 overflow-x-auto px-1 [scrollbar-width:none] md:sticky md:top-8 md:mx-0 md:w-52 md:shrink-0 md:flex-col md:self-start md:overflow-visible md:px-0">
+    <nav
+      ref={navRef}
+      aria-label="Settings sections"
+      onScroll={(e) => updateFades(e.currentTarget)}
+      className={cn(
+        "-mx-1 flex gap-1 overflow-x-auto px-1 [scrollbar-width:none] @3xl:sticky @3xl:top-8 @3xl:mx-0 @3xl:w-52 @3xl:shrink-0 @3xl:flex-col @3xl:self-start @3xl:overflow-visible @3xl:px-0",
+        ROW_FADE,
+      )}
+    >
       {SETTINGS_SECTIONS.map(({ href, label, icon: Icon }) => {
         const active = pathname === href;
         return (

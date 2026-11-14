@@ -61,7 +61,9 @@ test("forgot password confirms without revealing who has an account", async ({ p
   // fill again until the form has it (the button enables once the address is valid).
   const send = page.getByRole("button", { name: "Send reset link" });
   await expect(async () => {
-    await page.getByLabel("Email").fill("someone@example.com");
+    // By role, not label: Next keeps the sign-in page in the DOM (hidden) after the client-side
+    // navigation, and getByLabel would also find its Email field. Roles skip hidden elements.
+    await page.getByRole("textbox", { name: "Email" }).fill("someone@example.com");
     await expect(send).toBeEnabled({ timeout: 1_000 });
   }).toPass();
   await send.click();

@@ -5,7 +5,7 @@ import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { Field, FieldGroup, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
-import { actions, isDemoMode } from "@/data/store";
+import { actions, isDemoMode, useSignUpMode } from "@/data/store";
 import { ExploreDemoButton } from "./explore-demo-button";
 import { FormError } from "./form-error";
 import { PasswordInput } from "./password-input";
@@ -14,6 +14,7 @@ import { useSignedInRedirect } from "./use-signed-in-redirect";
 /** /sign-in — email and password. On success you land where you were going. */
 export function SignInScreen() {
   useSignedInRedirect();
+  const signUpMode = useSignUpMode();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -62,12 +63,16 @@ export function SignInScreen() {
       </div>
       <ExploreDemoButton />
 
-      <p className="text-center text-sm text-muted-foreground">
-        New to botdesk?{" "}
-        <Link href="/sign-up" className="tap-target font-medium text-foreground hover:underline">
-          Create an account
-        </Link>
-      </p>
+      {signUpMode === "closed" ? (
+        <p className="text-center text-sm text-muted-foreground">New accounts are turned off on this server. Ask your admin if you need one.</p>
+      ) : (
+        <p className="text-center text-sm text-muted-foreground">
+          New to botdesk?{" "}
+          <Link href="/sign-up" className="tap-target font-medium text-foreground hover:underline">
+            Create an account
+          </Link>
+        </p>
+      )}
 
       {/* MOCK: without the API, these demo logins exist. */}
       {isDemoMode() && <p className="rounded-xl border border-dashed px-3 py-2.5 text-xs text-muted-foreground">

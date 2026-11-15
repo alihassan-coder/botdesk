@@ -8,3 +8,11 @@ export function safeNextPath(search: string): string {
   if (!next || !next.startsWith("/") || next.startsWith("//") || next.includes("\\")) return "/";
   return next;
 }
+
+/**
+ * The invite token when sign-up was opened from an invite link (`?next=/invite/<token>`), so the
+ * new account can join that organization (and sign up at all when sign-up is invite-only).
+ */
+export function inviteTokenFromNext(next: string | undefined): string | null {
+  return next?.match(/^\/invite\/([^/?#]+)$/)?.[1] ?? null;
+}

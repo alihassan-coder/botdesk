@@ -1,73 +1,32 @@
 "use client";
 
-import { useState, useTransition } from "react";
 import Link from "next/link";
+import { useSignUpMode } from "@/data/store";
 import { ExploreDemoButton } from "./explore-demo-button";
-import { Button } from "@/components/ui/button";
-import { Field, FieldDescription, FieldGroup, FieldLabel } from "@/components/ui/field";
-import { Input } from "@/components/ui/input";
-import { actions } from "@/data/store";
-import { looksLikeEmail } from "@/lib/email";
-import { FormError } from "./form-error";
-import { PasswordInput } from "./password-input";
+import { SignUpForm } from "./sign-up-form";
 import { useSignedInRedirect } from "./use-signed-in-redirect";
 
-const MIN_PASSWORD = 8;
-
-/** /sign-up — name, email and a password of at least 8 characters. Signs you straight in. */
-export function SignUpScreen() {
-  useSignedInRedirect();
-  const [name, setName] = useState("");
-  const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
-  const [error, setError] = useState<string | null>(null);
-  const [creating, startCreating] = useTransition();
-
-  const emailValid = looksLikeEmail(email);
-  const passwordLongEnough = password.length >= MIN_PASSWORD;
-  const ready = name.trim() && emailValid && passwordLongEnough;
+/**
+ * /sign-up — what it offers depends on the server's sign-up mode: the form (open, or
+ * invite-only when you came from an invite link), or a note saying how to get an account.
+ */
+export function SignUpScreen({ inviteToken }: { inviteToken: string | null }) {
+  const mode = useSignUpMode();
+  const canSignUp = mode === "open" || (mode === "invite-only" && inviteToken !== null);
 
   return (
     <div className="flex flex-col gap-8">
       <div>
         <h1 className="text-3xl font-semibold tracking-tight">Create your account</h1>
-        <p className="mt-2 text-muted-foreground">Then hire your first bot. It takes a minute.</p>
+        <p className="mt-2 text-muted-foreground">
+          {inviteToken ? "Then you join the organization that invited you." : "Then hire your first bot. It takes a minute."}
+        </p>
       </div>
 
-      <form
-        noValidate
-        onSubmit={(e) => {
-          e.preventDefault();
-          if (!ready) return;
-          startCreating(async () => {
-            const result = await actions.signUp({ name, email, password });
-            setError(result.ok ? null : result.error);
-          });
-        }}
-      >
-        <FieldGroup>
-          {error && <FormError>{error}</FormError>}
-          <Field>
-            <FieldLabel htmlFor="sign-up-name">Your name</FieldLabel>
-            <Input id="sign-up-name" autoComplete="name" value={name} onChange={(e) => setName(e.target.value)} placeholder="Ali Hassan" />
-          </Field>
-          <Field data-invalid={email.length > 0 && !emailValid}>
-            <FieldLabel htmlFor="sign-up-email">Work email</FieldLabel>
-            <Input id="sign-up-email" type="email" autoComplete="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="you@company.com" aria-invalid={email.length > 0 && !emailValid} />
-          </Field>
-          <Field>
-            <FieldLabel htmlFor="sign-up-password">Password</FieldLabel>
-            <PasswordInput id="sign-up-password" autoComplete="new-password" value={password} onChange={(e) => setPassword(e.target.value)} />
-            <FieldDescription className={password && !passwordLongEnough ? "text-destructive" : undefined}>
-              At least {MIN_PASSWORD} characters{password ? ` · ${password.length}/${MIN_PASSWORD}` : ""}
-            </FieldDescription>
-          </Field>
-          <Button type="submit" size="lg" disabled={!ready || creating}>
-            {creating ? "Creating account…" : "Create account"}
-          </Button>
-          <p className="text-xs text-muted-foreground">By creating an account you agree to the terms and privacy policy.</p>
-        </FieldGroup>
-      </form>
+      {canSignUp && <SignUpForm inviteToken={inviteToken} />}
+      {!canSignUp && <Redirect />}
+      {mode === "invite-only" && !inviteToken && <Note>Sign-up is by invitation. Ask your admin for an invite link.</Note>}
+      {mode === "closed" && <Note>New accounts are turned off on this server. Ask your admin if you need one.</Note>}
 
       <ExploreDemoButton />
 
@@ -79,4 +38,14 @@ export function SignUpScreen() {
       </p>
     </div>
   );
+}
+
+/** Without the form, someone already signed in (or entering the demo) still moves on. */
+function Redirect() {
+  useSignedInRedirect();
+  return null;
+}
+
+function Note({ children }: { children: React.ReactNode }) {
+  return <p className="rounded-xl border border-dashed px-3 py-2.5 text-sm text-muted-foreground">{children}</p>;
 }

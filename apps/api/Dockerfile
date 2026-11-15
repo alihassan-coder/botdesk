@@ -69,5 +69,6 @@ HEALTHCHECK --interval=15s --timeout=5s --start-period=30s --retries=5 \
   CMD ["python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/v1/health', timeout=4)"]
 
 # The same server command as `pnpm start:api` (apps/api/package.json), minus the migration:
-# in compose the `migrate` service runs that once before the API starts.
-CMD ["uvicorn", "src.main:app", "--host", "0.0.0.0", "--port", "8000", "--loop", "asyncio:SelectorEventLoop"]
+# in compose the `migrate` service runs that once before the API starts. --no-proxy-headers: the
+# app reads X-Forwarded-For itself, from FORWARDED_ALLOW_IPS only (src/main.py).
+CMD ["uvicorn", "src.main:app", "--host", "0.0.0.0", "--port", "8000", "--loop", "asyncio:SelectorEventLoop", "--no-proxy-headers"]

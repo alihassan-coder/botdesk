@@ -2,6 +2,7 @@ import uuid
 
 from pydantic import EmailStr, Field, field_validator
 
+from src.core.config import SignUpMode
 from src.schemas.common import ApiModel
 from src.schemas.organization import OrgOut
 
@@ -12,6 +13,9 @@ class SignUpIn(ApiModel):
     name: str = Field(min_length=1, max_length=120)
     email: EmailStr
     password: str = Field(min_length=MIN_PASSWORD_LENGTH, max_length=128)
+    # From an invite link (/invite/<token>): the new account joins that organization instead of
+    # getting its own. Required when SIGNUP_MODE is invite-only.
+    invite_token: str | None = Field(default=None, min_length=1, max_length=256)
 
     @field_validator("name")
     @classmethod
@@ -19,6 +23,12 @@ class SignUpIn(ApiModel):
         if not name.strip():
             raise ValueError("Tell us your name.")
         return name.strip()
+
+
+class AuthOptionsOut(ApiModel):
+    """What the sign-up screen needs to know before anyone signs in."""
+
+    sign_up_mode: SignUpMode
 
 
 class SignInIn(ApiModel):

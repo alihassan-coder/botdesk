@@ -50,6 +50,17 @@ describe("ResetPasswordScreen", () => {
     expect(replace).not.toHaveBeenCalled();
   });
 
+  it("shows the API's message when there have been too many attempts", async () => {
+    vi.stubEnv("NEXT_PUBLIC_API_URL", "http://api.test");
+    vi.stubGlobal("fetch", vi.fn(async () => Response.json({ detail: "Too many attempts. Try again in 1 hour." }, { status: 429 })));
+    const { user } = renderUI(<ResetPasswordScreen token="abc" />);
+
+    await user.type(screen.getByLabelText("New password"), "a-new-password");
+    await user.click(screen.getByRole("button", { name: "Set new password" }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("Too many attempts. Try again in 1 hour.");
+  });
+
   it("explains a link without a token", () => {
     renderUI(<ResetPasswordScreen token={null} />);
     expect(screen.getByRole("heading", { name: "This link isn't complete" })).toBeInTheDocument();

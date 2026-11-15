@@ -56,9 +56,17 @@ The first run builds both images (several minutes). Watch progress with `docker 
 
 **4. Open <http://localhost:3000>.**
 
-**5. Sign up.** There is no admin account to configure: every person who signs up gets their own new organization and is its **owner**. Invite your team from **Settings → Members**; people who accept an invite join *your* organization instead of only their own.
+**5. Sign up.** There is no admin account to configure: every person who signs up without an invite gets their own new organization and is its **owner**. Invite your team from **Settings → Members**; people who create their account from an invite link join *your* organization (and people who already have an account join it when they accept).
 
-> **Sign-up is open.** Anyone who can reach your web app can create an account (with their own, separate organization; they can't see yours). There is no switch to close sign-up yet, so keep BotDesk on a private network or behind your reverse proxy's access control if that matters to you.
+**6. Close sign-up** (recommended for anything reachable from the internet). Out of the box `SIGNUP_MODE=open`: anyone who can reach your web app can create an account, with their own separate organization (they can't see yours). Once you have signed up as the first owner, set in `deploy/.env`:
+
+```bash
+SIGNUP_MODE=invite-only
+```
+
+and apply it with `docker compose -f deploy/docker-compose.yml up -d`. From then on, only people with an invite link from **Settings → Members** can create an account, with the invited email, and they join your organization. `SIGNUP_MODE=closed` stops new accounts altogether (people who already have one still sign in and accept invites). The sign-up page shows which mode is on.
+
+Sign-in, sign-up and password resets are rate limited per client address (and per email for sign-in and forgot-password); too many attempts get "Too many attempts. Try again in …". Behind a reverse proxy, the API must know the proxy's address to see the real client: see `FORWARDED_ALLOW_IPS` below.
 
 Without `BREVO_API_KEY`, no email is sent. Invites still work: the invite dialog shows a one-time link to copy and share yourself. Password-reset emails are only noted in the API log (`docker compose -f deploy/docker-compose.yml logs api`), without the link, since in production links carry sign-in tokens. Set up Brevo (below) before people need to reset passwords.
 
@@ -77,6 +85,8 @@ Everything lives in `deploy/.env`; [`deploy/.env.example`](../../deploy/.env.exa
 | `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, … | Instance-wide model keys, used when an organization hasn't added its own. |
 | `MEMORY_ENABLED` | `true` lets bots remember facts (needs `OPENAI_API_KEY`). |
 | `BREVO_API_KEY`, `EMAIL_FROM_ADDRESS` | Send invite and password-reset emails through Brevo (verify the sender in Brevo first). |
+| `SIGNUP_MODE` | `open` (default), `invite-only` (only from an invite link; recommended once the first owner has signed up) or `closed` (no new accounts). |
+| `FORWARDED_ALLOW_IPS` | Addresses whose `X-Forwarded-For` the API believes, for rate limits per client. The example's `172.16.0.0/12` covers Docker's default networks, where your proxy's connections appear to come from. Anyone else's header is ignored. |
 
 Any other API setting from `apps/api/.env.example` (run limits, `PLUGINS`, session length, …) can be added to `deploy/.env` too. Restart to apply: `docker compose -f deploy/docker-compose.yml up -d`.
 
@@ -116,6 +126,7 @@ Notes:
 - Bot replies stream over Server-Sent Events (`/api/v1/.../events`). Caddy passes them through as they arrive. With nginx, turn buffering off for `/api/` (`proxy_buffering off;`, `proxy_read_timeout 1h;`).
 - Two subdomains also work (`app.example.com` for the web app, `api.example.com` for the API): set `NEXT_PUBLIC_API_URL=https://api.example.com` and `WEB_ORIGINS` / `WEB_APP_URL` to `https://app.example.com`. Keep both under the same parent domain so the cookie counts as same-site.
 - Keep `BIND_ADDRESS=127.0.0.1` so ports 3000 and 8000 are not open to the internet next to the proxy.
+- Rate limits count per client address, taken from the `X-Forwarded-For` your proxy adds (Caddy and nginx's `proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;` both do). The API believes it only from `FORWARDED_ALLOW_IPS`; if that doesn't cover the address your proxy connects from, every visitor shares one allowance. Check with `docker network inspect` (the gateway of the compose network).
 
 ## Testing over plain http on your LAN
 

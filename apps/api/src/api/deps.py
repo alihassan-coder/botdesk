@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src.core.config import Settings
 from src.core.database import get_session
 from src.core.errors import Forbidden, NotFound, Unauthorized
+from src.core.rate_limit import RateLimiter
 from src.core.secrets import SecretBox
 from src.models import Organization, User
 from src.runtime.memory import MemoryService
@@ -72,6 +73,24 @@ def get_model_catalog(request: Request) -> ModelCatalog:
 
 
 Catalog = Annotated[ModelCatalog, Depends(get_model_catalog)]
+
+
+def get_limiter(request: Request) -> RateLimiter:
+    """Counts attempts on the abuse-prone auth routes (one per API process: ADR 0007)."""
+    limiter: RateLimiter = request.app.state.limiter
+    return limiter
+
+
+Limiter = Annotated[RateLimiter, Depends(get_limiter)]
+
+
+def client_ip(request: Request) -> str:
+    """The caller's address. Behind a proxy in FORWARDED_ALLOW_IPS, main.py's ProxyHeadersMiddleware
+    has already replaced the proxy's address with the client's from X-Forwarded-For."""
+    return request.client.host if request.client else "unknown"
+
+
+ClientIp = Annotated[str, Depends(client_ip)]
 
 
 def session_token(request: Request) -> str | None:

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { safeNextPath } from "./next-path";
+import { inviteTokenFromNext, safeNextPath } from "./next-path";
 
 describe("safeNextPath", () => {
   it("returns the page you were going to", () => {
@@ -14,5 +14,18 @@ describe("safeNextPath", () => {
     expect(safeNextPath("?next=https://evil.com")).toBe("/");
     expect(safeNextPath("?next=//evil.com")).toBe("/");
     expect(safeNextPath("?next=/%5Cevil.com")).toBe("/");
+  });
+});
+
+describe("inviteTokenFromNext", () => {
+  it("finds the invite token when sign-up came from an invite link", () => {
+    expect(inviteTokenFromNext("/invite/abc_DEF-123")).toBe("abc_DEF-123");
+  });
+
+  it("is null for any other page, or none", () => {
+    expect(inviteTokenFromNext(undefined)).toBeNull();
+    expect(inviteTokenFromNext("/settings")).toBeNull();
+    expect(inviteTokenFromNext("/invite/")).toBeNull();
+    expect(inviteTokenFromNext("/invite/a/b")).toBeNull();
   });
 });

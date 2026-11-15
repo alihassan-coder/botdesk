@@ -7,20 +7,42 @@ from sqlalchemy import delete, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.core import security
+from src.core.config import SignUpMode
 from src.core.database import as_utc, utcnow
-from src.core.errors import BadRequest, Conflict, Unauthorized
+from src.core.errors import BadRequest, Conflict, Forbidden, Unauthorized
 from src.core.handles import handle_prefix, make_handle
 from src.models import PasswordResetToken, Session, User
-from src.services import organization_service
+from src.services import invitation_service, organization_service
 
 WRONG_CREDENTIALS = "That email and password don't match."
 EMAIL_TAKEN = "An account with this email already exists. Sign in instead."
 RESET_LINK_INVALID = "This reset link has expired or was already used. Ask for a new one."
+SIGN_UP_BY_INVITATION = "Sign-up is by invitation. Ask your admin for an invite link."
+SIGN_UP_CLOSED = "New accounts are turned off on this server. Ask your admin if you need one."
 
 
-async def sign_up(db: AsyncSession, *, name: str, email: str, password: str) -> User:
-    """Create the account and a first organization that the new user owns."""
+async def sign_up(
+    db: AsyncSession,
+    *,
+    name: str,
+    email: str,
+    password: str,
+    mode: SignUpMode = "open",
+    invite_token: str | None = None,
+) -> User:
+    """Create the account. With an invite, it joins the inviting organization; without one, it
+    gets a first organization of its own. `mode` (SIGNUP_MODE) says which of these are allowed.
+
+    The mode and the invite are checked before the email, so a refusal never says whether an
+    account exists."""
     email = email.lower()
+    if mode == "closed":
+        raise Forbidden(SIGN_UP_CLOSED)
+    if mode == "invite-only" and not invite_token:
+        raise Forbidden(SIGN_UP_BY_INVITATION)
+    invitation = (
+        await invitation_service.invitation_for_sign_up(db, token=invite_token, email=email) if invite_token else None
+    )
     if await db.scalar(select(User.id).where(User.email == email)):
         raise Conflict(EMAIL_TAKEN)
 
@@ -33,7 +55,10 @@ async def sign_up(db: AsyncSession, *, name: str, email: str, password: str) -> 
     )
     db.add(user)
     await db.flush()
-    await organization_service.create_personal_org(db, user)
+    if invitation:
+        await invitation_service.join(db, invitation, user)
+    else:
+        await organization_service.create_personal_org(db, user)
     return user
 
 

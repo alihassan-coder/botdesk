@@ -6,9 +6,11 @@ from fastapi import BackgroundTasks, Response
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.core.config import Settings
+from src.core.rate_limit import RateLimiter
 from src.emails import password_reset_email
 from src.models import User
 from src.schemas.auth import (
+    AuthOptionsOut,
     ChangePasswordIn,
     ForgotPasswordIn,
     MeOut,
@@ -19,7 +21,7 @@ from src.schemas.auth import (
     SignUpIn,
     UserOut,
 )
-from src.services import auth_service, email_service, organization_service
+from src.services import auth_limits, auth_service, email_service, organization_service
 from src.services.email_service import EmailMessage, EmailSender
 
 
@@ -35,19 +37,36 @@ def _set_session_cookie(response: Response, settings: Settings, token: str) -> N
     )
 
 
+def options(settings: Settings) -> AuthOptionsOut:
+    return AuthOptionsOut(sign_up_mode=settings.signup_mode)
+
+
 async def me(db: AsyncSession, user: User) -> MeOut:
     return MeOut(user=UserOut.model_validate(user), organizations=await organization_service.orgs_for_user(db, user))
 
 
-async def sign_up(db: AsyncSession, settings: Settings, response: Response, body: SignUpIn) -> MeOut:
-    user = await auth_service.sign_up(db, name=body.name, email=body.email, password=body.password)
+async def sign_up(
+    db: AsyncSession, settings: Settings, response: Response, body: SignUpIn, *, limiter: RateLimiter, ip: str
+) -> MeOut:
+    auth_limits.sign_up(limiter, ip=ip)
+    user = await auth_service.sign_up(
+        db,
+        name=body.name,
+        email=body.email,
+        password=body.password,
+        mode=settings.signup_mode,
+        invite_token=body.invite_token,
+    )
     token = await auth_service.start_session(db, user, days=settings.session_days)
     await db.commit()
     _set_session_cookie(response, settings, token)
     return await me(db, user)
 
 
-async def sign_in(db: AsyncSession, settings: Settings, response: Response, body: SignInIn) -> MeOut:
+async def sign_in(
+    db: AsyncSession, settings: Settings, response: Response, body: SignInIn, *, limiter: RateLimiter, ip: str
+) -> MeOut:
+    auth_limits.sign_in(limiter, ip=ip, email=body.email)
     user = await auth_service.sign_in(db, email=body.email, password=body.password)
     token = await auth_service.start_session(db, user, days=settings.session_days)
     await db.commit()
@@ -63,8 +82,16 @@ async def sign_out(db: AsyncSession, settings: Settings, response: Response, tok
 
 
 async def forgot_password(
-    db: AsyncSession, settings: Settings, emails: EmailSender, background: BackgroundTasks, body: ForgotPasswordIn
+    db: AsyncSession,
+    settings: Settings,
+    emails: EmailSender,
+    background: BackgroundTasks,
+    body: ForgotPasswordIn,
+    *,
+    limiter: RateLimiter,
+    ip: str,
 ) -> MessageOut:
+    auth_limits.forgot_password(limiter, ip=ip, email=body.email)
     # The same answer whether or not the account exists, so this can't be used to find accounts.
     # The email goes out after the response, so its time doesn't show either.
     found = await auth_service.request_password_reset(db, email=body.email, minutes=settings.password_reset_minutes)
@@ -82,7 +109,8 @@ async def forgot_password(
     return MessageOut(message="If that email has an account, a reset link is on its way.")
 
 
-async def reset_password(db: AsyncSession, body: ResetPasswordIn) -> MessageOut:
+async def reset_password(db: AsyncSession, body: ResetPasswordIn, *, limiter: RateLimiter, ip: str) -> MessageOut:
+    auth_limits.reset_password(limiter, ip=ip)
     await auth_service.reset_password(db, token=body.token, password=body.password)
     await db.commit()
     return MessageOut(message="Password changed. Sign in with your new password.")

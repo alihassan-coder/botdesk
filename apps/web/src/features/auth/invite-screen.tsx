@@ -5,7 +5,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
-import { actions, useAuthStatus, useCurrentUser, useOrg } from "@/data/store";
+import { actions, useAuthStatus, useCurrentUser, useOrg, useSignUpMode } from "@/data/store";
 import { FormError } from "./form-error";
 
 /**
@@ -71,15 +71,21 @@ function AcceptInvite({ token }: { token: string }) {
 
 function SignInFirst({ token }: { token: string }) {
   const next = `?next=${encodeURIComponent(`/invite/${token}`)}`;
+  // A closed server takes no new accounts, even invited ones; existing accounts still join.
+  const canSignUp = useSignUpMode() !== "closed";
   return (
     <div className="flex flex-col gap-3">
-      <p className="text-sm text-muted-foreground">Sign in with the email the invite was sent to. New here? Create an account with that email.</p>
+      <p className="text-sm text-muted-foreground">
+        Sign in with the email the invite was sent to.{canSignUp && " New here? Create an account with that email."}
+      </p>
       <Button asChild size="lg">
         <Link href={`/sign-in${next}`}>Sign in</Link>
       </Button>
-      <Button asChild size="lg" variant="outline">
-        <Link href={`/sign-up${next}`}>Create an account</Link>
-      </Button>
+      {canSignUp && (
+        <Button asChild size="lg" variant="outline">
+          <Link href={`/sign-up${next}`}>Create an account</Link>
+        </Button>
+      )}
     </div>
   );
 }

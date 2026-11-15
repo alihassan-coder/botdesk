@@ -8,11 +8,13 @@ import httpx
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
 
 from src.api.v1.router import api_router
 from src.core.config import Settings, get_settings
 from src.core.database import Base, create_engine, create_sessionmaker, is_in_memory
-from src.core.errors import AppError
+from src.core.errors import AppError, TooManyRequests
+from src.core.rate_limit import RateLimiter
 from src.core.secrets import build_secret_box
 from src.core.url_guard import GuardedTransport
 from src.runtime.memory import build_memory
@@ -78,6 +80,7 @@ def create_app(settings: Settings | None = None, *, outbound: httpx.AsyncBaseTra
     )
     app.state.settings = settings
     app.state.secrets = secrets
+    app.state.limiter = RateLimiter()
 
     app.add_middleware(
         CORSMiddleware,
@@ -86,10 +89,15 @@ def create_app(settings: Settings | None = None, *, outbound: httpx.AsyncBaseTra
         allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE"],
         allow_headers=["Content-Type", "Authorization"],
     )
+    # The client's address and scheme from X-Forwarded-For / -Proto, only when the connection
+    # comes from a proxy in FORWARDED_ALLOW_IPS. Done here (uvicorn runs with --no-proxy-headers)
+    # so the rule is in one place and the same under any server and in tests.
+    app.add_middleware(ProxyHeadersMiddleware, trusted_hosts=settings.forwarded_allow_ips)
 
     @app.exception_handler(AppError)
     async def app_error(_: Request, error: AppError) -> JSONResponse:
-        return JSONResponse({"detail": error.message}, status_code=error.status_code)
+        headers = {"Retry-After": str(error.retry_after_seconds)} if isinstance(error, TooManyRequests) else None
+        return JSONResponse({"detail": error.message}, status_code=error.status_code, headers=headers)
 
     app.include_router(api_router)
     return app

@@ -36,3 +36,13 @@ class Unavailable(AppError):
     """Something the API depends on (e.g. the memory store) isn't answering. Try again later."""
 
     status_code = 503
+
+
+class TooManyRequests(AppError):
+    """A rate limit (core/rate_limit.py). The response carries Retry-After."""
+
+    status_code = 429
+
+    def __init__(self, message: str, *, retry_after_seconds: int) -> None:
+        super().__init__(message)
+        self.retry_after_seconds = retry_after_seconds

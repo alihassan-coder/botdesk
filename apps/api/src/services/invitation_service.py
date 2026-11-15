@@ -63,21 +63,42 @@ async def revoke(db: AsyncSession, *, org_id: uuid.UUID, invitation_id: uuid.UUI
     await db.delete(invitation)
 
 
-async def accept(db: AsyncSession, *, token: str, user: User) -> tuple[Organization, str]:
-    """Join the organization. The invite must be for the signed-in user's email."""
+async def _open_invitation(db: AsyncSession, token: str) -> Invitation | None:
+    """The invite this link is for, if it's unused and unexpired."""
     invitation = await db.scalar(select(Invitation).where(Invitation.token_hash == security.hash_token(token)))
     if invitation is None or invitation.accepted_at is not None or as_utc(invitation.expires_at) <= utcnow():
-        raise NotFound(INVALID_INVITE)
-    if invitation.email != user.email:
-        raise Forbidden(f"This invite is for {invitation.email}. Sign in with that email to accept it.")
+        return None
+    return invitation
 
+
+async def invitation_for_sign_up(db: AsyncSession, *, token: str, email: str) -> Invitation:
+    """The invite a new account signs up with: unused, unexpired and for this email (403 otherwise)."""
+    invitation = await _open_invitation(db, token)
+    if invitation is None:
+        raise Forbidden(INVALID_INVITE)
+    if invitation.email != email.lower():
+        raise Forbidden(f"This invite is for {invitation.email}. Sign up with that email.")
+    return invitation
+
+
+async def join(db: AsyncSession, invitation: Invitation, user: User) -> tuple[Organization, str]:
+    """Add the user to the invite's organization (keeping a role they already have) and use up the invite."""
     org = await db.get(Organization, invitation.org_id)
     if org is None:
         raise NotFound(INVALID_INVITE)
-
     membership = await db.get(Membership, (org.id, user.id))
     if membership is None:
         membership = Membership(org_id=org.id, user_id=user.id, role=invitation.role)
         db.add(membership)
     invitation.accepted_at = utcnow()
     return org, membership.role
+
+
+async def accept(db: AsyncSession, *, token: str, user: User) -> tuple[Organization, str]:
+    """Join the organization. The invite must be for the signed-in user's email."""
+    invitation = await _open_invitation(db, token)
+    if invitation is None:
+        raise NotFound(INVALID_INVITE)
+    if invitation.email != user.email:
+        raise Forbidden(f"This invite is for {invitation.email}. Sign in with that email to accept it.")
+    return await join(db, invitation, user)

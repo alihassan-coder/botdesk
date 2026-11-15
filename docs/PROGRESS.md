@@ -2,6 +2,11 @@
 
 A short history of BotDesk, newest first. For one checklist of what is done and what is next, see [ROADMAP.md](ROADMAP.md).
 
+## 2026-11-15: routines that really run
+
+- API: `routines` and `routine_runs` (migration `e1c4d7a92b30`), CRUD + Run now + recent runs under `/orgs/{org}/routines`. A `fire_routines` job every minute starts due routines as runs in the creator's DM (a "Routine: {name}" notice the run answers), hop 0, acting for the creator, at the strictest of the bot's and the routine's level. Missed slots run once, never as a backlog; a removed bot, a creator who left or a spent budget switches the routine off with a reason; a slot whose last run is still going is skipped.
+- Web: the routines page, create/edit form (Every day, Weekdays, Every week, Every hour, or a cron line, in your time zone), Run now, delete, the bot's Routines tab and the "Created a routine" card on the API. The demo keeps its mock routines.
+
 ## 2026-11-15: the job queue
 
 [ADR 0013](adr/0013-the-job-queue-lands.md) (supersedes ADR 0007). Details: [backend guide](backend/README.md#background-jobs).

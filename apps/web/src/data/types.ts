@@ -297,6 +297,79 @@ export interface PluginList {
   items: Plugin[];
 }
 
+/* ---------- Connections on the API (ADR 0010): connectors, accounts, each bot's tools ---------- */
+
+/** How a connector's accounts are authorised. Null: it needs no account. */
+export type AccountAuthType = "oauth2" | "api_key" | null;
+
+/** A plugin as Connect apps lists it (GET /connectors). */
+export interface ServerConnector {
+  id: ID;
+  name: string;
+  description: string;
+  version: string;
+  authType: AccountAuthType;
+  /** "not-configured": the server has no OAuth client for it yet (see the self-hosting guide). */
+  setup: "ready" | "not-configured";
+  /** OAuth access levels to choose between ("read", "full"); empty for the rest. */
+  accessLevels: string[];
+  defaultAccess: string | null;
+  tools: PluginTool[];
+}
+
+export interface ServerConnectorList {
+  status: "loading" | "ready" | "error";
+  items: ServerConnector[];
+}
+
+/** Whose account a connection is. */
+export type ConnectionOwnerKind = "member" | "bot" | "org";
+export type ConnectionOwner = { kind: "member" } | { kind: "bot"; botId: ID } | { kind: "org" };
+
+/** One authorised account on one connector. Never carries its credential. */
+export interface AccountConnection {
+  id: ID;
+  connectorId: ID;
+  ownerKind: ConnectionOwnerKind;
+  ownerUserId: ID | null;
+  ownerBotId: ID | null;
+  authType: "oauth2" | "api_key";
+  accountLabel: string;
+  scopes: string[];
+  status: "active" | "needs_reconnect" | "revoked";
+  statusReason: string | null;
+  createdAt: ISODate;
+  lastUsedAt: ISODate | null;
+}
+
+export interface AccountConnectionList {
+  status: "loading" | "ready" | "error";
+  items: AccountConnection[];
+}
+
+/** One plugin in a bot's Tools tab: on or off, and the account it works through. */
+export interface BotToolPlugin {
+  pluginId: ID;
+  name: string;
+  description: string;
+  authType: AccountAuthType;
+  enabled: boolean;
+  connectionId: ID | null;
+  tools: PluginTool[];
+}
+
+export interface BotTools {
+  status: "loading" | "ready" | "error";
+  plugins: BotToolPlugin[];
+}
+
+/** A change to one plugin of a bot (only the plugins sent change). */
+export interface BotToolChange {
+  pluginId: ID;
+  enabled: boolean;
+  connectionId: ID | null;
+}
+
 export interface ConnectorTool {
   name: string;
   description: string;
@@ -329,15 +402,28 @@ export interface Connection {
 
 export interface Routine {
   id: ID;
+  /** Empty when its bot was removed (API): the routine stays, switched off, saying why. */
   botId: ID;
   name: string;
+  /** What it does. On the API: the instructions the bot follows each time. */
   description: string;
+  /** The schedule in words: "Weekdays at 7 AM". */
   schedule: string;
   source: "recording" | "chat" | "edit";
+  /** The demo's step list. API routines have none: `description` says what to do. */
   steps: string[];
   lastRunAt?: ISODate;
-  lastOutcome?: "success" | "failed" | "needs-approval";
+  lastOutcome?: "success" | "failed" | "needs-approval" | "running" | "skipped";
   enabled: boolean;
+  /* API only. */
+  /** 5 fields (minute hour day month weekday), read in `timezone`. */
+  cron?: string;
+  /** IANA, e.g. "Asia/Karachi": its creator's when they saved it. */
+  timezone?: string;
+  nextRunAt?: ISODate;
+  createdBy?: ID;
+  /** Why BotDesk switched it off (its bot was removed, a budget ran out…). */
+  disabledReason?: string;
 }
 
 /** A model a bot can use, from a connected provider's live list. */

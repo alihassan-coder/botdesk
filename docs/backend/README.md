@@ -97,7 +97,7 @@ apps/api/
     controllers/             one request at a time: call services, commit, set cookies
     jobs/                    background work (ADR 0013): the JobQueue seam and its two adapters
       queue.py               Job, JobQueue (defer / abort / recover), JobRegistry (how a task is declared)
-      tasks.py               JOBS: run_bot, expire_approvals (every minute), recover_runs (every minute)
+      tasks.py               JOBS: run_bot, expire_approvals, recover_runs, fire_routines (each every minute)
       postgres.py            ProcrastinateQueue: procrastinate on Postgres, the worker and its restarts
       local.py               LocalQueue: asyncio tasks in this process (SQLite, unit tests)
       background.py          puts runs + queue + live-events listener together for the API or the worker
@@ -217,6 +217,14 @@ A chat opened later (or in a second tab) first asks `GET /threads/{id}/runs?acti
 The web app reads one stream per open chat. Tokens arrive in batches (about every 50 ms) as `message_delta`; when the reply is saved, `message_saved` carries the whole message, which replaces the streamed text.
 
 A service raises `NotFound("…")`, `Conflict("…")` and so on. `main.py` turns those into `{"detail": "…"}` with the right status, so services never touch HTTP. Controllers own the transaction (`db.commit()`).
+
+### Routines
+
+A **routine** (`routines`, migration `e1c4d7a92b30`) is a saved task a bot repeats: `instructions` (what to do), a 5-field `cron` line read in `timezone` (IANA; the web sends the creator's browser zone), `enabled`, an optional `securityLevel` (stricter only: the run uses the strictest of the bot's and the routine's), `lastRunAt`, `nextRunAt`, `disabledReason`. `routine_runs` records each time it was due: the run it started (`started`) or `skipped`.
+
+- **Routes** (`/orgs/{org}/routines`): `GET` (`?botId=`), `POST` (any member, for a bot of the org; a "Created a routine" card, a system message with a `routine-created` part, goes into the creator's DM with the bot), `PATCH /{id}` (switch on/off, edit), `DELETE /{id}`, `POST /{id}/run-now` (202 `{runId, threadId}`; 409 while its last run is still going), `GET /{id}/runs` (20 newest, with each run's status). Changing, running or removing one: its creator, owners and admins (403 "Only the routine's creator, owners and admins can change it.").
+- **Schedule** (`services/routine_schedule.py`, croniter, already a dependency of procrastinate): the cron line is walked in the zone's wall-clock time, so 09:00 stays 09:00 across DST; a time skipped by spring-forward runs an hour later, once; one repeated by fall-back runs the first time.
+- **Firing** (`fire_routines`, every minute, `src/jobs/tasks.py`): each routine with `enabled` and `nextRunAt <= the job's minute`, in its own transaction with its row locked: checks (bot removed, creator left the org, bot or org over budget → switched off with `disabledReason`), moves `nextRunAt` to the next slot after now, then (unless its previous run is still queued, running or paused: `skipped`) opens the creator's DM if needed, saves a system message "Routine: {name}" whose hidden `routine-run` part holds the instructions, and a queued run (hop 0) answering it, with its job. The run reads that part as a person's message (`run_service.run_context`): the requester is the creator (their DM). A slot missed while the server was down runs once when it's back, never as a backlog. Removing a bot switches its routines off ("Its bot was removed.").
 
 ## API v1 so far
 
@@ -594,6 +602,6 @@ The invite flow is the one that already existed: the link is `/invite/<token>`; 
 
 ## Not yet (in order)
 
-1. Approval follow-ups: *retry / skip* for `needs_attention` runs, saved rules ("always allow"), org ceiling and routine levels, per-call risk raising, `run_steps` audit rows, a tool-calls-per-run limit, an org-wide approvals stream. Then the rest of step 3: `plugins/_template`, a generated and CI-checked `manifest.json`, import rules in CI, release-please for the SDK. Full order: [agents-and-plugins.md §14](../architecture/agents-and-plugins.md#14-build-order-each-step-small-tested-and-usable).
+1. Approval follow-ups: *retry / skip* for `needs_attention` runs, saved rules ("always allow"), org ceiling, per-call risk raising, `run_steps` audit rows, a tool-calls-per-run limit, an org-wide approvals stream. Then the rest of step 3: `plugins/_template`, a generated and CI-checked `manifest.json`, import rules in CI, release-please for the SDK. Full order: [agents-and-plugins.md §14](../architecture/agents-and-plugins.md#14-build-order-each-step-small-tested-and-usable).
 2. Memory: the org's OpenAI key for memory, `memory_audit`, tainted memories; trimming old `run_events` and checkpoints.
 3. Email verification; rate limits shared between several API copies.

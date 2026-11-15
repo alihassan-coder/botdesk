@@ -20,12 +20,22 @@ describe("BotDetails' routines tab in the demo", () => {
 });
 
 describe("BotDetails' routines tab on the API", () => {
-  withFakeApi();
+  const api = withFakeApi();
 
-  it("says bots can't run on a schedule yet", async () => {
+  it("lists the bot's routines with their schedule and switch", async () => {
+    api.routes["GET /api/v1/orgs/o1/routines"] = {
+      status: 200,
+      body: [{
+        id: "r1", botId: "b1", createdBy: "u1", name: "Morning digest", instructions: "Sum up.", cron: "0 9 * * *",
+        timezone: "Asia/Karachi", enabled: true, securityLevel: null, disabledReason: null, lastRunAt: null,
+        nextRunAt: "2026-11-16T04:00:00Z", lastResult: null, createdAt: "2026-11-12T08:00:00Z",
+      }],
+    };
     await signInOnApi();
+    await vi.waitFor(() => expect(getStoreSnapshot().routinesLoading).toBe(false));
     const { user } = renderUI(<BotDetails bot={botNamed("Scout")} />);
     await user.click(screen.getByRole("tab", { name: "Routines" }));
-    expect(screen.getByText("Bots can't run on a schedule yet. Routines arrive with the scheduler.")).toBeInTheDocument();
+    expect(screen.getByText("Every day at 9 AM (Asia/Karachi)")).toBeInTheDocument();
+    expect(screen.getByRole("switch", { name: "Run Morning digest" })).toBeChecked();
   });
 });

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { formatBytes, formatCount, formatShortAgo, formatUsd, initialOf, pluralize } from "./format";
+import { formatBytes, formatCount, formatInZone, formatShortAgo, formatUsd, initialOf, pluralize } from "./format";
 
 const NOW = new Date("2026-11-12T12:00:00Z").getTime();
 const minutesAgo = (m: number) => new Date(NOW - m * 60_000).toISOString();
@@ -63,5 +63,12 @@ describe("pluralize", () => {
     expect(pluralize(0, "bot")).toBe("0 bots");
     expect(pluralize(1, "person", "people")).toBe("1 person");
     expect(pluralize(4, "person", "people")).toBe("4 people");
+  });
+});
+
+describe("formatInZone", () => {
+  it("shows the moment on the clock of the given time zone", () => {
+    expect(formatInZone("2026-11-16T04:00:00Z", "Asia/Karachi")).toBe("Mon, Nov 16, 9:00 AM");
+    expect(formatInZone("2026-11-16T04:00:00Z", "UTC")).toBe("Mon, Nov 16, 4:00 AM");
   });
 });

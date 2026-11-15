@@ -26,6 +26,11 @@ export function formatClockTime(iso: string): string {
   return new Date(iso).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
 }
 
+/** A moment on another place's clock, e.g. a routine's next run in its time zone: "Mon, Nov 16, 9:00 AM". */
+export function formatInZone(iso: string, timeZone: string): string {
+  return new Date(iso).toLocaleString("en-US", { timeZone, weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
+}
+
 /** Human file size: "980 B", "18 KB", "1.4 MB". */
 export function formatBytes(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;

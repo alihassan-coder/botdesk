@@ -19,8 +19,9 @@ from src.core.config import Settings
 from src.core.database import utcnow
 from src.core.errors import NotFound
 from src.core.handles import mentioned_handles
-from src.models import Approval, Bot, Message, Run, RunEvent, Thread, ThreadParticipant, User
+from src.models import Approval, Bot, Message, Routine, RoutineRun, Run, RunEvent, Thread, ThreadParticipant, User
 from src.models.run import ACTIVE_STATUSES, PAUSED_STATUSES
+from src.runtime.policy import strictest_level
 from src.schemas.run import RunOut
 from src.services.mention_routing import BotAuthor, ChatBots, Reply, route
 from src.services.run_event_service import add_event
@@ -65,19 +66,33 @@ async def _chat_bots(db: AsyncSession, thread: Thread, *, with_guests: bool) -> 
     return ChatBots(kind="dm", bots=frozenset(own | guests), default_bot=thread.bot_id)
 
 
-def _queued_run(thread: Thread, reply: Reply, *, trigger: Message, settings: Settings, parent: uuid.UUID | None) -> Run:
+def queued_run(
+    thread: Thread,
+    *,
+    bot_id: uuid.UUID,
+    trigger: Message,
+    settings: Settings,
+    hop: int = 0,
+    parent: uuid.UUID | None = None,
+) -> Run:
+    """A queued run of `bot_id` answering `trigger` in `thread` (a routine's run uses it as is).
+    The caller adds it."""
     return Run(
         org_id=thread.org_id,
-        bot_id=reply.bot_id,
+        bot_id=bot_id,
         thread_id=thread.id,
         trigger_message_id=trigger.id,
         parent_run_id=parent,
-        hop=reply.hop,
+        hop=hop,
         status="queued",
         max_steps=settings.run_max_steps,
         max_seconds=settings.run_max_seconds,
         created_at=utcnow(),
     )
+
+
+def _queued_run(thread: Thread, reply: Reply, *, trigger: Message, settings: Settings, parent: uuid.UUID | None) -> Run:
+    return queued_run(thread, bot_id=reply.bot_id, trigger=trigger, settings=settings, hop=reply.hop, parent=parent)
 
 
 async def create_runs(
@@ -188,6 +203,30 @@ class RunContext:
     history: list[ChatLine]  # oldest first, ending with the run's trigger message
 
 
+# A routine's trigger is a system message (people see "Routine: {name}") whose `routine-run` part
+# holds what to do; the run it starts reads that as its question (routine_service).
+ROUTINE_RUN_PART = "routine-run"
+
+
+def routine_prompt(parts: list[dict[str, Any]]) -> str | None:
+    """What the model reads for a routine's trigger message, or None if it isn't one."""
+    part = next((p for p in parts if p.get("type") == ROUTINE_RUN_PART), None)
+    if part is None:
+        return None
+    return f"It's time for your routine “{part.get('name', '')}”. Do this now:\n\n{part.get('instructions', '')}"
+
+
+def _line(line: Any, *, bot_id: uuid.UUID) -> ChatLine:
+    if line.author_type == "system":  # only a run's own trigger gets here: a routine's
+        return ChatLine(from_this_bot=False, author_type="user", author="", text=routine_prompt(line.parts) or "")
+    return ChatLine(
+        from_this_bot=line.author_type == "bot" and line.author_id == bot_id,
+        author_type=line.author_type,
+        author=_label(line.user_name, line.user_handle) or _label(line.bot_name, line.bot_handle),
+        text=text_of(line.parts),
+    )
+
+
 def _label(name: str | None, handle: str | None) -> str:
     return f"{name} (@{handle})" if name and handle else ""
 
@@ -212,6 +251,7 @@ async def run_context(db: AsyncSession, run_id: uuid.UUID) -> RunContext:
                 Bot.instructions,
                 Bot.model_id,
                 Bot.security_level,
+                Routine.security_level.label("routine_level"),
                 Bot.memory_enabled,
                 Thread.kind,
                 Thread.bot_id.label("dm_bot_id"),
@@ -222,6 +262,8 @@ async def run_context(db: AsyncSession, run_id: uuid.UUID) -> RunContext:
             .join(Bot, Bot.id == Run.bot_id)
             .join(Thread, Thread.id == Run.thread_id)
             .outerjoin(trigger, trigger.id == Run.trigger_message_id)
+            .outerjoin(RoutineRun, RoutineRun.run_id == Run.id)
+            .outerjoin(Routine, Routine.id == RoutineRun.routine_id)
             .where(Run.id == run_id)
         )
     ).one()
@@ -244,8 +286,12 @@ async def run_context(db: AsyncSession, run_id: uuid.UUID) -> RunContext:
         )
         .outerjoin(User, and_(Message.author_type == "user", User.id == Message.author_id))
         .outerjoin(author_bot, and_(Message.author_type == "bot", author_bot.id == Message.author_id))
-        # Notices like "Stopped a chain of bot replies" are for people, not part of the conversation.
-        .where(Message.thread_id == row.thread_id, Message.author_type != "system")
+        # Notices like "Stopped a chain of bot replies" are for people, not part of the conversation;
+        # the one exception is the run's own trigger when a routine started it.
+        .where(
+            Message.thread_id == row.thread_id,
+            or_(Message.author_type != "system", Message.id == row.trigger_id),
+        )
         .order_by(Message.created_at.desc(), Message.id.desc())
         .limit(HISTORY_LENGTH)
     )
@@ -257,15 +303,7 @@ async def run_context(db: AsyncSession, run_id: uuid.UUID) -> RunContext:
             )
         )
     lines = list(reversed((await db.execute(query)).all()))
-    history = [
-        ChatLine(
-            from_this_bot=line.author_type == "bot" and line.author_id == row.bot_id,
-            author_type=line.author_type,
-            author=_label(line.user_name, line.user_handle) or _label(line.bot_name, line.bot_handle),
-            text=text_of(line.parts),
-        )
-        for line in lines
-    ]
+    history = [_line(line, bot_id=row.bot_id) for line in lines]
     tainted = row.tainted
     if not tainted and any(line.tainted for line in lines):
         await db.execute(update(Run).where(Run.id == run_id).values(tainted=True))
@@ -274,7 +312,8 @@ async def run_context(db: AsyncSession, run_id: uuid.UUID) -> RunContext:
         bot_name=row.name,
         instructions=row.instructions,
         model_id=row.model_id,
-        security_level=row.security_level,
+        # A routine can make its bot stricter, never looser (ADR 0004).
+        security_level=strictest_level(row.security_level, row.routine_level or row.security_level),
         memory_enabled=row.memory_enabled,
         tainted=tainted,
         group=row.kind == "group",

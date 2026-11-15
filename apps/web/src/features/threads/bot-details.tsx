@@ -1,32 +1,36 @@
 import { useEffect } from "react";
+import Link from "next/link";
 import { Monitor } from "lucide-react";
 import { Progress } from "@/components/ui/progress";
 import { Switch } from "@/components/ui/switch";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { budgetUse } from "@/lib/budget";
 import { formatUsd } from "@/lib/format";
-import { actions, useBotRoutines, useCurrentUser, useIsDemo, useModel } from "@/data/store";
+import { actions, useBotRoutines, useCurrentUser, useModel } from "@/data/store";
 import type { Bot } from "@/data/types";
 import { BotAvatar } from "@/features/bots/bot-avatar";
+import { BotTools } from "@/features/bots/bot-tools";
 import { EditBotDialog } from "@/features/bots/edit-bot-dialog";
 import { BotMemories } from "@/features/memory/bot-memories";
 import { RemoveBotButton } from "@/features/bots/remove-bot-button";
-import { ROUTINES_COMING_SOON } from "@/features/routines/routines-coming-soon";
+import { canChangeRoutine, toggle } from "@/features/routines/routine-card";
 import { barColor } from "@/features/settings/budget-list";
 import { securityLabel } from "@/features/bots/security-levels";
 
-/** The details pane for a DM: who this bot is, its routines, what it remembers, its computer. */
+/** The details pane for a DM: who this bot is, its tools, routines, what it remembers, its computer. */
 export function BotDetails({ bot }: { bot: Bot }) {
   return (
     <Tabs defaultValue="details" className="flex h-full flex-col gap-0">
-      <TabsList className="mx-4 mt-3 grid grid-cols-4">
+      <TabsList className="mx-4 mt-3 grid grid-cols-5">
         <TabsTrigger value="details">Details</TabsTrigger>
+        <TabsTrigger value="tools">Tools</TabsTrigger>
         <TabsTrigger value="routines">Routines</TabsTrigger>
         <TabsTrigger value="memory">Memory</TabsTrigger>
         <TabsTrigger value="computer">Computer</TabsTrigger>
       </TabsList>
       <div className="flex-1 overflow-y-auto p-4">
         <TabsContent value="details"><Profile bot={bot} /></TabsContent>
+        <TabsContent value="tools"><BotTools bot={bot} /></TabsContent>
         <TabsContent value="routines"><Routines botId={bot.id} /></TabsContent>
         <TabsContent value="memory"><BotMemories bot={bot} compact /></TabsContent>
         <TabsContent value="computer"><Computer bot={bot} /></TabsContent>
@@ -93,20 +97,20 @@ function BudgetThisMonth({ bot }: { bot: Bot }) {
 
 function Routines({ botId }: { botId: string }) {
   const routines = useBotRoutines(botId);
-  const isDemo = useIsDemo();
-  // On the API nothing runs on a schedule yet, so there's nothing to list or switch on.
-  if (!isDemo) return <Empty text={ROUTINES_COMING_SOON} />;
-  if (routines.length === 0) return <Empty text="No routines yet. Ask the bot to do something every week and it can save it as one." />;
+  const me = useCurrentUser();
+  if (routines.length === 0) {
+    return <Empty text="No routines yet. Create one on the Routines page and this bot runs it on schedule, in your chat." />;
+  }
 
   return (
     <ul className="flex flex-col gap-2">
       {routines.map((r) => (
         <li key={r.id} className="flex items-start gap-3 rounded-xl border p-3">
           <div className="min-w-0 flex-1">
-            <p className="text-sm font-medium">{r.name}</p>
-            <p className="text-xs text-muted-foreground">{r.schedule}</p>
+            <Link href="/routines" className="text-sm font-medium hover:underline">{r.name}</Link>
+            <p className="text-xs text-muted-foreground">{r.schedule}{r.timezone ? ` (${r.timezone})` : ""}</p>
           </div>
-          <Switch checked={r.enabled} onCheckedChange={() => actions.toggleRoutine(r.id)} aria-label={`Run ${r.name}`} />
+          <Switch checked={r.enabled} disabled={!canChangeRoutine(r, me)} onCheckedChange={() => void toggle(r)} aria-label={`Run ${r.name}`} />
         </li>
       ))}
     </ul>

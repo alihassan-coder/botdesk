@@ -3,9 +3,11 @@
  * Only src/data/store.ts imports it.
  */
 import type {
+  AccountConnection,
   Approval,
   ArgsSchema,
   Bot,
+  BotToolPlugin,
   Connection,
   Connector,
   MemoryItem,
@@ -287,6 +289,33 @@ export const connectors: Connector[] = [
 
 export const connections: Connection[] = [
   { id: "c_gmail", connectorId: "gmail", account: "ali@acme.dev", owner: "user", status: "connected", connectedAt: ago(60 * 24 * 20) },
+];
+
+/** The demo's connected accounts as a bot's Tools tab sees them: Ali's own Gmail. */
+export const accountConnections: AccountConnection[] = [
+  {
+    id: "c_gmail", connectorId: "gmail", ownerKind: "member", ownerUserId: "u_me", ownerBotId: null, authType: "oauth2",
+    accountLabel: "ali@acme.dev", scopes: ["https://www.googleapis.com/auth/gmail.modify"], status: "active", statusReason: null,
+    createdAt: ago(60 * 24 * 20), lastUsedAt: ago(30),
+  },
+];
+
+/** What a new demo bot's Tools tab starts with: the built-in demo tools on, Gmail off. */
+export const botToolPlugins: BotToolPlugin[] = [
+  {
+    pluginId: "demo", name: "Demo", description: "Tools to try approvals with.", authType: null, enabled: true, connectionId: null,
+    tools: [
+      { name: "demo.search_kb", title: "Search the knowledge base", description: "Finds articles.", risk: "read" },
+      { name: "demo.send_email", title: "Send email", description: "Sends an email.", risk: "external-send" },
+    ],
+  },
+  {
+    pluginId: "gmail", name: "Gmail", description: "Read, search, label, draft and send email.", authType: "oauth2", enabled: false, connectionId: null,
+    tools: [
+      { name: "gmail.search", title: "Search mail", description: "Searches messages.", risk: "read" },
+      { name: "gmail.send", title: "Send email", description: "Sends an email.", risk: "external-send" },
+    ],
+  },
 ];
 
 export const routines: Routine[] = [

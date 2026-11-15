@@ -218,3 +218,7 @@ docker compose -f deploy/docker-compose.dev.yml up -d
 ```
 
 then set `DATABASE_URL=postgresql://botdesk:botdesk@localhost:5432/botdesk` in `apps/api/.env` (and, for the Postgres tests, `TEST_DATABASE_URL=postgresql://botdesk:botdesk@localhost:5432/botdesk_test`). See [getting-started.md](../getting-started.md).
+
+## Google sign-in (Gmail)
+
+To let people connect Gmail, give the server its own Google OAuth client: see [google-oauth.md](google-oauth.md).

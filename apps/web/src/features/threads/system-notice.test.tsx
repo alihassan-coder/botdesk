@@ -18,6 +18,26 @@ describe("messages from BotDesk and from bots working together", () => {
     expect(screen.queryByText("BotDesk")).not.toBeInTheDocument();
   });
 
+  it("a routine's notices: the Created card links to the routines page; its run's trigger is a status line", () => {
+    const created: Message = {
+      id: "n2", threadId: "t_chief", author: { type: "system", id: "system" }, createdAt: at,
+      parts: [{ type: "routine-created", routineId: "r9", name: "Morning digest" }],
+    };
+    const trigger: Message = {
+      id: "n3", threadId: "t_chief", author: { type: "system", id: "system" }, createdAt: at,
+      parts: [{ type: "text", text: "Routine: Morning digest" }],
+    };
+    renderUI(
+      <>
+        <MessageItem message={created} isGroup={false} />
+        <MessageItem message={trigger} isGroup={false} />
+      </>,
+    );
+
+    expect(screen.getByRole("link", { name: /Created a routine: Morning digest/ })).toHaveAttribute("href", "/routines");
+    expect(screen.getByText("Routine: Morning digest")).toBeInTheDocument();
+  });
+
   it("in a DM, a guest's reply says which bot wrote it; the DM's own bot's doesn't", () => {
     const from = (botId: string, text: string): Message => ({
       id: `m-${botId}`, threadId: "t_chief", author: { type: "bot", id: botId }, createdAt: at, status: "complete",

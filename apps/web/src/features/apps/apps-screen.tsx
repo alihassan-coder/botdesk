@@ -2,18 +2,18 @@
 
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
-import { actions, useConnections, useConnectors, useIsDemo } from "@/data/store";
+import { actions, useConnections, useConnectors, useIsDemo, useServerConnectors } from "@/data/store";
 import type { Connector } from "@/data/types";
 import { PageHeader } from "@/features/shell/page-header";
-import { BuiltInPlugins } from "./built-in-plugins";
 import { ConnectDialog } from "./connect-dialog";
 import { ConnectorIcon } from "./connector-icon";
+import { ServerConnectors } from "./server-connectors";
 import { ToolList } from "./tool-list";
 
 /**
  * /apps — what your bots can reach. The demo connects its mock apps. On the API, the server's
- * plugins are built in, and the app catalogue waits for real connections (OAuth, MCP), so it's
- * shown as coming soon with Connect off.
+ * connectors are listed with your connected accounts; the rest of the catalogue (apps this
+ * server has no plugin for yet) is shown as coming soon with Connect off.
  */
 export function AppsScreen() {
   const isDemo = useIsDemo();
@@ -21,7 +21,8 @@ export function AppsScreen() {
   const [connecting, setConnecting] = useState<Connector | null>(null);
 
   const available = connectors.filter((c) => c.available);
-  const comingSoon = isDemo ? connectors.filter((c) => !c.available) : connectors;
+  const onServer = new Set(useServerConnectors().items.map((c) => c.id));
+  const comingSoon = isDemo ? connectors.filter((c) => !c.available) : connectors.filter((c) => !onServer.has(c.id));
 
   return (
     <div className="flex h-full flex-col">
@@ -44,12 +45,12 @@ export function AppsScreen() {
               </section>
             </>
           ) : (
-            <BuiltInPlugins />
+            <ServerConnectors />
           )}
 
           <section aria-label="Coming soon">
             <h3 className="mb-3 text-sm font-semibold">Coming soon</h3>
-            {!isDemo && <p className="mb-3 text-sm text-muted-foreground">Connecting your own accounts arrives with app connections.</p>}
+            {!isDemo && <p className="mb-3 text-sm text-muted-foreground">This server has no plugin for these apps yet.</p>}
             <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
               {comingSoon.map((c) => (
                 <article key={c.id} className="flex items-center gap-3 rounded-2xl border border-dashed p-4 text-muted-foreground">

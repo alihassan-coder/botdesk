@@ -2,13 +2,16 @@
 
 import uuid
 
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.core.errors import NotFound
 from src.core.handles import handle_prefix, make_handle
-from src.models import Bot, Organization
+from src.models import Bot, Organization, Routine
 from src.schemas.bot import BotIn, BotUpdate
+
+# What a routine whose bot was removed says (it stays, switched off).
+BOT_REMOVED = "Its bot was removed."
 
 
 async def list_bots(db: AsyncSession, org_id: uuid.UUID) -> list[Bot]:
@@ -57,4 +60,10 @@ async def update_bot(db: AsyncSession, bot: Bot, changes: BotUpdate) -> Bot:
 
 
 async def delete_bot(db: AsyncSession, bot: Bot) -> None:
+    """Its DMs and runs go with it. Its routines stay, switched off, saying why."""
+    await db.execute(
+        update(Routine)
+        .where(Routine.bot_id == bot.id)
+        .values(enabled=False, next_run_at=None, disabled_reason=BOT_REMOVED)
+    )
     await db.delete(bot)

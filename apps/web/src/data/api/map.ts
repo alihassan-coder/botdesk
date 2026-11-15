@@ -1,5 +1,6 @@
-import type { Approval, ArgsSchema, Bot, Invitation, MemoryItem, MemoryStatus, Message, MessagePart, Model, ModelProvider, Org, Thread, UsageSummary, User } from "../types";
-import type { ApiApproval, ApiBot, ApiBotInput, ApiInvitation, ApiMemory, ApiMemoryStatus, ApiMessage, ApiModel, ApiModelProvider, ApiOrg, ApiRole, ApiThread, ApiUsage, ApiUser } from "./types";
+import type { AccountConnection, Approval, ArgsSchema, Bot, Invitation, MemoryItem, MemoryStatus, Message, MessagePart, Model, ModelProvider, Org, Routine, Thread, UsageSummary, User } from "../types";
+import { describeCron } from "@/lib/schedule";
+import type { ApiApproval, ApiBot, ApiConnection, ApiBotInput, ApiInvitation, ApiMemory, ApiMemoryStatus, ApiMessage, ApiModel, ApiModelProvider, ApiOrg, ApiRole, ApiRoutine, ApiThread, ApiUsage, ApiUser } from "./types";
 
 /**
  * Turns API answers into the web app's own types, so screens never see API shapes.
@@ -130,4 +131,40 @@ export function toMemory({ id, text, scope, createdAt, updatedAt }: ApiMemory, b
 
 export function toMemoryStatus({ enabled, reason }: ApiMemoryStatus): MemoryStatus {
   return { enabled, ...(reason ? { reason } : {}) };
+}
+
+/** A connection without the fields screens don't use; times read as UTC. */
+export function toAccountConnection(c: ApiConnection): AccountConnection {
+  const { id, connectorId, ownerKind, ownerUserId, ownerBotId, authType, accountLabel, scopes, status, statusReason } = c;
+  return {
+    id, connectorId, ownerKind, ownerUserId, ownerBotId, authType, accountLabel, scopes, status, statusReason,
+    createdAt: asUtc(c.createdAt), lastUsedAt: c.lastUsedAt ? asUtc(c.lastUsedAt) : null,
+  };
+}
+
+/* ---------- Routines ---------- */
+
+const OUTCOMES: Partial<Record<NonNullable<ApiRoutine["lastResult"]>, NonNullable<Routine["lastOutcome"]>>> = {
+  succeeded: "success",
+  failed: "failed",
+  cancelled: "failed",
+  waiting_approval: "needs-approval",
+  needs_attention: "needs-approval",
+  queued: "running",
+  running: "running",
+  skipped: "skipped",
+};
+
+/** The API's instructions become the routine's description; its cron line becomes words. */
+export function toRoutine(r: ApiRoutine): Routine {
+  const outcome = r.lastResult ? OUTCOMES[r.lastResult] : undefined;
+  return {
+    id: r.id, botId: r.botId ?? "", name: r.name, description: r.instructions, schedule: describeCron(r.cron),
+    source: "edit", steps: [], enabled: r.enabled, cron: r.cron, timezone: r.timezone,
+    ...(r.lastRunAt ? { lastRunAt: asUtc(r.lastRunAt) } : {}),
+    ...(outcome ? { lastOutcome: outcome } : {}),
+    ...(r.nextRunAt ? { nextRunAt: asUtc(r.nextRunAt) } : {}),
+    ...(r.createdBy ? { createdBy: r.createdBy } : {}),
+    ...(r.disabledReason ? { disabledReason: r.disabledReason } : {}),
+  };
 }

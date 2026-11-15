@@ -209,9 +209,9 @@ describe("smaller actions", () => {
   });
 
   it("toggleRoutine switches a routine on and off", () => {
-    actions.toggleRoutine("r_1");
+    void actions.toggleRoutine("r_1");
     expect(state().routines.find((r) => r.id === "r_1")?.enabled).toBe(false);
-    actions.toggleRoutine("r_1");
+    void actions.toggleRoutine("r_1");
     expect(state().routines.find((r) => r.id === "r_1")?.enabled).toBe(true);
   });
 
@@ -267,10 +267,11 @@ describe("smaller actions", () => {
     expect(state().approvals.some((a) => a.botId === "b_inbox")).toBe(false);
   });
 
-  it("createRoutine saves it and the bot confirms in its chat", () => {
-    const routineId = actions.createRoutine({
+  it("createRoutine saves it and the bot confirms in its chat", async () => {
+    const saved = await actions.createRoutine({
       botId: "b_expense", name: "Friday report", description: "", schedule: "Every Friday at 5 PM", steps: ["Find receipts", "File"], enabled: true,
     });
+    const routineId = saved.ok ? saved.routineId : "";
     expect(state().routines.find((r) => r.id === routineId)).toMatchObject({ name: "Friday report", source: "edit", enabled: true });
 
     const confirmation = lastMessageIn("t_expense");

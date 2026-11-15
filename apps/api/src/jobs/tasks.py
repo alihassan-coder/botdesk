@@ -5,6 +5,8 @@
   expire, and their runs carry on told "no" (approvals fail closed, ADR 0004).
 - `recover_runs` (every minute, Postgres): runs that should be moving but lost their job (a
   crashed worker) get one again.
+- `fire_routines` (every minute): each routine that is due starts a run in its creator's DM
+  (`routine_service`).
 
 To add a job (routines, Gmail polling…), declare it on `JOBS` in a module this one imports, then
 defer it with `queue.defer(Job("name", {...}))`, or give it a `cron` to run on a schedule. See the
@@ -13,13 +15,13 @@ backend guide, "Background jobs".
 
 import uuid
 from dataclasses import replace
-from datetime import timedelta
+from datetime import UTC, datetime, timedelta
 
 from src.core.database import utcnow
 from src.jobs.queue import JobEnv, JobRegistry
 from src.models import Run
 from src.runtime.runner import RUN_BOT, run_job
-from src.services import approval_service, run_event_service
+from src.services import approval_service, routine_service, run_event_service
 
 JOBS = JobRegistry()
 
@@ -66,3 +68,21 @@ async def expire_approvals(env: JobEnv, timestamp: int) -> None:
 async def recover_runs(env: JobEnv, timestamp: int) -> None:
     if env.settings.uses_postgres:  # on SQLite nothing is lost while the process runs
         await env.runs.pick_up_stuck_runs()
+
+
+@JOBS.task("fire_routines", cron="* * * * *")
+async def fire_routines(env: JobEnv, timestamp: int) -> None:
+    """Each due routine in its own short transaction: its trigger message, its run and the run's
+    job together. `timestamp` is the minute this job is for, so a late job fires what was due
+    then, and running it twice fires nothing twice (the routine moved on to its next slot)."""
+    now = datetime.fromtimestamp(timestamp, UTC)
+    async with env.sessionmaker() as db:
+        due = await routine_service.due(db, now)
+    for routine_id in due:
+        async with env.sessionmaker() as db:
+            fired = await routine_service.fire_on_schedule(db, routine_id, now=now, settings=env.settings)
+            if fired.run is not None:
+                await env.runs.start(db, [fired.run])
+            await db.commit()
+        if fired.thread_id is not None:
+            env.runs.bus.announce(fired.thread_id)

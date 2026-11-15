@@ -4,7 +4,7 @@ import { actions, getStoreSnapshot as state } from "./store";
 
 /*
  * What API mode does where the demo only pretends: the org's default security level is saved,
- * routines aren't created (nothing runs them yet), and answering a question tells the bot.
+ * and answering a question tells the bot. (Routines on the API: store.routines.api.test.ts.)
  */
 
 const api = withFakeApi();
@@ -39,17 +39,6 @@ describe("the default security level for new bots, on the API", () => {
     await actions.createBotFromTemplate(state().templates[0].id);
     const hire = api.sent.find((r) => r.key === "POST /api/v1/orgs/o1/bots");
     expect(hire?.body).toMatchObject({ securityLevel: "read-only" });
-  });
-});
-
-describe("routines, on the API", () => {
-  it("createRoutine saves nothing and no bot claims it will run it", async () => {
-    await signInOnApi();
-    const before = state().messages.length;
-    const routineId = actions.createRoutine({ botId: "b1", name: "Weekly digest", description: "", schedule: "Every Monday at 09:00", steps: ["Sum up"], enabled: true });
-    expect(routineId).toBeNull();
-    expect(state().routines).toEqual([]);
-    expect(state().messages).toHaveLength(before);
   });
 });
 

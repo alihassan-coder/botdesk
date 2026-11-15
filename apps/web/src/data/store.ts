@@ -10,8 +10,9 @@
  *   chat's event stream (with a Stop button), and approvals: cards in the chat, live from
  *   the stream, and the Approvals page from the list; and Models & keys: providers, their
  *   keys and live model lists; what each bot remembers (Memory), loaded per bot; and Usage &
- *   budgets: daily spend, each bot's spend this month and the org's budget. Routines and
- *   apps aren't on the API yet, so they start empty or stay mock.
+ *   budgets: daily spend, each bot's spend this month and the org's budget; and Routines:
+ *   listed with the org, created, edited, switched on and off, run now and removed. Apps
+ *   aren't all on the API yet, so some stay mock.
  * - Not set (tests, e2e, demos): everything is the in-memory mock, with fake bot replies.
  * Guest mode ("Explore the demo") uses the mock in either case, so people can look
  * around without an account; it never calls the API.
@@ -22,15 +23,16 @@ import { makeHandle } from "@/lib/handle";
 import { parseMentions } from "@/lib/mentions";
 import { HOP_LIMIT, chainStoppedText, routeMessage, type BotReply, type ChatBots } from "@/lib/mention-routing";
 import { previewFromArgs } from "@/lib/args-form";
-import { approvalApi, authApi, botApi, inviteApi, memoryApi, modelApi, orgApi, pluginApi, runApi, threadApi, usageApi } from "./api/botdesk";
+import { browser } from "@/lib/navigate";
+import { approvalApi, authApi, botApi, connectionApi, inviteApi, memoryApi, modelApi, orgApi, pluginApi, routineApi, runApi, threadApi, usageApi } from "./api/botdesk";
 import { ApiError, apiBaseUrl } from "./api/client";
-import { toApiBot, toApproval, toBot, toInvitation, toMemory, toMemoryStatus, toMessage, toModel, toModelProvider, toOrg, toThread, toUsage, toUser } from "./api/map";
+import { toAccountConnection, toApiBot, toApproval, toBot, toInvitation, toMemory, toMemoryStatus, toMessage, toModel, toModelProvider, toOrg, toRoutine, toThread, toUsage, toUser } from "./api/map";
 import { applyRunEvent, typingId, upsertApproval, withActiveRuns, withPreview, withWaitingApprovals, type ActiveRun } from "./api/run-events";
 import type { ApiMe, ApiRunEvent, ApiThread, ApiThreadRuns } from "./api/types";
 import * as mock from "./mock/fixtures";
 import type {
-  Approval, ApprovalStatus, Bot, Invitation, MemoryItem, MemoryList, MemoryStatus, Membership, Message, Model, ModelListProblem, ModelProvider, Org,
-  Participant, PluginList, Routine, SecurityLevel, Thread, UsageSummary, User,
+  AccountConnection, AccountConnectionList, Approval, ApprovalStatus, Bot, BotToolChange, BotTools, ConnectionOwner, Invitation, MemoryItem, MemoryList, MemoryStatus, Membership, Message, Model, ModelListProblem, ModelProvider, Org,
+  Participant, PluginList, Routine, SecurityLevel, ServerConnectorList, Thread, UsageSummary, User,
 } from "./types";
 
 /** What you fill in to create a bot; the rest (id, handle, status…) is filled in for you. */
@@ -49,7 +51,9 @@ export interface NewGroupInput {
 }
 
 /** What you fill in to create a routine. */
-export type NewRoutineInput = Pick<Routine, "botId" | "name" | "description" | "schedule" | "steps" | "enabled">;
+export type NewRoutineInput = Pick<Routine, "botId" | "name" | "description" | "schedule" | "steps" | "enabled">
+  /* API: when it runs (5 fields) and in which time zone (defaults to this browser's). */
+  & Partial<Pick<Routine, "cron" | "timezone">>;
 
 /** "unknown" until the browser has checked for a saved session (first render, server). */
 export type AuthStatus = "unknown" | "signed-in" | "signed-out";
@@ -108,7 +112,15 @@ interface State {
   /** API only: the plugins the server loaded (Connect apps). The demo has none. */
   plugins: PluginList;
   connections: typeof mock.connections;
+  /** Connect apps on the API: the server's connectors (GET /connectors). The demo uses `connectors`. */
+  serverConnectors: ServerConnectorList;
+  /** Accounts connected to connectors, as the API shows them (the demo: Ali's Gmail). */
+  accounts: AccountConnectionList;
+  /** Each bot's Tools tab (which plugins it uses, through which account), by bot id. */
+  botTools: Record<string, BotTools>;
   routines: typeof mock.routines;
+  /** API only: true while the org's routines are on their way. */
+  routinesLoading: boolean;
   /** Models & keys: the live model list of every connected provider, and the providers themselves. */
   models: Model[];
   modelProviders: ModelProvider[];
@@ -155,7 +167,11 @@ function seed(): State {
     connectors: mock.connectors,
     plugins: { status: "ready", items: [] },
     connections: mock.connections,
+    serverConnectors: { status: "ready", items: [] },
+    accounts: { status: "ready", items: mock.accountConnections },
+    botTools: {},
     routines: mock.routines,
+    routinesLoading: false,
     models: mock.models,
     modelProviders: mock.modelProviders,
     modelProblems: [],
@@ -189,7 +205,11 @@ function apiSeed(): State {
     messages: [],
     approvals: [],
     routines: [],
+    routinesLoading: true,
     plugins: { status: "loading", items: [] },
+    serverConnectors: { status: "loading", items: [] },
+    accounts: { status: "loading", items: [] },
+    botTools: {},
     memories: [],
     memoryStatus: null,
     models: [],
@@ -338,7 +358,11 @@ function enterOrg(org: Membership) {
     modelProblems: [],
     modelsLoading: true,
     routines: [],
+    routinesLoading: true,
     plugins: { status: "loading", items: [] },
+    serverConnectors: { status: "loading", items: [] },
+    accounts: { status: "loading", items: [] },
+    botTools: {},
     memories: [],
     memoryLists: {},
     memoryStatus: null,
@@ -351,6 +375,13 @@ function enterOrg(org: Membership) {
   void loadBotsAndChats(org);
   void loadModelCatalog(org.id);
   void loadUsage(org.id);
+  void loadRoutines(org.id);
+}
+
+/** The org's routines (each with its schedule, next run and how the last one went). */
+async function loadRoutines(orgId: string) {
+  const routines = await routineApi.list(orgId).catch(() => null);
+  set((st) => (st.org.id !== orgId ? st : { ...st, routines: routines?.map(toRoutine) ?? st.routines, routinesLoading: false }));
 }
 
 /**
@@ -1236,6 +1267,114 @@ const usageActions = {
   },
 };
 
+/* ---------- Routines ----------
+ * On the API a routine runs on its schedule in its creator's DM with the bot; the API says it was
+ * created there ("Created a routine" card). MOCK: saved here, and the bot confirms in its chat.
+ */
+
+/** The API's words for a routine whose bot was removed. */
+const ROUTINE_BOT_REMOVED = "Its bot was removed.";
+
+/** The browser's time zone: a routine's schedule is read in its creator's. */
+const browserTimeZone = () => Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
+
+function withRoutine(routines: Routine[], saved: Routine): Routine[] {
+  return routines.some((r) => r.id === saved.id) ? routines.map((r) => (r.id === saved.id ? saved : r)) : [...routines, saved];
+}
+
+function toApiRoutine(input: NewRoutineInput) {
+  return {
+    botId: input.botId, name: input.name, instructions: input.description, enabled: input.enabled,
+    cron: input.cron ?? "", timezone: input.timezone ?? browserTimeZone(),
+  };
+}
+
+const routineActions = {
+  /** Saves a new routine. On the API it needs `cron`; its creator's DM gets a "Created a routine" card. */
+  async createRoutine(input: NewRoutineInput): Promise<{ ok: true; routineId: string } | { ok: false; error: string }> {
+    if (isDemoMode()) {
+      const routineId = `r_${id()}`;
+      set((st) => ({ ...st, routines: [...st.routines, { ...input, id: routineId, source: "edit" }] }));
+      const thread = state.threads.find((t) => t.kind === "dm" && t.botId === input.botId);
+      if (thread) {
+        pushBotMessage(thread.id, input.botId, [
+          { type: "routine-created", routineId, name: input.name },
+          { type: "text", text: `Got it. I'll run “${input.name}” ${input.schedule.charAt(0).toLowerCase()}${input.schedule.slice(1)}.` },
+        ]);
+      }
+      return { ok: true, routineId };
+    }
+    const orgId = state.org.id;
+    try {
+      const saved = toRoutine(await routineApi.create(orgId, toApiRoutine(input)));
+      set((st) => (st.org.id === orgId ? { ...st, routines: withRoutine(st.routines, saved) } : st));
+      return { ok: true, routineId: saved.id };
+    } catch (error) {
+      return failure(error);
+    }
+  },
+
+  /** Edit a routine (its creator, owners and admins). */
+  async updateRoutine(routineId: string, input: NewRoutineInput): Promise<ActionResult> {
+    if (isDemoMode()) {
+      set((st) => ({ ...st, routines: st.routines.map((r) => (r.id === routineId ? { ...r, ...input } : r)) }));
+      return { ok: true };
+    }
+    const orgId = state.org.id;
+    try {
+      const saved = toRoutine(await routineApi.update(orgId, routineId, toApiRoutine(input)));
+      set((st) => (st.org.id === orgId ? { ...st, routines: withRoutine(st.routines, saved) } : st));
+      return { ok: true };
+    } catch (error) {
+      return failure(error);
+    }
+  },
+
+  /** Switch a routine on or off. Shown at once; put back if the API says no. */
+  async toggleRoutine(routineId: string): Promise<ActionResult> {
+    const before = state.routines.find((r) => r.id === routineId);
+    if (!before) return { ok: false, error: "This routine doesn't exist." };
+    set((st) => ({ ...st, routines: st.routines.map((r) => (r.id === routineId ? { ...r, enabled: !before.enabled } : r)) }));
+    if (isDemoMode()) return { ok: true };
+    const orgId = state.org.id;
+    try {
+      const saved = toRoutine(await routineApi.update(orgId, routineId, { enabled: !before.enabled }));
+      set((st) => (st.org.id === orgId ? { ...st, routines: withRoutine(st.routines, saved) } : st));
+      return { ok: true };
+    } catch (error) {
+      set((st) => (st.org.id === orgId ? { ...st, routines: withRoutine(st.routines, before) } : st));
+      return failure(error);
+    }
+  },
+
+  /** Run it once now, without moving its schedule. On the API the run happens in its creator's DM. */
+  async runRoutineNow(routineId: string): Promise<ActionResult> {
+    if (isDemoMode()) {
+      set((st) => ({ ...st, routines: st.routines.map((r) => (r.id === routineId ? { ...r, lastRunAt: now(), lastOutcome: "running" } : r)) }));
+      return { ok: true };
+    }
+    const orgId = state.org.id;
+    try {
+      await routineApi.runNow(orgId, routineId);
+    } catch (error) {
+      return failure(error);
+    }
+    await loadRoutines(orgId);
+    return { ok: true };
+  },
+
+  /** Remove a routine for good (its creator, owners and admins). */
+  async deleteRoutine(routineId: string): Promise<ActionResult> {
+    try {
+      if (!isDemoMode()) await routineApi.remove(state.org.id, routineId);
+    } catch (error) {
+      return failure(error);
+    }
+    set((st) => ({ ...st, routines: st.routines.filter((r) => r.id !== routineId) }));
+    return { ok: true };
+  },
+};
+
 export const actions = {
   ...authActions,
   ...orgActions,
@@ -1298,12 +1437,7 @@ export const actions = {
     set((st) => ({ ...st, bots: st.bots.map((b) => (b.id === botId ? { ...b, ...patch } : b)) }));
   },
 
-  toggleRoutine(routineId: string) {
-    set((st) => ({
-      ...st,
-      routines: st.routines.map((r) => (r.id === routineId ? { ...r, enabled: !r.enabled } : r)),
-    }));
-  },
+  ...routineActions,
 
   /* ---------- Memory ----------
    * On the API, a bot's memories are loaded (or searched) one bot at a time into `memoryLists`.
@@ -1461,28 +1595,13 @@ export const actions = {
         messages: st.messages.filter((m) => kept.has(m.threadId)),
         runs: st.runs.filter((r) => kept.has(r.threadId) && r.botId !== botId),
         approvals: st.approvals.filter((a) => a.botId !== botId),
-        routines: st.routines.filter((r) => r.botId !== botId),
+        // On the API its routines stay, switched off, saying why (the demo just drops them).
+        routines: isDemoMode()
+          ? st.routines.filter((r) => r.botId !== botId)
+          : st.routines.map((r) => (r.botId === botId ? { ...r, botId: "", enabled: false, nextRunAt: undefined, disabledReason: ROUTINE_BOT_REMOVED } : r)),
       };
     });
     return { ok: true };
-  },
-
-  /**
-   * MOCK: saves a routine and has its bot confirm in their chat, the way it would after "do this
-   * every week". The API has no scheduler yet, so there it saves nothing and returns null.
-   */
-  createRoutine(input: NewRoutineInput): string | null {
-    if (!isDemoMode()) return null;
-    const routineId = `r_${id()}`;
-    set((st) => ({ ...st, routines: [...st.routines, { ...input, id: routineId, source: "edit" }] }));
-    const thread = state.threads.find((t) => t.kind === "dm" && t.botId === input.botId);
-    if (thread) {
-      pushBotMessage(thread.id, input.botId, [
-        { type: "routine-created", routineId, name: input.name },
-        { type: "text", text: `Got it. I'll run “${input.name}” ${input.schedule.charAt(0).toLowerCase()}${input.schedule.slice(1)}.` },
-      ]);
-    }
-    return routineId;
   },
 
   /** Change your name or @handle. */
@@ -1540,6 +1659,115 @@ export const actions = {
     set((st) => ({ ...st, connections: st.connections.filter((c) => c.id !== connectionId) }));
   },
 
+  /** Connect apps on the API: the server's connectors and the accounts you may see, together. */
+  async loadConnections(): Promise<void> {
+    if (isDemoMode()) return;
+    const orgId = state.org.id;
+    const [connectors, accounts] = await Promise.all([
+      connectionApi.connectors(orgId).catch(() => null),
+      connectionApi.list(orgId).catch(() => null),
+    ]);
+    set((st) => {
+      if (st.org.id !== orgId) return st; // switched org while loading
+      return {
+        ...st,
+        serverConnectors: connectors ? { status: "ready", items: connectors } : { ...st.serverConnectors, status: "error" },
+        accounts: accounts ? { status: "ready", items: accounts.map(toAccountConnection) } : { ...st.accounts, status: "error" },
+      };
+    });
+  },
+
+  /**
+   * Sign in with the provider (OAuth): the API gives the provider's page, and the whole tab goes
+   * there. It comes back to /apps/callback. Reconnecting is the same, with the same owner.
+   */
+  async startOAuth(connectorId: string, owner: ConnectionOwner, access?: string): Promise<ActionResult> {
+    if (isDemoMode()) return { ok: false, error: "Signing in to apps works once botdesk is connected to its API." };
+    try {
+      const { authorizeUrl } = await connectionApi.startOAuth(state.org.id, { connectorId, ...ownerFields(owner), ...(access ? { access } : {}) });
+      browser.leaveFor(authorizeUrl);
+      return { ok: true };
+    } catch (error) {
+      return failure(error);
+    }
+  },
+
+  /** Connect an account with an API key. The key is sent once and never kept here. */
+  async connectApiKey(connectorId: string, owner: ConnectionOwner, accountLabel: string, apiKey: string): Promise<ActionResult> {
+    if (isDemoMode()) return { ok: false, error: "Connecting with a key works once botdesk is connected to its API." };
+    const orgId = state.org.id;
+    try {
+      const saved = toAccountConnection(await connectionApi.connectApiKey(orgId, { connectorId, ...ownerFields(owner), accountLabel, apiKey }));
+      set((st) => (st.org.id !== orgId ? st : { ...st, accounts: { ...st.accounts, items: [...st.accounts.items.filter((c) => c.id !== saved.id), saved] } }));
+      return { ok: true };
+    } catch (error) {
+      return failure(error);
+    }
+  },
+
+  /** Disconnect an account: the API forgets its credential and revokes it at the provider. */
+  async disconnectConnection(connectionId: string): Promise<ActionResult> {
+    if (!isDemoMode()) {
+      try {
+        await connectionApi.disconnect(state.org.id, connectionId);
+      } catch (error) {
+        return failure(error);
+      }
+    }
+    const revoked = (c: AccountConnection): AccountConnection => (c.id === connectionId ? { ...c, status: "revoked" } : c);
+    set((st) => ({
+      ...st,
+      accounts: { ...st.accounts, items: st.accounts.items.map(revoked) },
+      // A disconnected account leaves every bot that used it.
+      botTools: Object.fromEntries(
+        Object.entries(st.botTools).map(([botId, tools]) => [
+          botId,
+          { ...tools, plugins: tools.plugins.map((p) => (p.connectionId === connectionId ? { ...p, connectionId: null } : p)) },
+        ]),
+      ),
+    }));
+    return { ok: true };
+  },
+
+  /** A bot's Tools tab. MOCK in the demo: every bot starts with the demo tools on. */
+  async loadBotTools(botId: string): Promise<void> {
+    if (isDemoMode()) {
+      if (!state.botTools[botId]) setBotTools(botId, { status: "ready", plugins: mock.botToolPlugins });
+      if (state.accounts.items.length === 0) set((st) => ({ ...st, accounts: { status: "ready", items: mock.accountConnections } }));
+      return;
+    }
+    const orgId = state.org.id;
+    if (!state.botTools[botId]) setBotTools(botId, { status: "loading", plugins: [] });
+    const [tools, accounts] = await Promise.all([
+      connectionApi.botTools(orgId, botId).catch(() => null),
+      connectionApi.list(orgId).catch(() => null),
+    ]);
+    if (state.org.id !== orgId) return;
+    setBotTools(botId, tools ? { status: "ready", plugins: tools.plugins } : { status: "error", plugins: state.botTools[botId]?.plugins ?? [] });
+    if (accounts) set((st) => ({ ...st, accounts: { status: "ready", items: accounts.map(toAccountConnection) } }));
+  },
+
+  /** Turn plugins on or off for a bot, or change the account one works through. */
+  async setBotTools(botId: string, changes: BotToolChange[]): Promise<ActionResult> {
+    if (isDemoMode()) {
+      const current = state.botTools[botId]?.plugins ?? mock.botToolPlugins;
+      const plugins = current.map((p) => {
+        const change = changes.find((c) => c.pluginId === p.pluginId);
+        return change ? { ...p, enabled: change.enabled, connectionId: change.connectionId } : p;
+      });
+      setBotTools(botId, { status: "ready", plugins });
+      return { ok: true };
+    }
+    const orgId = state.org.id;
+    try {
+      const saved = await connectionApi.setBotTools(orgId, botId, changes);
+      if (state.org.id === orgId) setBotTools(botId, { status: "ready", plugins: saved.plugins });
+      return { ok: true };
+    } catch (error) {
+      return failure(error);
+    }
+  },
+
   /** Back to the original mock data. Also cancels bot replies still in progress, so none land afterwards. */
   reset() {
     cancelMockTimers();
@@ -1549,6 +1777,15 @@ export const actions = {
     set(() => seed());
   },
 };
+
+function setBotTools(botId: string, tools: BotTools) {
+  set((st) => ({ ...st, botTools: { ...st.botTools, [botId]: tools } }));
+}
+
+/** The API's owner fields for a connection: `botId` only for a bot's own account. */
+function ownerFields(owner: ConnectionOwner): { ownerKind: ConnectionOwner["kind"]; botId?: string } {
+  return owner.kind === "bot" ? { ownerKind: "bot", botId: owner.botId } : { ownerKind: owner.kind };
+}
 
 /** MOCK: a new bot and its DM, where it says hello first. Returns the DM's id. */
 function createMockBot(input: NewBotInput) {
@@ -1873,11 +2110,21 @@ export const useModelProblems = () => useStore(useCallback((s: State) => s.model
 export const useModelsLoading = () => useStore(useCallback((s: State) => s.modelsLoading, []));
 export const useTemplates = () => useStore(useCallback((s: State) => s.templates, []));
 export const useRoutines = () => useStore(useCallback((s: State) => s.routines, []));
+export const useRoutine = (routineId?: string) =>
+  useStore(useCallback((s: State) => s.routines.find((r) => r.id === routineId), [routineId]));
+/** API only: true while the org's routines are on their way. */
+export const useRoutinesLoading = () => useStore(useCallback((s: State) => s.routinesLoading, []));
 export const useUsage = () => useStore(useCallback((s: State) => s.usage, []));
 export const useUsageLoading = () => useStore(useCallback((s: State) => s.usageLoading, []));
 export const useConnectors = () => useStore(useCallback((s: State) => s.connectors, []));
 export const usePlugins = () => useStore(useCallback((s: State) => s.plugins, []));
 export const useConnections = () => useStore(useCallback((s: State) => s.connections, []));
+/** Connect apps on the API: the server's connectors, as last loaded with `actions.loadConnections`. */
+export const useServerConnectors = () => useStore(useCallback((s: State) => s.serverConnectors, []));
+/** Accounts connected to connectors that you may see (yours, the bots', the organization's). */
+export const useAccountConnections = () => useStore(useCallback((s: State) => s.accounts, []));
+/** A bot's Tools tab, as last loaded with `actions.loadBotTools`; undefined until then. */
+export const useBotTools = (botId: string) => useStore(useCallback((s: State) => s.botTools[botId], [botId]));
 
 /** Every approval, waiting ones first, then newest first. */
 export const useApprovals = () =>

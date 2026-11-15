@@ -7,6 +7,7 @@ from src.models.connection import AuditEntry, Connection
 from src.models.invitation import Invitation
 from src.models.organization import Membership, Organization
 from src.models.provider_credential import ProviderCredential
+from src.models.routine import Routine, RoutineRun
 from src.models.run import Run, RunEvent, ToolExecution
 from src.models.thread import Message, Thread, ThreadParticipant
 from src.models.usage import UsageRecord
@@ -23,6 +24,8 @@ __all__ = [
     "Organization",
     "PasswordResetToken",
     "ProviderCredential",
+    "Routine",
+    "RoutineRun",
     "Run",
     "RunEvent",
     "Session",

@@ -302,3 +302,85 @@ export interface ApiPlugin {
   description: string;
   tools: { name: string; title: string; description: string; risk: ApiRiskClass }[];
 }
+
+/* ---------- Connections (ADR 0010) ---------- */
+
+type ApiTool = { name: string; title: string; description: string; risk: ApiRiskClass };
+
+/** A plugin as Connect apps lists it (GET /orgs/{id}/connectors). */
+export interface ApiConnector {
+  id: string;
+  name: string;
+  description: string;
+  version: string;
+  authType: "oauth2" | "api_key" | null;
+  setup: "ready" | "not-configured";
+  accessLevels: string[];
+  defaultAccess: string | null;
+  tools: ApiTool[];
+}
+
+/** One authorised account (GET /orgs/{id}/connections). Never carries its credential. */
+export interface ApiConnection {
+  id: string;
+  connectorId: string;
+  ownerKind: "member" | "bot" | "org";
+  ownerUserId: string | null;
+  ownerBotId: string | null;
+  authType: "oauth2" | "api_key";
+  accountLabel: string;
+  scopes: string[];
+  status: "active" | "needs_reconnect" | "revoked";
+  statusReason: string | null;
+  createdAt: string;
+  lastUsedAt: string | null;
+  createdBy: string | null;
+}
+
+export interface ApiConnectionOwner {
+  ownerKind: "member" | "bot" | "org";
+  botId?: string;
+}
+
+/** A bot's tools (GET/PUT /orgs/{id}/bots/{bot}/tools). */
+export interface ApiBotTools {
+  plugins: {
+    pluginId: string;
+    name: string;
+    description: string;
+    authType: "oauth2" | "api_key" | null;
+    enabled: boolean;
+    connectionId: string | null;
+    tools: ApiTool[];
+  }[];
+}
+
+/* ---------- Routines ---------- */
+
+/** A routine on the API: `instructions` say what to do; `cron` (5 fields) runs in `timezone` (IANA, its creator's). */
+export interface ApiRoutine {
+  id: string;
+  botId: string | null;
+  createdBy: string | null;
+  name: string;
+  instructions: string;
+  cron: string;
+  timezone: string;
+  enabled: boolean;
+  securityLevel: ApiSecurityLevel | null;
+  disabledReason: string | null;
+  lastRunAt: string | null;
+  nextRunAt: string | null;
+  /** The latest run's status, or "skipped" (its previous run was still going). */
+  lastResult: ApiRunStatus | "skipped" | null;
+  createdAt: string;
+}
+
+export interface ApiRoutineInput {
+  botId: string;
+  name: string;
+  instructions: string;
+  cron: string;
+  timezone: string;
+  enabled: boolean;
+}

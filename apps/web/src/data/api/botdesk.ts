@@ -6,6 +6,10 @@ import {
   type ApiDecision,
   type ApiBot,
   type ApiBotInput,
+  type ApiBotTools,
+  type ApiConnection,
+  type ApiConnectionOwner,
+  type ApiConnector,
   type ApiInvitation,
   type ApiMemory,
   type ApiMemoryStatus,
@@ -21,6 +25,8 @@ import {
   type ApiProviderKeyInput,
   type ApiProviderTest,
   type ApiRole,
+  type ApiRoutine,
+  type ApiRoutineInput,
   type ApiRunEvent,
   type ApiSecurityLevel,
   type ApiSentMessage,
@@ -157,6 +163,26 @@ export const pluginApi = {
   list: (orgId: string) => apiFetch<ApiPlugin[]>(`/api/v1/orgs/${orgId}/plugins`),
 };
 
+/** Connect apps: connectors, the accounts connected to them, and which plugins each bot uses. */
+export const connectionApi = {
+  connectors: (orgId: string) => apiFetch<ApiConnector[]>(`/api/v1/orgs/${orgId}/connectors`),
+  /** The connections you may see: yours, the bots' and the organization's. */
+  list: (orgId: string) => apiFetch<ApiConnection[]>(`/api/v1/orgs/${orgId}/connections`),
+  /** The provider's sign-in page to send the browser to; it comes back through the API's callback. */
+  startOAuth: (orgId: string, input: ApiConnectionOwner & { connectorId: string; access?: string }) =>
+    apiFetch<{ authorizeUrl: string }>(`/api/v1/orgs/${orgId}/connections/oauth/start`, { method: "POST", body: input }),
+  /** The key goes in once and never comes back out. */
+  connectApiKey: (orgId: string, input: ApiConnectionOwner & { connectorId: string; accountLabel: string; apiKey: string }) =>
+    apiFetch<ApiConnection>(`/api/v1/orgs/${orgId}/connections`, { method: "POST", body: input }),
+  /** Forgets the credential (and revokes it at the provider). */
+  disconnect: (orgId: string, connectionId: string) =>
+    apiFetch<void>(`/api/v1/orgs/${orgId}/connections/${connectionId}`, { method: "DELETE" }),
+  botTools: (orgId: string, botId: string) => apiFetch<ApiBotTools>(`/api/v1/orgs/${orgId}/bots/${botId}/tools`),
+  /** Only the plugins sent change. */
+  setBotTools: (orgId: string, botId: string, plugins: { pluginId: string; enabled: boolean; connectionId: string | null }[]) =>
+    apiFetch<ApiBotTools>(`/api/v1/orgs/${orgId}/bots/${botId}/tools`, { method: "PUT", body: { plugins } }),
+};
+
 export const usageApi = {
   /** Daily totals for the last `days` UTC days, this month's total, and every bot's spend. Any member. */
   org: (orgId: string, days = 14) => apiFetch<ApiUsage>(`/api/v1/orgs/${orgId}/usage?days=${days}`),
@@ -189,4 +215,19 @@ export const memoryApi = {
     apiFetch<void>(`/api/v1/orgs/${orgId}/bots/${botId}/memories/${memoryId}`, { method: "DELETE" }),
   /** Owners and admins only: the bot forgets everything, from every chat. */
   forgetAll: (orgId: string, botId: string) => apiFetch<void>(`/api/v1/orgs/${orgId}/bots/${botId}/memories`, { method: "DELETE" }),
+};
+
+/** Routines: a bot repeats a task on a schedule, in its creator's DM. */
+export const routineApi = {
+  list: (orgId: string) => apiFetch<ApiRoutine[]>(`/api/v1/orgs/${orgId}/routines`),
+  create: (orgId: string, routine: ApiRoutineInput) =>
+    apiFetch<ApiRoutine>(`/api/v1/orgs/${orgId}/routines`, { method: "POST", body: routine }),
+  /** Switch it on or off, or edit it: only the fields sent change. Its creator, owners and admins. */
+  update: (orgId: string, routineId: string, patch: Partial<ApiRoutineInput>) =>
+    apiFetch<ApiRoutine>(`/api/v1/orgs/${orgId}/routines/${routineId}`, { method: "PATCH", body: patch }),
+  remove: (orgId: string, routineId: string) =>
+    apiFetch<void>(`/api/v1/orgs/${orgId}/routines/${routineId}`, { method: "DELETE" }),
+  /** Run it once now, in its creator's DM. 409 while its last run is still going. */
+  runNow: (orgId: string, routineId: string) =>
+    apiFetch<{ runId: string; threadId: string }>(`/api/v1/orgs/${orgId}/routines/${routineId}/run-now`, { method: "POST" }),
 };

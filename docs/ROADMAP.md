@@ -95,7 +95,7 @@ When you finish something, tick it here in the same pull request.
 
 ### Memory and routines (steps 6–7)
 - [x] Memory screen: see, search, correct and forget what a bot remembers; a memory switch per bot
-- [ ] Routines: bots work on a schedule (until then, the web says "coming soon" on the API instead of saving routines that never run)
+- [x] Routines: bots work on a schedule (cron + time zone, Run now, recent runs; each run in the creator's DM, at the strictest of bot and routine level)
 
 ### MCP (step 8)
 - [ ] Connect a remote MCP server; its tools become bot tools

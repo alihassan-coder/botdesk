@@ -114,10 +114,10 @@ All read and write through `apps/web/src/data/store.ts`; guest mode gets matchin
 
 Check each in a real browser (Playwright screenshots) and review with `web-design-guidelines`, as AGENTS.md asks.
 
-## Open questions for the owner
+## Owner decisions (2026-11-15)
 
-1. **Google client in env or in the UI?** Proposed: `GOOGLE_OAUTH_CLIENT_ID/SECRET` in the server's environment (the operator registers the redirect URI anyway). Alternative: admins paste them in Settings, stored encrypted per organization.
-2. **Member connections in group chats:** proposed off in v1 (only the owner's DMs). OK, or allow per binding?
-3. **Trigger runs before the job queue:** proposed in-process poller (amends ADR 0007 for triggers). Or build the queue (step 4) first?
-4. **Default Gmail access level:** proposed "Read, organise, draft and send" (`gmail.modify`). Or default to Read only?
-5. **Who may add MCP servers:** proposed owners/admins only.
+1. **Google client:** in the server's environment (`GOOGLE_OAUTH_CLIENT_ID` / `GOOGLE_OAUTH_CLIENT_SECRET`), as proposed.
+2. **Member connections in group chats:** no. A member's own connection is used only in that member's DMs, and only they approve its calls.
+3. **Triggers:** **wait for the job queue.** Build the queue first; the new-email trigger runs as a scheduled job on it. No in-process poller, so ADR 0011's amendment of ADR 0007 for triggers is not needed.
+4. **Default Gmail access:** full (`gmail.modify`), as proposed. Risky actions still go through approvals.
+5. **Who may add MCP servers:** owners and admins only, as proposed.

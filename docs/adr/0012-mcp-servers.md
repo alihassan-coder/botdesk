@@ -1,6 +1,6 @@
 # 0012: Remote MCP servers
 
-- Status: proposed
+- Status: accepted (owner decisions 2026-11-15 in [connections-gmail-mcp.md](../architecture/connections-gmail-mcp.md#owner-decisions-2026-11-15))
 - Date: 2026-11-15
 - Based on: [ADR 0004](0004-agent-runtime-and-safety.md), [ADR 0006](0006-repo-structure-plugins-and-project.md) §4 (third-party plugins are MCP servers; every MCP tool starts as `external-send`; hash-pinned tool lists), [ADR 0010](0010-connections-and-credentials.md), [agents-and-plugins.md §10.5](../architecture/agents-and-plugins.md#105-mcp-servers-the-rules); sources at the end
 - Build plan: [connections-gmail-mcp.md](../architecture/connections-gmail-mcp.md)

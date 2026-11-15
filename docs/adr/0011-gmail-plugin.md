@@ -1,6 +1,6 @@
 # 0011: The Gmail plugin
 
-- Status: proposed
+- Status: accepted (owner decisions 2026-11-15 in [connections-gmail-mcp.md](../architecture/connections-gmail-mcp.md#owner-decisions-2026-11-15))
 - Date: 2026-11-15
 - Based on: [ADR 0002](0002-grok-bot-parity-and-plugin-platform.md) §2, [ADR 0004](0004-agent-runtime-and-safety.md), [ADR 0006](0006-repo-structure-plugins-and-project.md) §5, [ADR 0007](0007-runs-in-the-api-process-for-now.md), [ADR 0008](0008-free-and-open-source.md), [ADR 0010](0010-connections-and-credentials.md); sources at the end
 - Build plan: [connections-gmail-mcp.md](../architecture/connections-gmail-mcp.md)
@@ -62,7 +62,7 @@ There is no job queue yet (ADR 0007), and ADR 0007 asks to revisit before trigge
 - **Expired cursor** (404 from `history.list`; Google keeps history "at least a week", sometimes less): reset the cursor to the profile's current `historyId`, start no runs for the gap, and post one notice in the chat ("BotDesk missed new mail between … and …"). Never a flood of runs for old mail.
 - **Filters** (bot settings): label (default `INBOX`), an optional Gmail query, skip mail sent from the connection's own address and skip `CATEGORY_PROMOTIONS` / `CATEGORY_SOCIAL` by default. At most 10 runs per subscription per poll; the rest are summarised in one run.
 - **Where the run goes:** the subscribing member's DM with the bot. The trigger saves a short **event message** in that chat ("New email from Sara Lee: Invoice 4471", tainted) and starts a run with it as its trigger message and the subscriber as **requester**. Dedupe on (subscription, Gmail message id) in `trigger_events`.
-- **Who runs the timer:** a small in-process **trigger poller** inside the API (an asyncio task, like runs today). It claims due subscriptions with `… FOR UPDATE SKIP LOCKED` and moves `next_poll_at` forward before polling, so two API copies never poll one mailbox twice. It sits behind a `TriggerScheduler` seam; when procrastinate arrives (ADR 0005) a periodic job replaces the task and nothing else changes. This **amends ADR 0007** ("nothing runs on a timer yet") for triggers only.
+- **Who runs the timer** (changed by the owner, 2026-11-15): a **scheduled job on the job queue** (ADR 0005), built before this trigger. The text below described the rejected interim option: a small in-process **trigger poller** inside the API (an asyncio task, like runs today). It claims due subscriptions with `… FOR UPDATE SKIP LOCKED` and moves `next_poll_at` forward before polling, so two API copies never poll one mailbox twice. It sits behind a `TriggerScheduler` seam; when procrastinate arrives (ADR 0005) a periodic job replaces the task and nothing else changes. This **amends ADR 0007** ("nothing runs on a timer yet") for triggers only.
 
 ### 6. Own Google OAuth client: what a self-hoster sets up
 

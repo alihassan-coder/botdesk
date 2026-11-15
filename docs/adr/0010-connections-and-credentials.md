@@ -1,6 +1,6 @@
 # 0010: Connections, credentials and which tools a bot gets
 
-- Status: proposed
+- Status: accepted (owner decisions 2026-11-15 in [connections-gmail-mcp.md](../architecture/connections-gmail-mcp.md#owner-decisions-2026-11-15))
 - Date: 2026-11-15
 - Based on: [ADR 0002](0002-grok-bot-parity-and-plugin-platform.md) (plugins), [ADR 0004](0004-agent-runtime-and-safety.md) (policy, taint), [ADR 0006](0006-repo-structure-plugins-and-project.md) (SDK, allowlist), [ADR 0008](0008-free-and-open-source.md) (self-hosted only), [agents-and-plugins.md §10](../architecture/agents-and-plugins.md#10-plugins), the code as of 2026-11-15
 - Build plan: [connections-gmail-mcp.md](../architecture/connections-gmail-mcp.md)

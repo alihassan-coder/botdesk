@@ -65,3 +65,52 @@ jobs:
 
       - name: Check web and API
         run: pnpm check
+
+  # Self-hosting (docs/self-hosting): build both images, start deploy/docker-compose.yml, and check
+  # that migrations ran, the API answers and can use the database, and the web app serves pages.
+  self-host-smoke:
+    name: Self-hosting smoke test
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Write deploy/.env
+        run: |
+          cp deploy/.env.example deploy/.env
+          sed -i "s|^SECRET_KEY=.*|SECRET_KEY=$(openssl rand -hex 32)|" deploy/.env
+          sed -i "s|^POSTGRES_PASSWORD=.*|POSTGRES_PASSWORD=$(openssl rand -hex 24)|" deploy/.env
+
+      - name: Check the compose file
+        run: docker compose -f deploy/docker-compose.yml config --quiet
+
+      - name: Build and start
+        run: docker compose -f deploy/docker-compose.yml up -d --build
+
+      - name: Wait for the API and the web app
+        run: |
+          for i in $(seq 1 60); do
+            if curl -fsS http://localhost:8000/api/v1/health && curl -fsS -o /dev/null http://localhost:3000/; then
+              echo; echo "Up after ~$((i * 5))s"; exit 0
+            fi
+            sleep 5
+          done
+          echo "Not healthy after 5 minutes"; exit 1
+
+      - name: Migrations ran and sign-up works
+        run: |
+          test "$(docker inspect --format '{{.State.ExitCode}}' "$(docker compose -f deploy/docker-compose.yml ps -aq migrate)")" = 0
+          curl -fsS -X POST http://localhost:8000/api/v1/auth/sign-up \
+            -H 'Content-Type: application/json' -H 'Origin: http://localhost:3000' \
+            -d '{"name":"Smoke Test","email":"smoke@example.com","password":"smoke-test-password-123"}'
+
+      - name: Show containers and logs
+        if: always()
+        run: |
+          docker compose -f deploy/docker-compose.yml ps -a
+          docker compose -f deploy/docker-compose.yml logs --no-color
+
+      - name: Stop and remove everything
+        if: always()
+        run: docker compose -f deploy/docker-compose.yml down -v

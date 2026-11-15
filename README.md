@@ -88,6 +88,15 @@ Open http://localhost:3000 and click **Explore the demo**, or sign in with `ali@
 
 To run the real backend too, follow **[docs/getting-started.md](docs/getting-started.md)**.
 
+## Self-host it
+
+Run BotDesk on your own server with Docker (Postgres, API and web app in one command): **[docs/self-hosting/README.md](docs/self-hosting/README.md)**.
+
+```bash
+cp deploy/.env.example deploy/.env   # set SECRET_KEY and POSTGRES_PASSWORD
+docker compose -f deploy/docker-compose.yml up -d --build
+```
+
 ## How the code is organised
 
 ```

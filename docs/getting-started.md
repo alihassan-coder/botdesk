@@ -40,6 +40,7 @@ In this mode everything is pretend data that lives in your browser. Nothing is s
 The API stores everything in **PostgreSQL**. Pick one option:
 
 - **Easiest: Neon (free, nothing to install).** Create a project at [neon.tech](https://neon.tech). On the dashboard, click **Connect** and copy the connection string. It looks like `postgresql://user:password@ep-something.neon.tech/neondb?sslmode=require`.
+- **Docker.** `docker compose -f deploy/docker-compose.dev.yml up -d` starts Postgres 17 with pgvector on `localhost:5432`. Your connection string is `postgresql://botdesk:botdesk@localhost:5432/botdesk` (and `.../botdesk_test` for `TEST_DATABASE_URL`).
 - **Your own Postgres 15+.** Any local or hosted Postgres works. Your connection string looks like `postgresql://user:password@localhost:5432/botdesk`.
 - **Just trying the API?** Skip this step. Without a database URL, the API uses a local SQLite file (`apps/api/botdesk.db`). That's fine for exploring, but some later features (memory, durable bot runs) need Postgres.
 

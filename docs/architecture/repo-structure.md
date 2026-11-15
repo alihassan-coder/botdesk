@@ -59,11 +59,11 @@ botdesk/
 │     └─ pyproject.toml          depends only on botdesk-plugin-sdk (+ its own HTTP libs)
 │
 ├─ deploy/                       how to RUN it yourself
-│  ├─ docker-compose.yml         (step 4) postgres, migrate, api, worker, web
+│  ├─ docker-compose.yml         (step 4) postgres, migrate, api, web (worker: a commented stub until the queue)
 │  ├─ docker-compose.dev.yml     (step 0) just Postgres + pgvector, for local development
-│  ├─ .env.example               every setting, with comments
-│  ├─ api.Dockerfile             one image for api, worker and migrate (different command)
-│  └─ web.Dockerfile
+│  └─ .env.example               what a self-hoster sets, with comments
+│                                (the Dockerfiles sit next to their apps: apps/api/Dockerfile is one
+│                                 image for api, migrate and later the worker; apps/web/Dockerfile)
 │
 ├─ .github/                      (exists) CI, issue and PR templates; the rest of §6 soon
 ├─ docs/                         (exists) product, architecture, adr, backend, frontend, design, research

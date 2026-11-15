@@ -1,0 +1,34 @@
+# What `docker build` never needs. Both images build from the repo root
+# (apps/api/Dockerfile and apps/web/Dockerfile), so this one file covers both.
+
+# Secrets: never bake a .env into an image. Settings come from deploy/.env at run time.
+**/.env
+**/.env.*
+
+# Installed packages and build output: each image installs and builds its own.
+**/node_modules
+**/.venv
+**/.next
+**/.turbo
+**/dist
+**/coverage
+**/tsconfig.tsbuildinfo
+**/__pycache__
+**/*.py[cod]
+**/.pytest_cache
+**/.mypy_cache
+**/.ruff_cache
+**/*.db
+
+# Tests output, editor and agent files, docs.
+**/test-results
+**/playwright-report
+**/.playwright-mcp
+.git
+.github
+.claude
+.vscode
+.idea
+docs
+deploy
+*.log

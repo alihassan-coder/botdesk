@@ -1,0 +1,100 @@
+# BotDesk, self-hosted: Postgres, a one-off migration, the API and the web app.
+#
+#   cp deploy/.env.example deploy/.env      # then fill it in (SECRET_KEY, POSTGRES_PASSWORD, URLs)
+#   docker compose -f deploy/docker-compose.yml up -d --build
+#
+# Full guide: docs/self-hosting/README.md. Settings: deploy/.env (read from this folder).
+#
+# The images are built from this repo on your machine (there are no published images yet).
+# Ports bind to BIND_ADDRESS (default 127.0.0.1: only this machine). Put a reverse proxy with
+# HTTPS in front for anything else; see the guide.
+
+name: botdesk
+
+x-api-image: &api-image
+  build:
+    context: ..
+    dockerfile: apps/api/Dockerfile
+  image: botdesk-api:local
+
+# Settings shared by everything that runs the API image (api, migrate, and later the worker).
+x-api-env: &api-env
+  env_file: .env
+  environment:
+    # production: SECRET_KEY is required, cookies are HTTPS-only (Secure), no /api/docs.
+    ENVIRONMENT: ${ENVIRONMENT:-production}
+    # Required even if you switch ENVIRONMENT to development for a LAN test: without it the API
+    # would fall back to a public development key.
+    SECRET_KEY: ${SECRET_KEY:?Set SECRET_KEY in deploy/.env (see .env.example)}
+    # The bundled Postgres below, unless you set DATABASE_URL in .env (Neon or your own server).
+    DATABASE_URL: ${DATABASE_URL:-postgresql://botdesk:${POSTGRES_PASSWORD}@postgres:5432/botdesk}
+
+services:
+  postgres:
+    image: pgvector/pgvector:pg17
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: botdesk
+      POSTGRES_DB: botdesk
+      # No default: compose refuses to start without it, so no install runs on a known password.
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in deploy/.env (see .env.example)}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U botdesk -d botdesk"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    # Not published to the host. To reach it with psql: docker compose -f deploy/docker-compose.yml exec postgres psql -U botdesk
+
+  # Brings the database schema up to date, then exits. Runs on every `up`, so updates migrate
+  # themselves. The API waits for it to finish successfully.
+  migrate:
+    <<: [*api-image, *api-env]
+    command: ["alembic", "upgrade", "head"]
+    restart: "no"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  api:
+    <<: [*api-image, *api-env]
+    restart: unless-stopped
+    # One API copy: runs happen inside this process for now (ADR 0007), so don't scale it.
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    ports:
+      - "${BIND_ADDRESS:-127.0.0.1}:${API_PORT:-8000}:8000"
+    # Health check: built into the image (GET /api/v1/health, which also checks the database).
+
+  # The worker: NOT a service yet. Today runs happen inside the API process (ADR 0007). When the
+  # job queue lands (ADR 0005), it is the same image started another way, roughly:
+  #
+  # worker:
+  #   <<: [*api-image, *api-env]
+  #   command: ["python", "-m", "src.worker"]
+  #   restart: unless-stopped
+  #   environment:
+  #     WORKER_MODE: ...        # decided with the queue; not a setting today
+  #   depends_on:
+  #     migrate:
+  #       condition: service_completed_successfully
+
+  web:
+    build:
+      context: ..
+      dockerfile: apps/web/Dockerfile
+      args:
+        # Baked into the browser code at BUILD time: change it, then rebuild (`up -d --build`).
+        NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:8000}
+    image: botdesk-web:local
+    restart: unless-stopped
+    # The browser talks to the API directly; the web server itself never calls it.
+    depends_on:
+      - api
+    ports:
+      - "${BIND_ADDRESS:-127.0.0.1}:${WEB_PORT:-3000}:3000"
+
+volumes:
+  postgres-data:

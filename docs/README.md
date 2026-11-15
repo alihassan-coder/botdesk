@@ -14,6 +14,7 @@ BotDesk is an open-source (MIT) team of always-on AI bots that work in your apps
 | Doc | What it covers |
 |---|---|
 | [getting-started.md](getting-started.md) | Install the tools, run the web app and API, fix common problems |
+| [self-hosting/README.md](self-hosting/README.md) | Run BotDesk on your own server with Docker Compose: install, HTTPS, updates, backups |
 | [../CONTRIBUTING.md](../CONTRIBUTING.md) | Ways to help, branches, commit messages, code style, tests |
 | [../SECURITY.md](../SECURITY.md) | How to report a security problem privately |
 | [../CODE_OF_CONDUCT.md](../CODE_OF_CONDUCT.md) | How we treat each other |

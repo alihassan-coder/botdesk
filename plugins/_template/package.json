@@ -1,0 +1,11 @@
+{
+  "name": "@botdesk/plugin-template",
+  "private": true,
+  "description": "BotDesk plugin template (Python). Rename when you copy it; these scripts let pnpm and Turborepo check the copy like the other packages.",
+  "scripts": {
+    "test": "uv run pytest -q",
+    "lint": "uv run ruff check . && uv run ruff format --check .",
+    "format": "uv run ruff format . && uv run ruff check --fix .",
+    "typecheck": "uv run mypy"
+  }
+}

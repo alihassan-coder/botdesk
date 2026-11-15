@@ -1,0 +1,69 @@
+# Releases (ADR 0006 §7). Today only the plugin SDK is released: release-please keeps a release
+# pull request open for packages/plugin-sdk (version bump + CHANGELOG from Conventional Commits).
+# Merging it tags `sdk-vX.Y.Z`, creates the GitHub Release, and the publish-sdk job below puts
+# `botdesk-plugin-sdk` on PyPI with Trusted Publishing (no stored token).
+#
+# Publishing runs in this same workflow, not on a `release:` event: a release created with
+# GITHUB_TOKEN never starts other workflows. It never runs on pull requests (no trigger) or on
+# forks (the repository check). One-time PyPI setup: packages/plugin-sdk/README.md#releases.
+name: Release
+
+on:
+  push:
+    branches: [main]
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  release-please:
+    name: Release pull request and tags
+    if: github.repository == 'alihassan-coder/botdesk'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # tags, releases, the release branch
+      pull-requests: write # the release pull request
+    outputs:
+      sdk-released: ${{ steps.release.outputs['packages/plugin-sdk--release_created'] }}
+      sdk-tag: ${{ steps.release.outputs['packages/plugin-sdk--tag_name'] }}
+    steps:
+      - id: release
+        uses: googleapis/release-please-action@v4
+        with:
+          config-file: release-please-config.json
+          manifest-file: .release-please-manifest.json
+
+  publish-sdk:
+    name: Publish botdesk-plugin-sdk to PyPI
+    needs: release-please
+    if: needs.release-please.outputs.sdk-released == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    # Must match the environment named in the PyPI trusted publisher.
+    environment:
+      name: pypi
+      url: https://pypi.org/p/botdesk-plugin-sdk
+    permissions:
+      contents: read
+      id-token: write # Trusted Publishing: PyPI trusts this workflow's OIDC token
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.release-please.outputs.sdk-tag }}
+
+      - uses: astral-sh/setup-uv@v5
+
+      - name: Test the SDK
+        run: |
+          uv sync --frozen --package botdesk-plugin-sdk
+          uv run --frozen --package botdesk-plugin-sdk pytest -q packages/plugin-sdk
+
+      - name: Build
+        run: uv build --package botdesk-plugin-sdk --out-dir dist
+
+      - name: Publish
+        run: uv publish --trusted-publishing always dist/*

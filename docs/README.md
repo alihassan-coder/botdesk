@@ -54,6 +54,7 @@ BotDesk is an open-source (MIT) team of always-on AI bots that work in your apps
 | Doc | What it covers |
 |---|---|
 | [frontend/README.md](frontend/README.md) | How `apps/web` is built: folders, routes, sign-in, layout, code rules, tests |
+| [plugins/README.md](plugins/README.md) | Write a plugin: copy the template, write tools, pick risk classes, test, regenerate `manifest.json`, enable it in `PLUGINS` |
 | [../README.md](../README.md) | Repo layout and commands |
 | [../AGENTS.md](../AGENTS.md) | Rules for coding agents |
 

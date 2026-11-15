@@ -1,0 +1,69 @@
+{
+  "description": "A starting point for a plugin: look up an order, send a message.",
+  "id": "template",
+  "manifestVersion": 1,
+  "name": "Template",
+  "runtime": "builtin",
+  "tools": [
+    {
+      "description": "Find an order by its number and return its status and total.",
+      "egress": "fixed",
+      "idempotent": true,
+      "inputSchema": {
+        "description": "The model reads this schema, so describe every field.",
+        "properties": {
+          "order_id": {
+            "description": "The order number, e.g. 'A-1001'",
+            "maxLength": 40,
+            "minLength": 1,
+            "title": "Order Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "order_id"
+        ],
+        "title": "LookUpOrderArgs",
+        "type": "object"
+      },
+      "name": "look_up_order",
+      "risk": "read",
+      "title": "Look up an order",
+      "untrustedOutput": false
+    },
+    {
+      "description": "Send a short message to a channel or a person.",
+      "egress": "fixed",
+      "idempotent": false,
+      "inputSchema": {
+        "properties": {
+          "text": {
+            "description": "The message, as it will be sent",
+            "maxLength": 2000,
+            "minLength": 1,
+            "title": "Text",
+            "type": "string"
+          },
+          "to": {
+            "description": "Who gets it: a channel ('#launch') or a person",
+            "maxLength": 80,
+            "minLength": 1,
+            "title": "To",
+            "type": "string"
+          }
+        },
+        "required": [
+          "to",
+          "text"
+        ],
+        "title": "SendMessageArgs",
+        "type": "object"
+      },
+      "name": "send_message",
+      "risk": "external-send",
+      "title": "Send a message",
+      "untrustedOutput": false
+    }
+  ],
+  "version": "0.1.0"
+}

@@ -16,10 +16,12 @@ The SDK is small on purpose. It depends only on Pydantic. It has no database, no
 | `validate_manifest`, `PluginError` | the checks BotDesk runs before loading a plugin |
 | `botdesk_plugin_sdk.testing` | `call_tool` and `make_context`, to test tools without the app |
 | `ENTRY_POINT_GROUP` | `"botdesk.plugins"`, where BotDesk looks for plugins |
+| `manifest_json` | the manifest as stable, sorted JSON: the checked-in `manifest.json` |
+| `python -m botdesk_plugin_sdk` | `manifest` (write or `--check` `manifest.json`) and `check-imports` (the import rule) |
 
 ## Write your first plugin in 5 minutes
 
-We'll build `weather`, a plugin with one tool. Inside the BotDesk repo, plugins live in `plugins/<name>/`; copying [`plugins/demo`](../../plugins/demo) is the quickest start. In your own repo the layout is the same.
+We'll build `weather`, a plugin with one tool. Inside the BotDesk repo, plugins live in `plugins/<name>/`; copying [`plugins/_template`](../../plugins/_template) is the quickest start (the [author guide](../../docs/plugins/README.md) walks through it). In your own repo the layout is the same.
 
 **1. The package.** `plugins/weather/pyproject.toml`:
 
@@ -28,7 +30,7 @@ We'll build `weather`, a plugin with one tool. Inside the BotDesk repo, plugins 
 name = "botdesk-plugin-weather"
 version = "0.1.0"
 requires-python = ">=3.13"
-dependencies = ["botdesk-plugin-sdk", "httpx"]
+dependencies = ["botdesk-plugin-sdk", "httpx", "pydantic>=2.11"]
 
 # BotDesk finds plugins here. The name is the plugin id; the value returns the manifest.
 [project.entry-points."botdesk.plugins"]
@@ -107,7 +109,9 @@ def test_the_manifest_is_valid() -> None:
 
 **4. Run it.** From the repo root: `uv sync --all-packages`, then `uv run --package botdesk-plugin-weather pytest plugins/weather`.
 
-**5. Turn it on.** Add the plugin to the API's dependencies (`apps/api/pyproject.toml`, plus a `[tool.uv.sources]` line), add its id to the `PLUGINS` setting (`PLUGINS=demo,weather` in `apps/api/.env`) and start the API. Being installed is not enough: only plugins named in `PLUGINS` load. Ask a bot "what's the weather in Lahore?".
+**5. Generate the manifest.** `uv run python -m botdesk_plugin_sdk manifest plugins/weather` writes `plugins/weather/manifest.json` from the code (keys and tools sorted, so it diffs cleanly). Commit it: BotDesk's CI runs `manifest --check` and fails when the file is stale. `python -m botdesk_plugin_sdk check-imports plugins/weather` checks the import rule: only the standard library, the package itself and the dependencies in `pyproject.toml` (here `httpx` and `pydantic` are listed because the code imports them; nothing may import the BotDesk app).
+
+**6. Turn it on.** Add the plugin to the API's dependencies (`apps/api/pyproject.toml`, plus a `[tool.uv.sources]` line), add its id to the `PLUGINS` setting (`PLUGINS=demo,weather` in `apps/api/.env`) and start the API. Being installed is not enough: only plugins named in `PLUGINS` load. Ask a bot "what's the weather in Lahore?".
 
 ## Choosing a risk class
 
@@ -150,13 +154,30 @@ Run the same checks in your tests with `validate_manifest(your_plugin())`.
 
 The SDK follows semantic versioning on its own clock (`sdk-v0.1.0`), separate from the BotDesk app ([ADR 0006](../../docs/adr/0006-repo-structure-plugins-and-project.md)). `PluginManifest.to_json()` carries a `manifestVersion`, so the app can tell which manifest shape it is reading.
 
-Releasing (maintainers; not automated yet):
+### Releases
 
-1. Bump `version` in `pyproject.toml` and `__version__` in `src/botdesk_plugin_sdk/__init__.py`, commit as `chore(sdk): release 0.x.y`, and tag `sdk-v0.x.y`.
-2. `uv build --package botdesk-plugin-sdk` from the repo root (writes `dist/`).
-3. `uv publish dist/botdesk_plugin_sdk-*`, signed in to PyPI with Trusted Publishing from a GitHub Actions job (no stored password).
+Automated with [release-please](https://github.com/googleapis/release-please) for this package only (`release-please-config.json` and `.release-please-manifest.json` at the repo root, `.github/workflows/release.yml`):
 
-release-please (manifest mode) will take over steps 1 and 3 with the first app release (build step 4).
+1. Every push to `main` updates a release pull request for `packages/plugin-sdk`, built from the Conventional Commits that touched this folder, whatever their scope (a `feat` bumps the minor version while we're below 1.0, a `fix` the patch). It bumps `version` in `pyproject.toml` and `__version__` in `__init__.py` and writes `CHANGELOG.md`.
+2. Merging that pull request tags `sdk-vX.Y.Z` and creates the GitHub Release.
+3. The `publish-sdk` job in the same workflow tests the SDK at that tag, runs `uv build --package botdesk-plugin-sdk` and `uv publish` with **Trusted Publishing** (no PyPI token is stored anywhere).
+
+Publishing never runs for pull requests (the workflow only runs on pushes to `main`) or forks (it checks `github.repository == 'alihassan-coder/botdesk'`; change that line and the PyPI publisher if the repo moves). The manifest starts at `0.0.0` (nothing released yet), so the first release pull request proposes `0.1.0`.
+
+**One-time setup (owner):**
+
+1. **PyPI:** sign in at pypi.org → *Your account* → *Publishing* → *Add a new pending publisher* → GitHub, with:
+   - PyPI project name: `botdesk-plugin-sdk`
+   - Owner: `alihassan-coder`
+   - Repository name: `botdesk`
+   - Workflow name: `release.yml`
+   - Environment name: `pypi`
+
+   A pending publisher reserves the name and turns into a normal trusted publisher on the first upload. (If the project already exists on PyPI, add the same publisher under the project's *Settings* → *Publishing* instead.)
+2. **GitHub environment:** repo *Settings* → *Environments* → *New environment* → `pypi`. Optional but recommended: add yourself under *Required reviewers*, so every upload waits for a click, and limit *Deployment branches and tags* to `main` (the publish job runs from the push to `main` that merged the release pull request).
+3. **Let release-please open pull requests:** repo *Settings* → *Actions* → *General* → *Workflow permissions* → tick *Allow GitHub Actions to create and approve pull requests*.
+
+If a publish fails after the tag exists, fix the cause and use *Re-run jobs* on that workflow run: it checks out the same tag.
 
 ## Licence
 

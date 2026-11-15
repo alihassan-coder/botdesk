@@ -5,6 +5,7 @@ manifest and the tools can't drift apart. `to_json()` is the stored, diffable fo
 consent screens and version checks read.
 """
 
+import json
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
@@ -57,3 +58,15 @@ class PluginManifest:
                 for tool in self.tools
             ],
         }
+
+
+def manifest_json(manifest: PluginManifest) -> str:
+    """The manifest as the text of a plugin's checked-in `manifest.json`.
+
+    Stable on purpose, so CI can regenerate it and compare: keys sorted, tools sorted by name,
+    two-space indent and a final newline. Reordering tools in code doesn't change the file;
+    changing what a tool is or does (its risk, its arguments) does.
+    """
+    data = manifest.to_json()
+    data["tools"] = sorted(data["tools"], key=lambda tool: tool["name"])
+    return json.dumps(data, indent=2, sort_keys=True, ensure_ascii=False) + "\n"

@@ -5,12 +5,12 @@ tools, registered under the `botdesk.plugins` entry-point group. The README has 
 five-minute walkthrough; `botdesk_plugin_sdk.testing` runs tools in tests.
 """
 
-from botdesk_plugin_sdk.manifest import ENTRY_POINT_GROUP, MANIFEST_VERSION, PluginManifest
+from botdesk_plugin_sdk.manifest import ENTRY_POINT_GROUP, MANIFEST_VERSION, PluginManifest, manifest_json
 from botdesk_plugin_sdk.risk import EGRESS_KINDS, RISK_CLASSES, Egress, RiskClass
 from botdesk_plugin_sdk.tool import NoArgs, ToolContext, ToolHandler, ToolResult, ToolSpec
 from botdesk_plugin_sdk.validation import PluginError, manifest_problems, validate_manifest
 
-__version__ = "0.1.0"
+__version__ = "0.1.0"  # x-release-please-version
 
 __all__ = [
     "EGRESS_KINDS",
@@ -26,6 +26,7 @@ __all__ = [
     "ToolHandler",
     "ToolResult",
     "ToolSpec",
+    "manifest_json",
     "manifest_problems",
     "validate_manifest",
 ]

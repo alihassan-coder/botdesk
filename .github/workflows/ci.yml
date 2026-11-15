@@ -63,6 +63,26 @@ jobs:
       - name: Install Python packages
         run: uv sync --frozen --all-packages
 
+      # Each plugin checks in manifest.json, generated from its code by the SDK. Regenerate it
+      # in memory and fail if the file differs (the message says which command fixes it).
+      - name: Plugin manifests are up to date
+        run: .venv/bin/python -m botdesk_plugin_sdk manifest --check plugins/*/
+
+      # Plugins (and the SDK) import only the standard library, their own package and what their
+      # pyproject.toml declares: never the API app (`src.`), never an undeclared library.
+      - name: Plugin import rules
+        run: .venv/bin/python -m botdesk_plugin_sdk check-imports packages/plugin-sdk plugins/*/
+
+      # plugins/_template is outside the uv and pnpm workspaces (it's copied, never installed),
+      # so `pnpm check` skips it. Check it here with the workspace's tools.
+      - name: Check the plugin template
+        working-directory: plugins/_template
+        run: |
+          ../../.venv/bin/ruff check .
+          ../../.venv/bin/ruff format --check .
+          ../../.venv/bin/mypy
+          ../../.venv/bin/pytest -q
+
       - name: Check web and API
         run: pnpm check
 

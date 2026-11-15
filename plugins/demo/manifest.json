@@ -1,0 +1,167 @@
+{
+  "description": "Fake tools for trying BotDesk: a clock, a tiny knowledge base, notes and an email outbox.",
+  "id": "demo",
+  "manifestVersion": 1,
+  "name": "Demo",
+  "runtime": "builtin",
+  "tools": [
+    {
+      "description": "Save a note for the team inside BotDesk.",
+      "egress": "fixed",
+      "idempotent": false,
+      "inputSchema": {
+        "properties": {
+          "body": {
+            "default": "",
+            "maxLength": 4000,
+            "title": "Body",
+            "type": "string"
+          },
+          "title": {
+            "maxLength": 120,
+            "minLength": 1,
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "title"
+        ],
+        "title": "NoteArgs",
+        "type": "object"
+      },
+      "name": "create_note",
+      "risk": "write-internal",
+      "title": "Create a note",
+      "untrustedOutput": false
+    },
+    {
+      "description": "Get the current date and time (UTC).",
+      "egress": "fixed",
+      "idempotent": true,
+      "inputSchema": {
+        "description": "The args model for a tool that takes no arguments.",
+        "properties": {},
+        "title": "NoArgs",
+        "type": "object"
+      },
+      "name": "current_time",
+      "risk": "read",
+      "title": "Look up the time",
+      "untrustedOutput": false
+    },
+    {
+      "description": "Write an email draft in the (fake) mailbox without sending it.",
+      "egress": "fixed",
+      "idempotent": false,
+      "inputSchema": {
+        "properties": {
+          "body": {
+            "default": "",
+            "maxLength": 10000,
+            "title": "Body",
+            "type": "string"
+          },
+          "subject": {
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Subject",
+            "type": "string"
+          },
+          "to": {
+            "format": "email",
+            "title": "To",
+            "type": "string"
+          }
+        },
+        "required": [
+          "to",
+          "subject"
+        ],
+        "title": "EmailArgs",
+        "type": "object"
+      },
+      "name": "draft_email",
+      "risk": "write-external",
+      "title": "Draft an email",
+      "untrustedOutput": false
+    },
+    {
+      "description": "Read the newest emails in the (fake) inbox.",
+      "egress": "fixed",
+      "idempotent": true,
+      "inputSchema": {
+        "description": "The args model for a tool that takes no arguments.",
+        "properties": {},
+        "title": "NoArgs",
+        "type": "object"
+      },
+      "name": "read_inbox",
+      "risk": "read",
+      "title": "Read the inbox",
+      "untrustedOutput": true
+    },
+    {
+      "description": "Search the team's knowledge base. Topics: refunds, holidays, onboarding, pricing.",
+      "egress": "fixed",
+      "idempotent": true,
+      "inputSchema": {
+        "properties": {
+          "query": {
+            "description": "What to look for",
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Query",
+            "type": "string"
+          }
+        },
+        "required": [
+          "query"
+        ],
+        "title": "SearchArgs",
+        "type": "object"
+      },
+      "name": "search_kb",
+      "risk": "read",
+      "title": "Search the knowledge base",
+      "untrustedOutput": false
+    },
+    {
+      "description": "Send an email from the (fake) mailbox. Demo: it is only recorded.",
+      "egress": "fixed",
+      "idempotent": false,
+      "inputSchema": {
+        "properties": {
+          "body": {
+            "default": "",
+            "maxLength": 10000,
+            "title": "Body",
+            "type": "string"
+          },
+          "subject": {
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Subject",
+            "type": "string"
+          },
+          "to": {
+            "format": "email",
+            "title": "To",
+            "type": "string"
+          }
+        },
+        "required": [
+          "to",
+          "subject"
+        ],
+        "title": "EmailArgs",
+        "type": "object"
+      },
+      "name": "send_email",
+      "risk": "external-send",
+      "title": "Send an email",
+      "untrustedOutput": false
+    }
+  ],
+  "version": "0.1.0"
+}

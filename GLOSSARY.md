@@ -23,16 +23,20 @@ The words BotDesk uses for its domain. Use these exact terms in code, UI copy, d
 | **Approval status** | `pending`, then `approved`, `edited` (approved with changed arguments), `denied`, or `expired` (nobody answered in time, or the run was stopped). Expired counts as no. |
 | **Tool call** | One use of a tool by a run, as the model asked for it. Recorded as a **tool execution** (`tool_executions`): `ready` / `waiting_approval` → `started` → `succeeded` / `failed`, or `denied`. Run + tool call id is its idempotency key, so it never runs twice. |
 | **Policy** | Security level × risk class → `auto`, `ask` or `deny`, made stricter by taint. Every decision is saved with a **decision trace** saying why. |
-| **Risk class** | How dangerous a tool action is: `read`, `write-internal`, `write-external` (a reversible change in another app: draft, label, calendar hold), `external-send`, `spend`, `destructive`, `credential`. |
+| **Risk class** | How dangerous a tool action is: `read`, `write-internal`, `write-external` (a reversible change in another app: draft, label, calendar hold), `external-send`, `spend`, `destructive`, `credential` (changes who can reach what: forwarding, sharing, keys). |
 | **Security level** | One of three: *Read only*, *Ask before acting* (default), *Autonomous within limits*. Maps each risk class to `auto` / `ask` / `deny` ([ADR 0004](docs/adr/0004-agent-runtime-and-safety.md)). The strictest of org, bot and routine wins. An org also has a **default security level**: the level a new bot starts at when whoever hires it doesn't pick one (a starting point, not a ceiling). |
 | **Taint** | A mark on a run once it has read outside text (an email, a web page, an MCP result). After that, every action above `write-internal` asks for approval, even for Autonomous bots. |
 | **Job** | A unit of background work in the queue (procrastinate, planned): run a bot, expire an approval, fire a routine. |
 | **Run event** | One step of a run's progress (a token, a tool call, an approval card), saved in `run_events` and streamed to the chat. |
 | **Routine** | A saved, repeatable task, either recorded by **follow along** (the bot watches a member do it) or created from chat, run on a schedule or trigger. |
 | **Trigger** | What starts a run without a message: schedule, new email, webhook, follow-up timer, stalled thread. |
-| **Plugin** | A self-contained integration described by a manifest: auth, tools (each with a risk class), triggers, settings. Gmail is the first. A remote MCP server is one kind of plugin. Plugins the API server loads are **built in**: every bot can use them, with nothing to connect. |
-| **Connector** | A plugin as listed in the catalog (e.g. "Gmail"). |
-| **Connection** | A connector authorised for a member, bot or org (e.g. `ali@acme.dev` on Gmail). |
+| **Plugin** | A self-contained source of tools described by a manifest: auth, tools (each with a risk class), triggers, settings. **Built in** plugins ship with the server (Gmail is the first); an **MCP server** is the other kind. A bot uses a plugin only through a binding. _Avoid_: integration, installation, app (except in UI copy "Connect apps"). |
+| **Connector** | A plugin as listed on Connect apps (e.g. "Gmail"), whether or not anyone has connected it. |
+| **Connection** | One authorised account on one connector (e.g. `ali@acme.dev` on Gmail), owned by a member, a bot (its own mailbox) or the org (shared). A member's own connection serves only runs whose requester is that member. _Avoid_: account, credential, integration. |
+| **Binding** | A bot's permission to use one plugin: through which connection (if the plugin needs one), which of its tools, and with which settings. A bot's bindings are its **Tools**. |
+| **Requester** | The member a run acts for: whoever wrote the message that started its chain, or who set up the trigger or routine that started it. |
+| **MCP server** | A remote server speaking the Model Context Protocol that an org's admin added. One kind of plugin, private to that org; everything it says counts as outside text. |
+| **Tool snapshot** | The exact tool list of an MCP server (names, descriptions, arguments) that an admin approved. A tool that no longer matches its snapshot is paused until approved again. |
 | **Memory** | Facts a bot remembers about members and work (mem0). Visible and editable by members. |
 | **Template** | A ready-made bot in the marketplace that an org can hire. |
 | **Budget** | A monthly spending cap (calendar month, UTC) on a bot, and optionally on the whole organization. A bot that reaches either stops before its next model call and says so in the chat. 0 or empty = no limit. |

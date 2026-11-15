@@ -45,6 +45,7 @@ BotDesk is an open-source (MIT) team of always-on AI bots that work in your apps
 | [adr/0006-repo-structure-plugins-and-project.md](adr/0006-repo-structure-plugins-and-project.md) | ADR 0006: repo layout, plugin SDK, MCP-only plugins, DCO, releases |
 | [adr/0007-runs-in-the-api-process-for-now.md](adr/0007-runs-in-the-api-process-for-now.md) | ADR 0007: no job queue yet; runs start inside the API process |
 | [adr/0008-free-and-open-source.md](adr/0008-free-and-open-source.md) | ADR 0008: free and open source forever, no paid plans or hosted service |
+| [adr/0009-bots-working-together.md](adr/0009-bots-working-together.md) | ADR 0009: bots @mention each other (hop limit 3), guests in DMs, a lead bot per group |
 | [backend/README.md](backend/README.md) | Backend guide: run it, folders, request flow, routes, security |
 
 ## Building

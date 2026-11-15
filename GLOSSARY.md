@@ -13,8 +13,11 @@ The words BotDesk uses for its domain. Use these exact terms in code, UI copy, d
 | **Chief** | The chief-of-staff bot. It splits work and hands it to specialist bots. It is an ordinary bot with delegation tools, not a special type. |
 | **Computer** | A bot's persistent cloud sandbox (desktop + browser). Default: one per bot. A member can watch it live or **take over**. |
 | **Thread** | A conversation. `dm` = one member + one bot. `group` = several members and bots. |
-| **Mention** | `@handle` inside a message. Mentioning a bot starts a run for it; mentioning a member notifies them. |
-| **Handoff** | One bot passing a task to another bot, visible in the thread. |
+| **Mention** | `@handle` inside a message. Mentioning a bot in the chat starts a run for it, whether a member or another bot wrote the message; mentioning a member notifies them. |
+| **Lead** | The one bot in a group that answers a member's message that mentions no bot. Optional. |
+| **Guest** | A bot that a member pulled into a DM with an @mention: it answers there once, and the DM stays with its own bot. |
+| **Hop** | How far a run is from a person: a run started by a member's message is hop 0, one started by a bot's message is one more than that message's run. Chains stop at the hop limit. |
+| **Handoff** | One bot deliberately passing a task to another bot, recorded with an owner and shown in the thread. Unlike a mention, it assigns the work. |
 | **Run** | One piece of work by one bot, from a trigger to a final answer. It is a LangGraph graph and can pause: `waiting_approval` (a risky tool call waits for a person) or `needs_attention` (a tool may have half run; a person checks). For now the API process runs it ([ADR 0007](docs/adr/0007-runs-in-the-api-process-for-now.md)); later a worker moves it forward by taking **jobs** from the queue. |
 | **Approval** | A run paused on a risky action. A member sees the exact action and approves, denies, or edits it. |
 | **Approval status** | `pending`, then `approved`, `edited` (approved with changed arguments), `denied`, or `expired` (nobody answered in time, or the run was stopped). Expired counts as no. |

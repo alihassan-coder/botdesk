@@ -129,10 +129,16 @@ async def test_a_separate_worker_runs_the_reply_and_its_events_reach_the_apis_st
             thread_id = uuid.UUID(thread.rsplit("/", 1)[1])
             stream = thread_controller.follow_events(_runs(app), thread_id, after_id=0, follow=True)
             await _send(client, thread, "Hi Scout")
+            # The bot's reply is saved before the run is marked finished (a separate transaction),
+            # so wait for run_finished, which is saved together with the run's new status.
+            saw_reply = False
             async with asyncio.timeout(20):
                 async for event in stream:
                     if event.event == "message_saved" and event.data["data"]["message"]["author"]["type"] == "bot":
+                        saw_reply = True
+                    if event.event == "run_finished":
                         break
+            assert saw_reply
             await stream.aclose()  # type: ignore[attr-defined]  # an async generator
             async with worker.sessionmaker() as db:
                 assert await db.scalar(select(Run.status)) == "succeeded"

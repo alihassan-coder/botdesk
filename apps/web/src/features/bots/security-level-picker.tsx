@@ -7,9 +7,11 @@ import { SECURITY_LEVELS } from "./security-levels";
 const ICON = { "read-only": ShieldCheck, "ask-before-acting": ShieldEllipsis, autonomous: ShieldAlert };
 
 /** Three choice cards: how much the bot may do without asking you. */
-export function SecurityLevelPicker({ value, onChange }: { value: SecurityLevel; onChange: (level: SecurityLevel) => void }) {
+export function SecurityLevelPicker({
+  value, onChange, disabled,
+}: { value: SecurityLevel; onChange: (level: SecurityLevel) => void; disabled?: boolean }) {
   return (
-    <RadioGroup value={value} onValueChange={(v) => onChange(v as SecurityLevel)} aria-label="Security level" className="gap-2">
+    <RadioGroup value={value} onValueChange={(v) => onChange(v as SecurityLevel)} disabled={disabled} aria-label="Security level" className="gap-2">
       {SECURITY_LEVELS.map((level) => {
         const Icon = ICON[level.value];
         return (

@@ -24,13 +24,13 @@ The words BotDesk uses for its domain. Use these exact terms in code, UI copy, d
 | **Tool call** | One use of a tool by a run, as the model asked for it. Recorded as a **tool execution** (`tool_executions`): `ready` / `waiting_approval` → `started` → `succeeded` / `failed`, or `denied`. Run + tool call id is its idempotency key, so it never runs twice. |
 | **Policy** | Security level × risk class → `auto`, `ask` or `deny`, made stricter by taint. Every decision is saved with a **decision trace** saying why. |
 | **Risk class** | How dangerous a tool action is: `read`, `write-internal`, `write-external` (a reversible change in another app: draft, label, calendar hold), `external-send`, `spend`, `destructive`, `credential`. |
-| **Security level** | One of three: *Read only*, *Ask before acting* (default), *Autonomous within limits*. Maps each risk class to `auto` / `ask` / `deny` ([ADR 0004](docs/adr/0004-agent-runtime-and-safety.md)). The strictest of org, bot and routine wins. |
+| **Security level** | One of three: *Read only*, *Ask before acting* (default), *Autonomous within limits*. Maps each risk class to `auto` / `ask` / `deny` ([ADR 0004](docs/adr/0004-agent-runtime-and-safety.md)). The strictest of org, bot and routine wins. An org also has a **default security level**: the level a new bot starts at when whoever hires it doesn't pick one (a starting point, not a ceiling). |
 | **Taint** | A mark on a run once it has read outside text (an email, a web page, an MCP result). After that, every action above `write-internal` asks for approval, even for Autonomous bots. |
 | **Job** | A unit of background work in the queue (procrastinate, planned): run a bot, expire an approval, fire a routine. |
 | **Run event** | One step of a run's progress (a token, a tool call, an approval card), saved in `run_events` and streamed to the chat. |
 | **Routine** | A saved, repeatable task, either recorded by **follow along** (the bot watches a member do it) or created from chat, run on a schedule or trigger. |
 | **Trigger** | What starts a run without a message: schedule, new email, webhook, follow-up timer, stalled thread. |
-| **Plugin** | A self-contained integration described by a manifest: auth, tools (each with a risk class), triggers, settings. Gmail is the first. A remote MCP server is one kind of plugin. |
+| **Plugin** | A self-contained integration described by a manifest: auth, tools (each with a risk class), triggers, settings. Gmail is the first. A remote MCP server is one kind of plugin. Plugins the API server loads are **built in**: every bot can use them, with nothing to connect. |
 | **Connector** | A plugin as listed in the catalog (e.g. "Gmail"). |
 | **Connection** | A connector authorised for a member, bot or org (e.g. `ali@acme.dev` on Gmail). |
 | **Memory** | Facts a bot remembers about members and work (mem0). Visible and editable by members. |

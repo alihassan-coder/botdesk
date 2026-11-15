@@ -21,7 +21,7 @@ import { useCallback, useRef, useSyncExternalStore } from "react";
 import { makeHandle } from "@/lib/handle";
 import { parseMentions } from "@/lib/mentions";
 import { previewFromArgs } from "@/lib/args-form";
-import { approvalApi, authApi, botApi, inviteApi, memoryApi, modelApi, orgApi, runApi, threadApi, usageApi } from "./api/botdesk";
+import { approvalApi, authApi, botApi, inviteApi, memoryApi, modelApi, orgApi, pluginApi, runApi, threadApi, usageApi } from "./api/botdesk";
 import { ApiError, apiBaseUrl } from "./api/client";
 import { toApiBot, toApproval, toBot, toInvitation, toMemory, toMemoryStatus, toMessage, toModel, toModelProvider, toOrg, toThread, toUsage, toUser } from "./api/map";
 import { applyRunEvent, typingId, upsertApproval, withActiveRuns, withPreview, withWaitingApprovals, type ActiveRun } from "./api/run-events";
@@ -29,7 +29,7 @@ import type { ApiMe, ApiRunEvent, ApiThread, ApiThreadRuns } from "./api/types";
 import * as mock from "./mock/fixtures";
 import type {
   Approval, ApprovalStatus, Bot, Invitation, MemoryItem, MemoryList, MemoryStatus, Membership, Message, Model, ModelListProblem, ModelProvider, Org,
-  Participant, Routine, Thread, UsageSummary, User,
+  Participant, PluginList, Routine, SecurityLevel, Thread, UsageSummary, User,
 } from "./types";
 
 /** What you fill in to create a bot; the rest (id, handle, status…) is filled in for you. */
@@ -70,7 +70,8 @@ export type DecideResult =
   | { ok: false; error: string; reason?: "conflict" | "invalid"; status?: ApprovalStatus };
 
 /** True when the mock data is in use: there's no API to talk to, or you're a guest. */
-export const isDemoMode = () => apiBaseUrl() === "" || state.guest;
+const isDemo = (s: Pick<State, "guest">) => apiBaseUrl() === "" || s.guest;
+export const isDemoMode = () => isDemo(state);
 
 interface State {
   /** The current organization: everything below belongs to it. */
@@ -99,6 +100,8 @@ interface State {
   endedRunIds: string[];
   approvals: Approval[];
   connectors: typeof mock.connectors;
+  /** API only: the plugins the server loaded (Connect apps). The demo has none. */
+  plugins: PluginList;
   connections: typeof mock.connections;
   routines: typeof mock.routines;
   /** Models & keys: the live model list of every connected provider, and the providers themselves. */
@@ -145,6 +148,7 @@ function seed(): State {
     endedRunIds: [],
     approvals: mock.approvals,
     connectors: mock.connectors,
+    plugins: { status: "ready", items: [] },
     connections: mock.connections,
     routines: mock.routines,
     models: mock.models,
@@ -169,7 +173,7 @@ function apiSeed(): State {
   const blankUser: User = { id: "", name: "", email: "", handle: "", role: "member", presence: "online" };
   return {
     ...seed(),
-    org: { id: "", name: "", slug: "" },
+    org: { id: "", name: "", slug: "", defaultSecurityLevel: "ask-before-acting" },
     orgs: [],
     users: [blankUser],
     currentUserId: "",
@@ -180,6 +184,7 @@ function apiSeed(): State {
     messages: [],
     approvals: [],
     routines: [],
+    plugins: { status: "loading", items: [] },
     memories: [],
     memoryStatus: null,
     models: [],
@@ -328,6 +333,7 @@ function enterOrg(org: Membership) {
     modelProblems: [],
     modelsLoading: true,
     routines: [],
+    plugins: { status: "loading", items: [] },
     memories: [],
     memoryLists: {},
     memoryStatus: null,
@@ -576,6 +582,24 @@ const orgActions = {
     } catch (error) {
       return failure(error);
     }
+  },
+
+  /** The security level new bots start at. Owners and admins; the API refuses members. */
+  async setDefaultSecurityLevel(level: SecurityLevel): Promise<ActionResult> {
+    let saved = level;
+    if (!isDemoMode()) {
+      try {
+        saved = toOrg(await orgApi.update(state.org.id, { defaultSecurityLevel: level })).defaultSecurityLevel;
+      } catch (error) {
+        return failure(error);
+      }
+    }
+    set((st) => ({
+      ...st,
+      org: { ...st.org, defaultSecurityLevel: saved },
+      orgs: st.orgs.map((o) => (o.id === st.org.id ? { ...o, defaultSecurityLevel: saved } : o)),
+    }));
+    return { ok: true };
   },
 
   /**
@@ -1221,7 +1245,9 @@ export const actions = {
     if (replyBotId) fakeBotReply(threadId, replyBotId, text);
   },
 
+  /** Marks the question answered. On the API the answer is also sent as your message, so the bot gets it. */
   answerQuestion(messageId: string, answer: string) {
+    const threadId = state.messages.find((m) => m.id === messageId)?.threadId;
     set((st) => ({
       ...st,
       messages: st.messages.map((m) =>
@@ -1230,6 +1256,7 @@ export const actions = {
           : m,
       ),
     }));
+    if (threadId && !isDemoMode()) actions.sendMessage(threadId, answer);
   },
 
   markRead(threadId: string) {
@@ -1359,7 +1386,7 @@ export const actions = {
     if (!t) return { ok: false, error: "That bot isn't in the marketplace any more." };
     return actions.createBot({
       name: t.name, role: t.role, description: t.description, avatarColor: t.avatarColor,
-      modelId: "m_claude", securityLevel: "ask-before-acting", computerMode: "own",
+      modelId: "m_claude", securityLevel: state.org.defaultSecurityLevel, computerMode: "own",
       instructions: "", monthlyBudgetUsd: 20,
     });
   },
@@ -1409,8 +1436,12 @@ export const actions = {
     return { ok: true };
   },
 
-  /** Saves a routine and has its bot confirm in their chat, the way it would after "do this every week". */
-  createRoutine(input: NewRoutineInput) {
+  /**
+   * MOCK: saves a routine and has its bot confirm in their chat, the way it would after "do this
+   * every week". The API has no scheduler yet, so there it saves nothing and returns null.
+   */
+  createRoutine(input: NewRoutineInput): string | null {
+    if (!isDemoMode()) return null;
     const routineId = `r_${id()}`;
     set((st) => ({ ...st, routines: [...st.routines, { ...input, id: routineId, source: "edit" }] }));
     const thread = state.threads.find((t) => t.kind === "dm" && t.botId === input.botId);
@@ -1461,6 +1492,17 @@ export const actions = {
       ...st,
       connections: [...st.connections, { id: `c_${id()}`, connectorId, account, owner: "user", status: "connected", connectedAt: now() }],
     }));
+  },
+
+  /** The plugins the server loaded, for Connect apps. The demo has none to load. */
+  async loadPlugins(): Promise<void> {
+    if (isDemoMode()) return;
+    const orgId = state.org.id;
+    const items = await pluginApi.list(orgId).catch(() => null);
+    set((st) => {
+      if (st.org.id !== orgId) return st; // switched org while loading
+      return { ...st, plugins: items ? { status: "ready", items } : { ...st.plugins, status: "error" } };
+    });
   },
 
   disconnectApp(connectionId: string) {
@@ -1635,6 +1677,11 @@ export const useOrg = () => useStore(useCallback((s: State) => s.org, []));
 export const useOrgs = () => useStore(useCallback((s: State) => s.orgs, []));
 export const useAuthStatus = () => useStore(useCallback((s: State) => s.authStatus, []));
 export const useIsGuest = () => useStore(useCallback((s: State) => s.guest, []));
+/**
+ * True when screens show the demo (no API, or a guest). Screens the API doesn't cover yet use it
+ * to say so instead of pretending to work.
+ */
+export const useIsDemo = () => useStore(useCallback((s: State) => isDemo(s), []));
 export const useCurrentUser = () => useStore(useCallback((s: State) => s.users.find((u) => u.id === s.currentUserId)!, []));
 export const useUser = (id?: string) => useStore(useCallback((s: State) => s.users.find((u) => u.id === id), [id]));
 export const useBot = (id?: string) => useStore(useCallback((s: State) => s.bots.find((b) => b.id === id), [id]));
@@ -1692,6 +1739,7 @@ export const useRoutines = () => useStore(useCallback((s: State) => s.routines, 
 export const useUsage = () => useStore(useCallback((s: State) => s.usage, []));
 export const useUsageLoading = () => useStore(useCallback((s: State) => s.usageLoading, []));
 export const useConnectors = () => useStore(useCallback((s: State) => s.connectors, []));
+export const usePlugins = () => useStore(useCallback((s: State) => s.plugins, []));
 export const useConnections = () => useStore(useCallback((s: State) => s.connections, []));
 
 /** Every approval, waiting ones first, then newest first. */

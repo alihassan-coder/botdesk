@@ -7,7 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.core.errors import NotFound
 from src.core.handles import handle_prefix, make_handle
-from src.models import Bot
+from src.models import Bot, Organization
 from src.schemas.bot import BotIn, BotUpdate
 
 
@@ -32,9 +32,11 @@ async def _taken_handles(
     return set(await db.scalars(query))
 
 
-async def create_bot(db: AsyncSession, *, org_id: uuid.UUID, created_by: uuid.UUID, data: BotIn) -> Bot:
-    handle = make_handle(data.name, await _taken_handles(db, org_id, data.name))
-    bot = Bot(**data.model_dump(), org_id=org_id, handle=handle, created_by=created_by)
+async def create_bot(db: AsyncSession, *, org: Organization, created_by: uuid.UUID, data: BotIn) -> Bot:
+    """A bot hired without a security level gets the organization's default for new bots."""
+    handle = make_handle(data.name, await _taken_handles(db, org.id, data.name))
+    fields = data.model_dump() | {"security_level": data.security_level or org.default_security_level}
+    bot = Bot(**fields, org_id=org.id, handle=handle, created_by=created_by)
     db.add(bot)
     await db.flush()
     return bot

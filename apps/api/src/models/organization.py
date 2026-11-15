@@ -1,7 +1,7 @@
 import uuid
 from typing import Literal
 
-from sqlalchemy import ForeignKey, String
+from sqlalchemy import ForeignKey, String, text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from src.core.database import Base, CreatedAtMixin, IdMixin
@@ -17,6 +17,10 @@ class Organization(IdMixin, CreatedAtMixin, Base):
     # What all the organization's bots together may spend in a calendar month (UTC), in whole
     # dollars. None = no limit. Each bot also has its own budget.
     monthly_budget_usd: Mapped[int | None] = mapped_column(default=None)
+    # The security level a new bot gets when whoever hires it doesn't pick one.
+    default_security_level: Mapped[str] = mapped_column(
+        String(30), default="ask-before-acting", server_default=text("'ask-before-acting'")
+    )
 
 
 class Membership(CreatedAtMixin, Base):

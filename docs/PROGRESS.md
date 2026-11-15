@@ -2,6 +2,11 @@
 
 A short history of BotDesk, newest first. For one checklist of what is done and what is next, see [ROADMAP.md](ROADMAP.md).
 
+## 2026-11-15: no screen pretends to work
+
+- **Default security level for new bots is real:** organizations have `default_security_level` (migration `381735fe703b`, default `ask-before-acting`), set with `PATCH /orgs/{id}` by owners and admins (members 403). A bot hired without a level gets it; create bot and marketplace hires start at it. Settings → Security loads and saves it, and says "saved" only once the API has.
+- **Honest in API mode** (the demo is unchanged): Routines, New routine and the bot's Routines tab say bots can't run on a schedule yet, instead of saving routines nothing runs. Connect apps shows the server's plugins (`GET /orgs/{id}/plugins`) as built in, with each tool's risk, and the app catalogue as coming soon with Connect off. Answering a question card sends your choice to the chat, so the bot gets it. The marketplace drops made-up hire counts and Gmail tags.
+
 ## 2026-11-13: formatted bot replies
 
 - **Markdown:** bot replies show bold, lists, headings, tables, task lists, links (new tab) and code blocks with syntax colours and a copy button, with react-markdown and remark-gfm (MIT). Raw HTML is never rendered and images show as links. People's messages stay as typed.

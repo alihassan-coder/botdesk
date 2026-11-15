@@ -34,6 +34,7 @@ When you finish something, tick it here in the same pull request.
 - [x] Email through Brevo: password reset link (single use, 1 hour) and invitation emails
 - [x] Organizations, members, roles (only one owner can't leave), invitations
 - [x] Bots: create, edit, remove
+- [x] The org's default security level for new bots (Settings → Security)
 - [x] Chats: direct and group, message history with paging, sending
 - [x] Speed: no N+1 queries, one query per auth and org check, indexes
 
@@ -74,6 +75,7 @@ When you finish something, tick it here in the same pull request.
 - [x] Move the demo plugin onto the SDK
 - [x] Plugins found through `botdesk.plugins` entry points, loaded only from the `PLUGINS` allowlist, checked at load (a broken one is skipped)
 - [x] `GET /orgs/{id}/plugins` for the "Connect apps" page
+- [x] Web: Connect apps shows the server's plugins as built in; the app catalogue is "coming soon" until connections exist
 - [ ] `plugins/_template`, a generated `manifest.json` checked in CI, import rules in CI
 - [ ] Release the SDK to PyPI with release-please (separate `sdk-v*` version)
 
@@ -88,14 +90,15 @@ When you finish something, tick it here in the same pull request.
 
 ### Memory and routines (steps 6–7)
 - [x] Memory screen: see, search, correct and forget what a bot remembers; a memory switch per bot
-- [ ] Routines: bots work on a schedule
+- [ ] Routines: bots work on a schedule (until then, the web says "coming soon" on the API instead of saving routines that never run)
 
 ### MCP (step 8)
 - [ ] Connect a remote MCP server; its tools become bot tools
 
 ### Self-hosting
 - [ ] Job queue and a separate worker process ([ADR 0005](adr/0005-job-queue-and-scaling.md)); approvals expire on a timer
-- [ ] `deploy/docker-compose.yml` for one-command self-hosting
+- [x] `deploy/docker-compose.yml` for one-command self-hosting ([docs/self-hosting](self-hosting/README.md), checked by the CI smoke test)
+- [ ] Sign-ups: open or invite-only (today anyone who can reach the server can sign up and gets their own organization)
 - [ ] Row-level security in Postgres, before one install serves teams that don't trust each other
 - [ ] Rate limits (forgot password, sign-in) and your own email domain in Brevo
 

@@ -7,7 +7,7 @@ import { toast } from "sonner";
 import { Plus, Search } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Input } from "@/components/ui/input";
-import { actions, useTemplates } from "@/data/store";
+import { actions, useIsDemo, useTemplates } from "@/data/store";
 import { PageHeader } from "@/features/shell/page-header";
 import { TemplateCard } from "./template-card";
 
@@ -15,6 +15,7 @@ import { TemplateCard } from "./template-card";
 export function MarketplaceScreen() {
   const router = useRouter();
   const templates = useTemplates();
+  const isDemo = useIsDemo();
   const [query, setQuery] = useState("");
   const [category, setCategory] = useState("All");
 
@@ -40,7 +41,11 @@ export function MarketplaceScreen() {
           <section className="flex flex-col gap-4">
             <div>
               <h2 className="text-3xl font-semibold tracking-tight">Hire a teammate</h2>
-              <p className="mt-1 text-muted-foreground">Ready-made bots with the right tools and safe defaults. Change anything after you hire.</p>
+              <p className="mt-1 text-muted-foreground">
+                {isDemo
+                  ? "Ready-made bots with the right tools and safe defaults. Change anything after you hire."
+                  : "Templates are starting points: hiring one gives you a bot with its name and job at your default security level. Change anything after you hire."}
+              </p>
             </div>
             <div className="relative max-w-xl">
               <Search className="pointer-events-none absolute top-1/2 left-3.5 size-4 -translate-y-1/2 text-muted-foreground" />
@@ -66,7 +71,7 @@ export function MarketplaceScreen() {
 
           <section className="grid gap-4 @xl:grid-cols-2 @5xl:grid-cols-3" aria-label="Bots you can hire">
             {shown.map((t) => (
-              <TemplateCard key={t.id} template={t} onHire={() => hire(t.id, t.name)} />
+              <TemplateCard key={t.id} template={t} demo={isDemo} onHire={() => hire(t.id, t.name)} />
             ))}
             <Link
               href="/bots/new"

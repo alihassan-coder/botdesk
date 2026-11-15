@@ -17,6 +17,7 @@ export interface ApiOrg {
   role: ApiRole;
   /** null = no limit. */
   monthlyBudgetUsd?: number | null;
+  defaultSecurityLevel: ApiSecurityLevel;
 }
 
 /** Who is signed in, and which organizations they belong to. */
@@ -285,4 +286,15 @@ export interface ApiMemory {
 export interface ApiMemoryStatus {
   enabled: boolean;
   reason: string | null;
+}
+
+/* ---------- Plugins ---------- */
+
+/** A plugin the server loaded and its tools (GET /orgs/{id}/plugins). */
+export interface ApiPlugin {
+  id: string;
+  name: string;
+  version: string;
+  description: string;
+  tools: { name: string; title: string; description: string; risk: ApiRiskClass }[];
 }

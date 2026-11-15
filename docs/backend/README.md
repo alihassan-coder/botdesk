@@ -169,7 +169,7 @@ A service raises `NotFound("…")`, `Conflict("…")` and so on. `main.py` turns
 | `POST /api/v1/auth/reset-password` | `{token, password}`: sets a new password from the link (once, before it expires) and signs out every device |
 | `GET /api/v1/orgs` | Your organizations |
 | `GET /api/v1/orgs/{id}` | One organization |
-| `PATCH /api/v1/orgs/{id}` | Rename / change address / set the monthly budget `monthlyBudgetUsd` (null or 0 = no limit) (owner or admin) |
+| `PATCH /api/v1/orgs/{id}` | Rename / change address / set the monthly budget `monthlyBudgetUsd` (null or 0 = no limit) / set `defaultSecurityLevel` (owner or admin; members 403) |
 | `GET /api/v1/orgs/{id}/members` | People and their roles |
 | `PATCH /api/v1/orgs/{id}/members/{userId}` | Change a role (owners and admins; only owners touch owners) |
 | `DELETE /api/v1/orgs/{id}/members/{userId}` | Remove someone, or leave (your own id). There's always one owner |
@@ -178,7 +178,7 @@ A service raises `NotFound("…")`, `Conflict("…")` and so on. `main.py` turns
 | `DELETE /api/v1/orgs/{id}/invitations/{invId}` | Revoke an invite |
 | `POST /api/v1/invitations/accept` | Join from an invite link (signed in with the invited email) |
 | `GET /api/v1/orgs/{id}/bots` | The organization's bots |
-| `POST /api/v1/orgs/{id}/bots` | Hire a bot (any member); @handle comes from the name. Members may set `monthlyBudgetUsd` from 1 up to the default ($50); more, or 0 (no limit), is 403 for them |
+| `POST /api/v1/orgs/{id}/bots` | Hire a bot (any member); @handle comes from the name. Without `securityLevel` it gets the org's `defaultSecurityLevel` (`read-only` / `ask-before-acting` / `autonomous`; new orgs: `ask-before-acting`). Members may set `monthlyBudgetUsd` from 1 up to the default ($50); more, or 0 (no limit), is 403 for them |
 | `GET /api/v1/orgs/{id}/bots/{botId}` | One bot |
 | `PATCH /api/v1/orgs/{id}/bots/{botId}` | Edit a bot (only the fields you send). Changing `monthlyBudgetUsd` takes an owner or admin (403 "Only owners and admins can change budgets."); sending the current value is fine |
 | `DELETE /api/v1/orgs/{id}/bots/{botId}` | Remove a bot (owners and admins); its chats go too |
@@ -327,7 +327,7 @@ call_model ──(tool calls, one at a time)──→ prepare_call: validate arg
    └────────── finish_call: the model gets the result, or why it didn't run ←──────────────────┘
 ```
 
-- **Policy** (`runtime/policy.py`, pure): the ADR 0004 table, 3 levels × 7 risk classes (`read`, `write-internal`, `write-external`, `external-send`, `spend`, `destructive`, `credential`). The bot's `securityLevel` is the level (no org ceiling or routine level yet).
+- **Policy** (`runtime/policy.py`, pure): the ADR 0004 table, 3 levels × 7 risk classes (`read`, `write-internal`, `write-external`, `external-send`, `spend`, `destructive`, `credential`). The bot's `securityLevel` is the level (no org ceiling or routine level yet; the org's `defaultSecurityLevel` is only where new bots start).
 - **Taint** (strict, run-level): a tool that returns outside text (`untrusted_output`) sets `runs.tainted`, and so does a history holding a reply that a tainted run wrote (see How a reply flows). After that, anything above `write-internal` asks, even for Autonomous bots, and the run saves no memories. Outside text reaches the model wrapped in `<untrusted-content>`. An `open`-egress read in a tainted run counts as `external-send`.
 - **`tool_executions`** records every call; run id + the model's tool call id is the idempotency key. Status: `ready` → `started` → `succeeded` / `failed`; `waiting_approval` → `ready` (approved) / `denied`; refused calls are saved as `denied` / `failed`. It also stores `risk`, `decision`, `decision_trace`, `args` and `args_hash`. Running a call that already `succeeded` reuses its result; one left `started` stops the run as `needs_attention` unless the tool is idempotent. A tool also gets `ctx.idempotency_key` (`"{runId}:{toolCallId}"`) to pass to services that accept one.
 - **Pausing:** `approval_gate` only calls `interrupt({"approvalId"})`. The run task ends, the run becomes `waiting_approval`, and the checkpoint waits in Postgres (it survives restarts; SQLite's in-memory checkpoints don't, and resuming then fails the run with a clear message).

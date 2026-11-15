@@ -4,7 +4,7 @@ import { useState } from "react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { actions, useBots } from "@/data/store";
+import { actions, useBots, useCurrentUser, useOrg } from "@/data/store";
 import type { PolicyDecision, SecurityLevel } from "@/data/types";
 import { RISK } from "@/features/approvals/risk";
 import { BotAvatar } from "@/features/bots/bot-avatar";
@@ -23,21 +23,37 @@ async function changeLevel(botId: string, securityLevel: SecurityLevel) {
   if (!result.ok) toast.error(result.error);
 }
 
+/** The org's default level for new bots. Owners and admins change it; "saved" only once it is. */
+function DefaultLevel() {
+  const saved = useOrg().defaultSecurityLevel;
+  const canEdit = useCurrentUser().role !== "member";
+  // The level being saved shows at once; a refusal puts the saved one back.
+  const [saving, setSaving] = useState<SecurityLevel | null>(null);
+
+  async function change(level: SecurityLevel) {
+    setSaving(level);
+    const result = await actions.setDefaultSecurityLevel(level);
+    setSaving(null);
+    if (!result.ok) return void toast.error(result.error);
+    toast.success("Default security level saved");
+  }
+
+  return (
+    <>
+      <SecurityLevelPicker value={saving ?? saved} onChange={(level) => void change(level)} disabled={!canEdit} />
+      {!canEdit && <p className="mt-3 text-sm text-muted-foreground">Only owners and admins can change the default.</p>}
+    </>
+  );
+}
+
 /** Settings → Security: the org default, each bot's level, and exactly what every level allows. */
 export function SecuritySettings() {
   const bots = useBots();
-  const [orgDefault, setOrgDefault] = useState<SecurityLevel>("ask-before-acting");
 
   return (
     <div className="flex flex-col gap-8">
-      <SettingsSection title="Default for new bots" description="New bots start here. When org, bot and routine settings differ, the strictest wins.">
-        <SecurityLevelPicker
-          value={orgDefault}
-          onChange={(level) => {
-            setOrgDefault(level);
-            toast.success("Default security level saved");
-          }}
-        />
+      <SettingsSection title="Default for new bots" description="New bots start at this level. Each bot's own level can be changed below.">
+        <DefaultLevel />
       </SettingsSection>
 
       <SettingsSection title="Your bots" description="Change how much each bot may do on its own.">

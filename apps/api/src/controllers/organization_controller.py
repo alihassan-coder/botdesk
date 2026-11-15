@@ -20,7 +20,9 @@ def get_one(access: Access) -> OrgOut:
 
 async def update(db: AsyncSession, access: Access, body: OrgUpdate) -> OrgOut:
     access.require_admin()
-    org = await organization_service.update_org(db, access.org, name=body.name, slug=body.slug)
+    org = await organization_service.update_org(
+        db, access.org, name=body.name, slug=body.slug, default_security_level=body.default_security_level
+    )
     if "monthly_budget_usd" in body.model_fields_set:  # null is a value here: "no limit"
         organization_service.set_budget(org, body.monthly_budget_usd)
     await db.commit()

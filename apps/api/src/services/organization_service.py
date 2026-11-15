@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src.core.errors import Conflict, Forbidden, NotFound
 from src.core.handles import handle_prefix, make_handle
 from src.models import Membership, Organization, User
+from src.models.bot import SecurityLevel
 from src.schemas.organization import MemberOut, OrgOut
 
 
@@ -19,6 +20,7 @@ def org_out(org: Organization, role: str) -> OrgOut:
             "slug": org.slug,
             "role": role,
             "monthly_budget_usd": org.monthly_budget_usd,
+            "default_security_level": org.default_security_level,
         }
     )
 
@@ -63,13 +65,22 @@ async def org_and_role(db: AsyncSession, *, org_id: uuid.UUID, user_id: uuid.UUI
     return org, role
 
 
-async def update_org(db: AsyncSession, org: Organization, *, name: str | None, slug: str | None) -> Organization:
+async def update_org(
+    db: AsyncSession,
+    org: Organization,
+    *,
+    name: str | None,
+    slug: str | None,
+    default_security_level: SecurityLevel | None,
+) -> Organization:
     if slug and slug != org.slug:
         if await db.scalar(select(Organization.id).where(Organization.slug == slug)):
             raise Conflict("That address is taken. Try another.")
         org.slug = slug
     if name and name.strip():
         org.name = name.strip()
+    if default_security_level:
+        org.default_security_level = default_security_level
     return org
 
 

@@ -5,12 +5,13 @@ import { Switch } from "@/components/ui/switch";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { budgetUse } from "@/lib/budget";
 import { formatUsd } from "@/lib/format";
-import { actions, useBotRoutines, useCurrentUser, useModel } from "@/data/store";
+import { actions, useBotRoutines, useCurrentUser, useIsDemo, useModel } from "@/data/store";
 import type { Bot } from "@/data/types";
 import { BotAvatar } from "@/features/bots/bot-avatar";
 import { EditBotDialog } from "@/features/bots/edit-bot-dialog";
 import { BotMemories } from "@/features/memory/bot-memories";
 import { RemoveBotButton } from "@/features/bots/remove-bot-button";
+import { ROUTINES_COMING_SOON } from "@/features/routines/routines-coming-soon";
 import { barColor } from "@/features/settings/budget-list";
 import { securityLabel } from "@/features/bots/security-levels";
 
@@ -92,6 +93,9 @@ function BudgetThisMonth({ bot }: { bot: Bot }) {
 
 function Routines({ botId }: { botId: string }) {
   const routines = useBotRoutines(botId);
+  const isDemo = useIsDemo();
+  // On the API nothing runs on a schedule yet, so there's nothing to list or switch on.
+  if (!isDemo) return <Empty text={ROUTINES_COMING_SOON} />;
   if (routines.length === 0) return <Empty text="No routines yet. Ask the bot to do something every week and it can save it as one." />;
 
   return (

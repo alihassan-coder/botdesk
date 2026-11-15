@@ -19,7 +19,8 @@ class BotIn(ApiModel):
     instructions: str = Field(default="", max_length=20000)
     avatar_color: AvatarColor = "indigo"
     model_id: str = Field(default="", max_length=MODEL_ID_MAX, pattern=MODEL_ID_PATTERN)
-    security_level: SecurityLevel = "ask-before-acting"
+    # Left out: the organization's default for new bots.
+    security_level: SecurityLevel | None = None
     monthly_budget_usd: int = Field(default=50, ge=0, le=100_000)
     memory_enabled: bool = True
 

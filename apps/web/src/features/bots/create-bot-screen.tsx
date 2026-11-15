@@ -8,7 +8,7 @@ import { Field, FieldDescription, FieldError, FieldGroup, FieldLabel } from "@/c
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
-import { actions, isDemoMode, useCurrentUser, useTemplates, type NewBotInput } from "@/data/store";
+import { actions, isDemoMode, useCurrentUser, useOrg, useTemplates, type NewBotInput } from "@/data/store";
 import { PageHeader } from "@/features/shell/page-header";
 import { BotAvatar } from "./bot-avatar";
 import { BotPreview } from "./bot-preview";
@@ -28,7 +28,9 @@ const BLANK: NewBotInput = {
 export function CreateBotScreen() {
   const router = useRouter();
   const templates = useTemplates();
-  const [bot, setBot] = useState(BLANK);
+  const defaultLevel = useOrg().defaultSecurityLevel;
+  // New bots start at the org's default (Settings → Security).
+  const [bot, setBot] = useState(() => ({ ...BLANK, securityLevel: defaultLevel }));
   const [showErrors, setShowErrors] = useState(false);
   const [creating, startCreating] = useTransition();
   const budgetLimit = useCurrentUser().role === "member" ? MEMBER_MAX_BUDGET_USD : undefined;

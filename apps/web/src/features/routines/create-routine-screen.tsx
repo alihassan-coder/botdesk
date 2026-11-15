@@ -11,14 +11,31 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 import { describeSchedule, type Schedule } from "@/lib/schedule";
-import { actions, useBots } from "@/data/store";
+import { actions, useBots, useIsDemo } from "@/data/store";
 import { BotAvatar } from "@/features/bots/bot-avatar";
 import { PageHeader } from "@/features/shell/page-header";
+import { RoutinesComingSoon } from "./routines-coming-soon";
 import { SchedulePicker } from "./schedule-picker";
 import { StepsEditor } from "./steps-editor";
 
 /** /routines/new — a job a bot repeats: who runs it, when, and the steps it follows. */
 export function CreateRoutineScreen() {
+  const isDemo = useIsDemo();
+  if (isDemo) return <RoutineForm />;
+  return (
+    <div className="flex h-full flex-col">
+      <PageHeader title="New routine" />
+      <div className="flex-1 overflow-y-auto">
+        <div className="mx-auto max-w-2xl p-4 md:p-8">
+          <RoutinesComingSoon />
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/** MOCK: the demo's routine form. Saving adds the routine and the bot confirms in its chat. */
+function RoutineForm() {
   const router = useRouter();
   const bots = useBots();
   const [name, setName] = useState("");

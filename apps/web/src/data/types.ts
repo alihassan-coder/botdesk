@@ -46,6 +46,8 @@ export interface Org {
   id: ID;
   name: string;
   slug: string;
+  /** The security level a new bot starts at. Owners and admins change it in Settings → Security. */
+  defaultSecurityLevel: SecurityLevel;
 }
 
 /** An organization you belong to, with your role in it: what the org switcher lists. */
@@ -266,6 +268,30 @@ export interface Approval {
 }
 
 /* ---------- Integrations (plugins) ---------- */
+
+/** A tool a plugin on the server gives bots, with the risk that decides whether it asks first. */
+export interface PluginTool {
+  /** Full name, as on approval cards: "demo.send_email". */
+  name: string;
+  title: string;
+  description: string;
+  risk: RiskClass;
+}
+
+/** A plugin the API server loaded: built in, so there's nothing to connect. */
+export interface Plugin {
+  id: ID;
+  name: string;
+  version: string;
+  description: string;
+  tools: PluginTool[];
+}
+
+/** The server's plugins as last loaded. API only: the demo shows its mock connectors instead. */
+export interface PluginList {
+  status: "loading" | "ready" | "error";
+  items: Plugin[];
+}
 
 export interface ConnectorTool {
   name: string;

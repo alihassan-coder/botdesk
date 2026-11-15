@@ -35,7 +35,7 @@ async def create_bot(db: AsyncSession, access: Access, body: BotIn, settings: Se
     if not _is_admin(access) and not 0 < body.monthly_budget_usd <= DEFAULT_BOT_BUDGET_USD:
         raise Forbidden(BUDGET_ADMINS_ONLY)
     await provider_service.require_usable_model(db, access.org.id, body.model_id, settings)
-    bot = await bot_service.create_bot(db, org_id=access.org.id, created_by=access.user.id, data=body)
+    bot = await bot_service.create_bot(db, org=access.org, created_by=access.user.id, data=body)
     await db.commit()
     return BotOut.model_validate(bot)
 

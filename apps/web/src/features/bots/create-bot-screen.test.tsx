@@ -1,6 +1,6 @@
 import { screen } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { getStoreSnapshot } from "@/data/store";
+import { actions, getStoreSnapshot } from "@/data/store";
 import { renderUI } from "@/test/render";
 import { CreateBotScreen } from "./create-bot-screen";
 
@@ -46,5 +46,11 @@ describe("CreateBotScreen", () => {
     expect(bot).toMatchObject({ role: "Writing", avatarColor: "rose", securityLevel: "read-only" });
     const thread = getStoreSnapshot().threads.find((t) => t.botId === bot?.id);
     expect(push).toHaveBeenCalledWith(`/chat/${thread?.id}`);
+  });
+
+  it("starts at the organization's default security level", async () => {
+    await actions.setDefaultSecurityLevel("read-only");
+    renderUI(<CreateBotScreen />);
+    expect(screen.getByLabelText(/Read only/)).toBeChecked();
   });
 });

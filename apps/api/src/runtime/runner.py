@@ -262,6 +262,8 @@ class RunManager:
             registry=self.registry,
             tool_timeout_seconds=self.settings.tool_timeout_seconds,
             approval_expiry=timedelta(hours=self.settings.approval_expiry_hours),
+            settings=self.settings,
+            start_runs=self.start,
         )
         try:
             # The time limit counts working time only: waiting for a person doesn't use it up.

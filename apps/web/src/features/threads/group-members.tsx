@@ -3,8 +3,9 @@ import { useBot, useUser } from "@/data/store";
 import type { Participant, Thread } from "@/data/types";
 import { BotAvatar, MemberAvatar } from "@/features/bots/bot-avatar";
 import { BOT_STATUS } from "@/features/bots/bot-status";
+import { GroupLead } from "./group-lead";
 
-/** The details pane for a group chat: everyone in it, people first, then bots. */
+/** The details pane for a group chat: its lead bot, then everyone in it, people first, then bots. */
 export function GroupMembers({ thread }: { thread: Thread }) {
   const people = thread.participants.filter((p) => p.type === "user");
   const bots = thread.participants.filter((p) => p.type === "bot");
@@ -17,6 +18,7 @@ export function GroupMembers({ thread }: { thread: Thread }) {
           {pluralize(people.length, "person", "people")} · {pluralize(bots.length, "bot")}
         </p>
       </div>
+      <GroupLead thread={thread} />
       <MemberSection title="People" members={people} />
       <MemberSection title="Bots" members={bots} />
     </div>

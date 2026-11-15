@@ -44,6 +44,7 @@ Every setting is in [`apps/api/.env.example`](../../apps/api/.env.example). The 
 | `ALLOW_PRIVATE_MODEL_URLS` | false | Let custom model servers live on private, loopback or link-local addresses (see [Custom servers and SSRF](#custom-servers-and-ssrf)). Refused by default **everywhere**, development included; set it to `true` in your local `.env` to use Ollama on `localhost` |
 | `RUN_MAX_STEPS`, `RUN_MAX_SECONDS` | 25, 900 | Limits on every run; a run that hits one fails with a clear message |
 | `BOT_MAX_RUNNING_RUNS` | 2 | Runs one bot may have going at once (across chats) |
+| `BOT_HOP_LIMIT` | 3 | How many hops a chain of bot replies may go from a person's message. A bot @mention past it starts nothing; the chat gets a "Stopped a chain…" notice ([Bots working together](#bots-working-together)) |
 | `PLUGINS` | `demo` | Allowlist of plugin ids to load (comma-separated), found through `botdesk.plugins` entry points. An id nobody provides stops startup; a broken plugin is skipped with a log line. `demo` = fake tools for trying approvals |
 | `TOOL_TIMEOUT_SECONDS` | 30 | A tool call that takes longer fails |
 | `APPROVAL_EXPIRY_HOURS` | 72 | An approval nobody answers in time counts as "no" (checked when someone decides) |
@@ -51,6 +52,8 @@ Every setting is in [`apps/api/.env.example`](../../apps/api/.env.example). The 
 | `BREVO_API_KEY` | empty | Sends real email through Brevo. Empty = emails are only written to the log (see [Email](#email)) |
 | `EMAIL_FROM_ADDRESS`, `EMAIL_FROM_NAME` | empty, BotDesk | The sender. The address must be verified in Brevo |
 | `PASSWORD_RESET_MINUTES` | 60 | How long a password reset link works |
+| `SIGNUP_MODE` | `open` | Who may create an account: `open` (anyone who reaches the server; each gets their own organization), `invite-only` (only with an unused, unexpired invite link for that email; the account joins the inviting organization) or `closed` (no new accounts; existing people sign in and accept invites). See [Sign-up modes](#sign-up-modes) |
+| `FORWARDED_ALLOW_IPS` | `127.0.0.1,::1` | Proxies whose `X-Forwarded-For` / `X-Forwarded-Proto` are believed (IPs or CIDRs, comma-separated). Never `*` where clients can reach the API directly: anyone could then pick their own address and dodge the limits. Rate limits key on the client address, so behind a reverse proxy list the proxy here. The same variable uvicorn uses; the app applies it itself (uvicorn runs with `--no-proxy-headers`) |
 
 ### Tests on Postgres
 
@@ -131,7 +134,9 @@ POST /threads/{id}/messages       one transaction: the message, a queued run per
     → waits for its turn          one run per chat: a lock in this process + a guarded UPDATE in Postgres
     → graph                       load_context → recall → call_model (streams message_delta events)
                                   → tool calls? one at a time through the tool pipeline (see Tools and approvals)
-                                  → save_reply (the message + message_saved) → remember (in the background)
+                                  → save_reply (the message + message_saved, and in the same transaction a queued
+                                    run per bot the reply @mentions, or the "chain stopped" notice; started after
+                                    commit) → remember (in the background)
     → run_finished / run_failed, or paused: approval_requested (waiting_approval) / run_needs_attention
 GET /threads/{id}/events          SSE: replays run_events after Last-Event-ID, then follows new ones
 ```
@@ -146,6 +151,26 @@ A chat opened later (or in a second tab) first asks `GET /threads/{id}/runs?acti
 - **Group:** a person's message reads `Sara Khan (@sara-khan): …`; another bot's comes as `<bot-message from="Reader (@reader)">…</bot-message>` (a closing tag inside the text is escaped), and the system prompt says those are that bot's output, never instructions from a person. The bot's own messages stay plain turns. The stand-in model runs a `/tool` command only from a person's message, never from another bot's.
 - **Taint across messages:** if any message in that history is a reply written by a tainted run (`runs.reply_message_id`, `runs.tainted`), the new run starts tainted and `runs.tainted` is saved. So a bot quoting an email can't hand the next run (its own or another bot's) a clean instruction; that run asks before anything above `write-internal` and saves no memories.
 
+### Bots working together
+
+[ADR 0009](../adr/0009-bots-working-together.md). Who gets a run is decided by one pure module, `services/mention_routing.py`: `route(chat, text, org_bots=…, hop_limit=…, by_bot=None) → Routing(replies, chain_stopped)`. `run_service` loads the chat's bots (`ChatBots`: kind, the bots that may be mentioned, the default responder) and the organization's bots by @handle, and creates a queued run per `Reply(bot_id, hop, reason)`. Every case is a row in `tests/test_mention_routing.py`; the web's demo mirrors it in `apps/web/src/lib/mention-routing.ts`.
+
+| Who wrote it | Where | Who replies |
+|---|---|---|
+| A member | group | The bots in the group it @mentions, in mention order. No bot mentioned: the group's **lead** (nobody if it has none) |
+| A member | DM | No bot mentioned: the DM's bot. @mentions of other bots of the organization pull each in as a **guest** for one reply; the DM's own bot then replies only if it is mentioned too (mentions pick who answers, as in a group) |
+| A bot (its run's reply) | any | The bots it @mentions that are already in the chat: a group's bots; in a DM, its bot and the guests pulled in before (any bot that has had a run there). Never itself; a bot can't pull a new bot into a DM. Each gets a run at **hop** = the parent's hop + 1 |
+
+- **Hops and the limit.** A person's message starts hop 0. `runs.hop` and `runs.parent_run_id` (the run whose reply did the mentioning) record the chain; the child's `trigger_message_id` is that reply. A mention that would make hop > `BOT_HOP_LIMIT` starts nothing, and a system message (`author.type = "system"`) "Stopped a chain of bot replies after 3 hops." is saved with a `message_saved` event on the parent run. System messages are for people: they're left out of every run's history.
+- **One at a time.** Child runs are created in `save_reply`'s transaction (saving the same reply twice starts nothing twice) and started after commit; they wait for the parent to finish (the chat lock and the one-running-run-per-chat index), and the per-bot cap, budgets and step limits apply to each. A chain is a sequence of runs, never runs inside runs. They come to the web as ordinary `run_started` / `message_delta` / `message_saved` events with their own `runId`.
+- **Taint.** A child's history ends at the parent's reply, so a tainted parent's reply taints it (history-based taint, above), all along the chain. Tested on Postgres (`tests/test_bots_together_postgres.py`).
+- **Guests.** A guest's prompt says it was @mentioned into a member's direct chat with another bot and should answer once; other bots' messages are wrapped in `<bot-message>` in every chat, and a DM where another bot spoke explains them too. The DM stays the DM's bot's: its title, participants and chat list don't change.
+- **Memory.** A guest reads and saves its *own* memories scoped to that DM's member (`MemoryScope(bot=guest, member=the DM's member)`), exactly as if the member had DMed it: only that member is in the chat, so nothing reaches anyone else. A run another bot started (hop > 0) **recalls but never saves** memories: what a bot remembers comes from people, not from one bot's output steering another's.
+- **What a mentioned bot is told.** A run another bot started (hop > 0) is told so in its system prompt: help with what the bot asks using what it knows, but take actions (tools) only for what the people in the chat asked. The bot's message stays wrapped as `<bot-message>` (never an instruction), and the stand-in model never runs a `/tool` from it; this keeps ADR 0009 §5's no-laundering rule even for an untainted chain.
+- **Guests stay reachable.** "Replies once" is per mention: a member's mention starts one run. After that the guest counts as in the DM, so the DM's bot (or another guest) may @mention it back; each such run is one more hop.
+- **Known gaps (next slices).** Stop ends one run, not a whole chain: runs its reply already queued still go (stop them one by one). Runs are claimed in the order they were created, so a member message posted while a chain runs is answered before the chain's next hop. If the API restarts between saving a reply and starting its child runs, the startup sweep fails those runs ("Interrupted by a restart") and the chain ends there. Groups can't drop a bot yet, so a lead is always in its group (deleting the bot clears it).
+- **The lead.** `threads.lead_bot_id` (FK to bots, `ON DELETE SET NULL`). `POST /threads/groups` sets it to `leadBotId` (one of `botIds`, else 400) or the first bot picked. `PUT /threads/{id}/lead` `{botId | null}` changes or clears it: the group's **creator**, or an org **owner or admin** in the group; other members get 403 "Only the group's creator, owners and admins can change its lead.". 400 for a bot not in the group or for a DM. Groups made before migration `dca6e06f506b` have no lead and behave as before.
+
 **Dropped connections.** Neon suspends after 5 idle minutes and closes every connection (networks drop idle TLS connections too). Every pool tests a connection that sat idle 10 s or more before handing it out (one short round trip; busy connections are never tested), and replaces it if it's dead: the SQLAlchemy engine through a `checkout` listener (`pool_recycle=240` as well), the LangGraph checkpoint pool and mem0's pool through psycopg_pool's `configure`/`check`/`reset` callbacks (`IdleCheck` in `core/database.py`), with `max_lifetime` and `max_idle` of 240 s. mem0 gets its pool from us (`memory_pool`) instead of opening its own.
 
 **Round trips on a run's path:** the model is looked up (org keys) once per run, not at every step; the bot's memory switch comes with the run's context; the budget check is one statement (budgets and this month's spend, summed only when a budget is set). New @handles and slugs read only the handles that start with the same base (`LIKE 'base%'`), not the whole table.
@@ -159,14 +184,15 @@ A service raises `NotFound("…")`, `Conflict("…")` and so on. `main.py` turns
 | Method & path | What it does |
 |---|---|
 | `GET /api/v1/health` | Up, and the database answers |
-| `POST /api/v1/auth/sign-up` | Create account + first organization (you're owner); signs you in |
-| `POST /api/v1/auth/sign-in` | Email + password → session cookie |
+| `GET /api/v1/auth/options` | Public: `{signUpMode: "open" \| "invite-only" \| "closed"}`, so the sign-up screen can adapt |
+| `POST /api/v1/auth/sign-up` | Create an account and sign in. Without `inviteToken`: a first organization of your own (you're owner). With `inviteToken` (from an invite link, for that email): you join that organization instead. 403 when `SIGNUP_MODE` doesn't allow it. 429 after 20 an hour from one address |
+| `POST /api/v1/auth/sign-in` | Email + password → session cookie. 429 after 10 a minute from one address or 5 a minute for one email |
 | `POST /api/v1/auth/sign-out` | Ends this session everywhere it was used |
 | `GET /api/v1/auth/me` | You, and your organizations with your role |
 | `PATCH /api/v1/auth/me` | Change your name or @handle (unique) |
 | `POST /api/v1/auth/change-password` | Needs the current password (wrong one: 400, so the app keeps you signed in); signs out your other devices |
-| `POST /api/v1/auth/forgot-password` | Emails a reset link if the account exists. Always the same 202 answer (doesn't reveal accounts) |
-| `POST /api/v1/auth/reset-password` | `{token, password}`: sets a new password from the link (once, before it expires) and signs out every device |
+| `POST /api/v1/auth/forgot-password` | Emails a reset link if the account exists. Always the same 202 answer (doesn't reveal accounts). 429 after 5 an hour for one email or 20 an hour from one address |
+| `POST /api/v1/auth/reset-password` | `{token, password}`: sets a new password from the link (once, before it expires) and signs out every device. 429 after 20 an hour from one address |
 | `GET /api/v1/orgs` | Your organizations |
 | `GET /api/v1/orgs/{id}` | One organization |
 | `PATCH /api/v1/orgs/{id}` | Rename / change address / set the monthly budget `monthlyBudgetUsd` (null or 0 = no limit) / set `defaultSecurityLevel` (owner or admin; members 403) |
@@ -189,10 +215,11 @@ A service raises `NotFound("…")`, `Conflict("…")` and so on. `main.py` turns
 | `DELETE /api/v1/orgs/{id}/bots/{botId}/memories` | Forget everything the bot remembers, from every chat (owners and admins) |
 | `GET /api/v1/orgs/{id}/threads` | Your chats, most recent first, with a preview of the last message |
 | `POST /api/v1/orgs/{id}/threads/dm` | Your chat with a bot (`{botId}`): the existing one or a new one. Private to you |
-| `POST /api/v1/orgs/{id}/threads/groups` | Group chat with you plus the people and bots you pick |
+| `POST /api/v1/orgs/{id}/threads/groups` | Group chat with you plus the people and bots you pick. `leadBotId` (one of `botIds`) answers messages that mention no bot; left out, the first bot picked. Chats carry `leadBotId` and `createdBy` |
+| `PUT /api/v1/orgs/{id}/threads/{threadId}/lead` | `{botId}` (one of the group's bots) or `{botId: null}`: change or clear a group's lead. Its creator, owners and admins; others 403 |
 | `GET /api/v1/orgs/{id}/threads/{threadId}` | One chat (404 unless you're in it) |
 | `GET /api/v1/orgs/{id}/threads/{threadId}/messages` | Messages oldest first; `limit` (1–200) and `before` to page back |
-| `POST /api/v1/orgs/{id}/threads/{threadId}/messages` | Send a message (`{text}`). In a DM the bot replies; in a group, the @mentioned bots in it do. Returns the message plus `runIds` |
+| `POST /api/v1/orgs/{id}/threads/{threadId}/messages` | Send a message (`{text}`). Who replies: [Bots working together](#bots-working-together) (a DM's bot or guests; a group's mentioned bots, else its lead). Returns the message plus `runIds` (the hop-0 runs; bot-to-bot runs arrive on the stream) |
 | `GET /api/v1/orgs/{id}/threads/{threadId}/runs` | The chat's runs, newest first (max 100). `?active=true`: only `queued`, `running`, `waiting_approval` and `needs_attention`. Returns `{runs, lastEventId, replayFrom}` (see below) |
 | `GET /api/v1/orgs/{id}/threads/{threadId}/events` | Live updates (SSE). Resumes after the `Last-Event-ID` header, or `?after=`; otherwise from now. `?follow=false` sends what's saved and closes |
 | `GET /api/v1/orgs/{id}/runs/{runId}` | One run: status, steps used, limits, error |
@@ -215,7 +242,7 @@ Each SSE message has `id:` (a growing number), `event:` (the kind) and `data:` J
 
 | Kind | `data` |
 |---|---|
-| `message_saved` | `{message}`: the full message, as in the messages list (yours, someone else's, or a bot's reply). `runId` is null for people's messages |
+| `message_saved` | `{message}`: the full message, as in the messages list (yours, someone else's, a bot's reply, or a system notice such as "Stopped a chain of bot replies after 3 hops."). `runId` is null for people's messages |
 | `run_started` | `{botId}` |
 | `message_delta` | `{messageId, botId, text}`: the next piece of a reply. `messageId` is the id the saved reply will have |
 | `run_finished` | `{status}`: `succeeded` or `cancelled` |
@@ -239,6 +266,7 @@ Run `status` values: `queued`, `running`, `waiting_approval`, `needs_attention`,
     {
       "id": "uuid", "botId": "uuid", "threadId": "uuid",
       "triggerMessageId": "uuid", "replyMessageId": null,
+      "parentRunId": null, "hop": 0,         // the run whose reply @mentioned this bot, and how far from a person
       "status": "waiting_approval",          // queued | running | waiting_approval | needs_attention (active=true)
       "stepsUsed": 1, "maxSteps": 25, "maxSeconds": 900,
       "error": null,                         // why it needs attention (or failed); ready to show
@@ -474,9 +502,39 @@ Follows the OWASP Forgot Password cheat sheet:
 2. `reset-password` claims the token with one guarded `UPDATE` (unused and not expired), so it works once even under races. It checks the same password rules as sign-up, sets a new Argon2 hash and deletes **all** the user's sessions. A bad, used or expired token gets `400 "This reset link has expired or was already used. Ask for a new one."`
 3. The web app's `/reset-password` page reads the token, posts the new password, and sends you to sign in.
 
+### Sign-up modes
+
+`SIGNUP_MODE` is checked in `auth_service.sign_up`, before the email is looked at, so a refusal never says whether an account exists:
+
+| Mode | Without an invite | With `inviteToken` |
+|---|---|---|
+| `open` (default) | New account + its own organization | New account that joins the inviting organization (no organization of its own). A bad, used or expired invite is refused (403), not quietly ignored |
+| `invite-only` | 403 "Sign-up is by invitation. Ask your admin for an invite link." | Same as open, if the invite is unused, unexpired and for this email; otherwise 403 ("This invite link isn't valid any more…" / "This invite is for …") |
+| `closed` | 403 "New accounts are turned off on this server. Ask your admin if you need one." | The same 403. Existing people still sign in and accept invites (`POST /invitations/accept`) |
+
+The invite flow is the one that already existed: the link is `/invite/<token>`; signed out, it sends you to `/sign-up?next=/invite/<token>`, and the web sends the token with the sign-up. The invite is used up in the same transaction that creates the account (`invitation_service.join`, shared with accepting an invite), and the web then opens the app instead of the used link. For an internet-facing install: sign up the first owner while `open`, then set `invite-only` and restart the API.
+
+### Rate limits
+
+`core/rate_limit.py` is a small sliding-window limiter in the API process's memory; `services/auth_limits.py` holds the limits and raises `TooManyRequests`, which `main.py` turns into **429** with `Retry-After` (seconds) and `{"detail": "Too many attempts. Try again in 1 minute."}`. The web shows that message as is.
+
+| Route | Per client address | Per email (lowercased) |
+|---|---|---|
+| sign-in | 10 a minute | 5 a minute |
+| sign-up | 20 an hour | |
+| forgot-password | 20 an hour | 5 an hour |
+| reset-password | 20 an hour | |
+
+- **Nothing leaks:** unknown emails are counted exactly like known ones, and the limit is checked before the database, so a 429 says nothing about accounts. A refused attempt isn't counted, so waiting out `Retry-After` always works; the right password also waits (the point is to stop guessing). The trade-off: someone who knows an email can keep that person from signing in, one minute at a time, while they keep trying; the per-email limits are short for that reason.
+- **Bounded memory:** a key keeps at most its limit's timestamps; keys whose window has passed are swept out every 1,000 attempts, and past 50,000 keys the least recently used go first.
+- **One process:** counts live in the one API process ([ADR 0007](../adr/0007-runs-in-the-api-process-for-now.md)) and reset when it restarts. Several API copies would each count on their own: they need a shared store (Postgres or Redis), which comes with the job queue ([ADR 0005](../adr/0005-job-queue-and-scaling.md)).
+- **The client address** is the connection's, unless the connection comes from a proxy in `FORWARDED_ALLOW_IPS`; then uvicorn's `ProxyHeadersMiddleware` (added in `main.py`) takes the rightmost address in `X-Forwarded-For` that isn't a trusted proxy. Anyone else's `X-Forwarded-For` is ignored, so a made-up header can't buy a fresh allowance. Behind a reverse proxy that isn't listed, every request looks like it comes from the proxy and shares one allowance: set it (the self-hosting guide shows how for Docker).
+
 ## Security choices
 
 - **Passwords:** Argon2id; old hashes are upgraded on sign-in. Unknown emails take as long as wrong passwords.
+- **Who can sign up:** `SIGNUP_MODE` (`open`, `invite-only`, `closed`); see [Sign-up modes](#sign-up-modes).
+- **Rate limits:** sign-in, sign-up, forgot-password and reset-password, per client address and (sign-in, forgot-password) per email; 429 with `Retry-After`. See [Rate limits](#rate-limits).
 - **Reset links:** single use, expire after `PASSWORD_RESET_MINUTES`, only the SHA-256 hash is stored; using one signs out every device.
 - **Sessions:** 32 random bytes; only the SHA-256 hash is stored. Cookie is `httpOnly`, `SameSite=Lax`, `Secure` in production. Bearer works for apps.
 - **Tenancy:** every `/orgs/{id}/…` route goes through `OrgAccess`. Non-members get 404, so they can't learn an org exists.
@@ -489,4 +547,4 @@ Follows the OWASP Forgot Password cheat sheet:
 1. Approval follow-ups: an expiry sweeper (needs the job queue), *retry / skip* for `needs_attention` runs, saved rules ("always allow"), org ceiling and routine levels, per-call risk raising, `run_steps` audit rows, a tool-calls-per-run limit, an org-wide approvals stream. Then the rest of step 3: `plugins/_template`, a generated and CI-checked `manifest.json`, import rules in CI, release-please for the SDK. Full order: [agents-and-plugins.md §14](../architecture/agents-and-plugins.md#14-build-order-each-step-small-tested-and-usable).
 2. The job queue (procrastinate) and a separate worker, deferred by [ADR 0007](../adr/0007-runs-in-the-api-process-for-now.md); then the Postgres `LISTEN/NOTIFY` bus for several API copies.
 3. Memory: the org's OpenAI key for memory, `memory_audit`, tainted memories; trimming old `run_events` and checkpoints.
-4. Email verification, rate limiting on sign-in and forgot-password.
+4. Email verification; rate limits shared between several API copies (with the job queue).

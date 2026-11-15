@@ -31,6 +31,21 @@ describe("NewGroupDialog", () => {
     expect(onOpenChange).toHaveBeenCalledWith(false);
   });
 
+  it("the first bot picked leads, unless you choose another", async () => {
+    const { user } = renderUI(<NewGroupDialog open onOpenChange={() => {}} />);
+    await user.type(screen.getByLabelText("Name"), "Hiring");
+    await user.click(screen.getByRole("checkbox", { name: /Talent Scout/ }));
+    expect(screen.queryByRole("combobox", { name: "Lead" })).not.toBeInTheDocument(); // one bot: it leads
+
+    await user.click(screen.getByRole("checkbox", { name: /Chief of staff/ }));
+    const lead = screen.getByRole("combobox", { name: "Lead" });
+    expect(lead).toHaveValue("b_talent");
+    await user.selectOptions(lead, "Chief");
+    await user.click(screen.getByRole("button", { name: "Create" }));
+
+    expect(getStoreSnapshot().threads[0]).toMatchObject({ title: "Hiring", leadBotId: "b_chief" });
+  });
+
   it("lists your teammates but not you", () => {
     renderUI(<NewGroupDialog open onOpenChange={() => {}} />);
     expect(screen.getByRole("checkbox", { name: /Omar Farooq/ })).toBeInTheDocument();

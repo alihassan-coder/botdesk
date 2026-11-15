@@ -6,15 +6,19 @@ import { BotAvatar, MemberAvatar } from "@/features/bots/bot-avatar";
 import { MessageActions } from "@/features/messages/message-actions";
 import { MessageParts } from "@/features/messages/message-parts";
 import { BudgetStopNotice } from "./budget-stop-notice";
+import { SystemNotice } from "./system-notice";
 
 /**
  * One message. Yours line up on the right; bots and teammates on the left.
- * In group chats every message from someone else shows who wrote it.
+ * In group chats every message from someone else shows who wrote it; in a DM, so does a guest's
+ * (another bot pulled in with an @mention, ADR 0009). Notes from BotDesk itself are a status line.
  */
-export function MessageItem({ message, isGroup }: { message: Message; isGroup: boolean }) {
+export function MessageItem({ message, isGroup, dmBotId }: { message: Message; isGroup: boolean; dmBotId?: string }) {
   const me = useCurrentUser();
+  if (message.author.type === "system") return <SystemNotice message={message} />;
   const isOwn = message.author.type === "user" && message.author.id === me.id;
-  const showAuthor = isGroup && !isOwn;
+  const isGuest = !isGroup && message.author.type === "bot" && dmBotId !== undefined && message.author.id !== dmBotId;
+  const showAuthor = (isGroup || isGuest) && !isOwn;
   const isThinking = message.status === "streaming" && message.parts.every((p) => p.type !== "text" || !p.text);
 
   return (

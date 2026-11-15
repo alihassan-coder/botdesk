@@ -20,6 +20,7 @@
 import { useCallback, useRef, useSyncExternalStore } from "react";
 import { makeHandle } from "@/lib/handle";
 import { parseMentions } from "@/lib/mentions";
+import { HOP_LIMIT, chainStoppedText, routeMessage, type BotReply, type ChatBots } from "@/lib/mention-routing";
 import { previewFromArgs } from "@/lib/args-form";
 import { approvalApi, authApi, botApi, inviteApi, memoryApi, modelApi, orgApi, pluginApi, runApi, threadApi, usageApi } from "./api/botdesk";
 import { ApiError, apiBaseUrl } from "./api/client";
@@ -43,6 +44,8 @@ export interface NewGroupInput {
   title: string;
   botIds: string[];
   userIds: string[];
+  /** One of `botIds`; left out, the first bot picked leads. */
+  leadBotId?: string;
 }
 
 /** What you fill in to create a routine. */
@@ -50,6 +53,8 @@ export type NewRoutineInput = Pick<Routine, "botId" | "name" | "description" | "
 
 /** "unknown" until the browser has checked for a saved session (first render, server). */
 export type AuthStatus = "unknown" | "signed-in" | "signed-out";
+/** Who may create an account on this server (the API's SIGNUP_MODE). */
+export type SignUpMode = "open" | "invite-only" | "closed";
 
 /** Whether a chat's messages have arrived from the API, and whether there are older ones to load. */
 export interface ThreadLoad {
@@ -500,9 +505,10 @@ const authActions = {
     }
   },
 
-  async signUp(input: { name: string; email: string; password: string }): Promise<ActionResult> {
+  /** With `inviteToken` (from an invite link) the new account joins that organization instead of getting its own. */
+  async signUp(input: { name: string; email: string; password: string; inviteToken?: string }): Promise<ActionResult> {
     if (state.guest) leaveGuestMode();
-    if (isDemoMode()) return mockAuth.signUp(input);
+    if (isDemoMode()) return mockAuth.signUp(input); // MOCK: no invites, so the token is ignored.
     try {
       startApiSession(await authApi.signUp({ ...input, name: input.name.trim(), email: input.email.trim() }));
       return { ok: true };
@@ -847,11 +853,12 @@ const chatActions = {
     if (!title) return { ok: false, error: "Give the group a name." };
     if (input.botIds.length === 0) return { ok: false, error: "Pick at least one bot." };
     const userIds = input.userIds.filter((u) => u !== state.currentUserId);
+    const leadBotId = input.leadBotId && input.botIds.includes(input.leadBotId) ? input.leadBotId : input.botIds[0];
 
     let thread: Thread;
     if (isDemoMode()) {
       thread = {
-        id: `t_${id()}`, kind: "group", title,
+        id: `t_${id()}`, kind: "group", title, leadBotId, createdBy: state.currentUserId,
         participants: [
           { type: "user", id: state.currentUserId },
           ...userIds.map((u) => ({ type: "user" as const, id: u })),
@@ -861,13 +868,37 @@ const chatActions = {
       };
     } else {
       try {
-        thread = toThread(await threadApi.createGroup(state.org.id, { title, botIds: input.botIds, userIds }));
+        thread = toThread(await threadApi.createGroup(state.org.id, { title, botIds: input.botIds, userIds, leadBotId }));
       } catch (error) {
         return failure(error);
       }
     }
     set((st) => ({ ...st, threads: [thread, ...st.threads.filter((t) => t.id !== thread.id)] }));
     return { ok: true, threadId: thread.id };
+  },
+
+  /**
+   * Changes a group's lead (the bot that answers messages that @mention no bot), or clears it
+   * with null. The group's creator, owners and admins may (`useCanChangeLead`).
+   */
+  async setGroupLead(threadId: string, botId: string | null): Promise<ActionResult> {
+    const orgId = state.org.id;
+    const putLead = (leadBotId: string | undefined) =>
+      set((st) => ({
+        ...st,
+        threads: st.threads.map((t) => (t.id === threadId ? { ...t, leadBotId } : t)),
+      }));
+    if (isDemoMode()) {
+      putLead(botId ?? undefined);
+      return { ok: true };
+    }
+    try {
+      const saved = toThread(await threadApi.setLead(orgId, threadId, botId));
+      if (state.org.id === orgId) putLead(saved.leadBotId);
+      return { ok: true };
+    } catch (error) {
+      return failure(error);
+    }
   },
 };
 
@@ -1213,7 +1244,10 @@ export const actions = {
   ...modelActions,
   ...usageActions,
 
-  /** Sends your message. Bots reply in a moment: in a DM that bot, in a group the ones you @mention. */
+  /**
+   * Sends your message. Bots reply in a moment (ADR 0009): in a DM its bot, or the other bots you
+   * @mention as guests; in a group the bots you @mention, or else its lead.
+   */
   sendMessage(threadId: string, text: string) {
     const s = state;
     const mentions = parseMentions(text, s.bots, s.users);
@@ -1235,14 +1269,11 @@ export const actions = {
       ),
     }));
 
-    // MOCK: pick who replies. In a DM it's always that bot (it can hand work off to others);
-    // in a group it's the first bot you mentioned, else the first bot in the group.
+    // MOCK: the same rules as the API (lib/mention-routing.ts mirrors services/mention_routing.py).
     const thread = s.threads.find((t) => t.id === threadId);
-    const replyBotId =
-      thread?.kind === "dm"
-        ? thread.botId
-        : (mentions.find((m) => m.type === "bot")?.id ?? thread?.participants.find((p) => p.type === "bot")?.id);
-    if (replyBotId) fakeBotReply(threadId, replyBotId, text);
+    if (!thread) return;
+    const routing = routeMessage(mockChatBots(s, thread), text, { orgBots: s.bots, hopLimit: HOP_LIMIT });
+    queueMockReplies(threadId, routing.replies, text);
   },
 
   /** Marks the question answered. On the API the answer is also sent as your message, so the bot gets it. */
@@ -1514,6 +1545,7 @@ export const actions = {
     cancelMockTimers();
     closeChatStreams();
     restoring = null;
+    signUpMode = { mode: null, loading: null };
     set(() => seed());
   },
 };
@@ -1568,6 +1600,7 @@ function every(run: (stop: () => void) => void, ms: number) {
 }
 
 function cancelMockTimers() {
+  mockQueues.clear();
   // clearTimeout and clearInterval cancel either kind of timer.
   mockTimers.forEach((timer) => clearTimeout(timer));
   mockTimers.clear();
@@ -1587,13 +1620,75 @@ function pushBotMessage(threadId: string, botId: string, parts: Message["parts"]
   return msg.id;
 }
 
+/**
+ * MOCK ONLY: who may be @mentioned by a bot in this chat. A group: its bots and lead. A DM: its
+ * bot, plus every bot that has replied there (guests), as the API counts bots that had a run.
+ */
+function mockChatBots(s: State, thread: Thread): ChatBots {
+  if (thread.kind === "group") {
+    return { kind: "group", bots: thread.participants.filter((p) => p.type === "bot").map((p) => p.id), defaultBot: thread.leadBotId };
+  }
+  const guests = s.messages.filter((m) => m.threadId === thread.id && m.author.type === "bot").map((m) => m.author.id);
+  return { kind: "dm", bots: [...new Set([...(thread.botId ? [thread.botId] : []), ...guests])], defaultBot: thread.botId };
+}
+
+/** MOCK ONLY: replies waiting their turn, per chat (one bot replies at a time, as on the API). */
+const mockQueues = new Map<string, { reply: BotReply; trigger: string }[]>();
+
+function queueMockReplies(threadId: string, replies: BotReply[], trigger: string) {
+  const queue = mockQueues.get(threadId) ?? [];
+  const idle = queue.length === 0;
+  queue.push(...replies.map((reply) => ({ reply, trigger })));
+  mockQueues.set(threadId, queue);
+  if (idle && queue.length > 0) fakeBotReply(threadId, queue[0].reply, queue[0].trigger);
+}
+
+/**
+ * MOCK ONLY: a reply finished. Bots it @mentions get their turn one hop on (past the hop limit the
+ * chat says the chain stopped), then the next queued reply starts.
+ */
+function finishMockReply(threadId: string, reply: BotReply, text: string) {
+  const thread = state.threads.find((t) => t.id === threadId);
+  const queue = mockQueues.get(threadId) ?? [];
+  queue.shift();
+  if (thread) {
+    const routing = routeMessage(mockChatBots(state, thread), text, { orgBots: state.bots, hopLimit: HOP_LIMIT, byBot: reply });
+    queue.push(...routing.replies.map((next) => ({ reply: next, trigger: text })));
+    if (routing.chainStopped) pushSystemNotice(threadId, chainStoppedText(HOP_LIMIT));
+  }
+  if (queue.length === 0) return void mockQueues.delete(threadId);
+  fakeBotReply(threadId, queue[0].reply, queue[0].trigger);
+}
+
+function pushSystemNotice(threadId: string, text: string) {
+  const msg: Message = { id: id(), threadId, author: { type: "system", id: "system" }, parts: [{ type: "text", text }], createdAt: now() };
+  set((st) => ({ ...st, messages: [...st.messages, msg] }));
+}
+
+/**
+ * MOCK ONLY: what a fake bot says. It repeats the request (with its @s dropped, so quoting never
+ * mentions anyone). Asked to "relay", it passes the work to the next bot in the chat, so the demo
+ * shows bots handing over to each other until the hop limit stops the chain.
+ */
+function mockReplyText(threadId: string, botId: string, trigger: string): string {
+  const quote = trigger.replaceAll("@", "").slice(0, 60) + (trigger.length > 60 ? "…" : "");
+  const text = `Got it. I'll take care of “${quote}” and report back here. (This is mock data; real bots arrive with the API.)`;
+  const thread = state.threads.find((t) => t.id === threadId);
+  if (!thread || !/\brelay\b/i.test(trigger)) return text;
+  const bots = mockChatBots(state, thread).bots;
+  const next = bots[(bots.indexOf(botId) + 1) % bots.length];
+  const handle = next && next !== botId ? state.bots.find((b) => b.id === next)?.handle : undefined;
+  return handle ? `${text} Relay: passing it on to @${handle}.` : text;
+}
+
 /** MOCK ONLY: simulates a bot streaming a reply. Real replies arrive over realtime. */
-function fakeBotReply(threadId: string, botId: string, userText: string) {
+function fakeBotReply(threadId: string, reply: BotReply, userText: string) {
+  const botId = reply.botId;
   const bot = state.bots.find((b) => b.id === botId);
-  if (!bot) return;
+  if (!bot) return finishMockReply(threadId, reply, "");
   set((st) => ({ ...st, bots: st.bots.map((b) => (b.id === botId ? { ...b, status: "working", statusText: "Thinking…" } : b)) }));
 
-  const full = `Got it. I'll take care of “${userText.slice(0, 60)}${userText.length > 60 ? "…" : ""}” and report back here. (This is mock data; real bots arrive with the API.)`;
+  const full = mockReplyText(threadId, botId, userText);
   const words = full.split(" ");
   let i = 0;
   let msgId: string | null = null;
@@ -1620,6 +1715,7 @@ function fakeBotReply(threadId: string, botId: string, userText: string) {
       if (done) {
         stop();
         set((st) => ({ ...st, bots: st.bots.map((b) => (b.id === botId ? { ...b, status: "idle", statusText: "Just replied" } : b)) }));
+        finishMockReply(threadId, reply, full);
       }
     }, 60);
   }, 600);
@@ -1677,6 +1773,35 @@ export const useOrg = () => useStore(useCallback((s: State) => s.org, []));
 export const useOrgs = () => useStore(useCallback((s: State) => s.orgs, []));
 export const useAuthStatus = () => useStore(useCallback((s: State) => s.authStatus, []));
 export const useIsGuest = () => useStore(useCallback((s: State) => s.guest, []));
+
+/*
+ * The sign-up mode, asked once per page load (it only changes when the server restarts). Kept
+ * apart from `state` since it belongs to the server, not to who is signed in. If the API can't
+ * be reached it reads as open, so the form shows and sign-up itself says what's wrong.
+ */
+let signUpMode: { mode: SignUpMode | null; loading: Promise<void> | null } = { mode: null, loading: null };
+const signUpModeListeners = new Set<() => void>();
+
+function subscribeSignUpMode(listener: () => void) {
+  signUpModeListeners.add(listener);
+  if (!isDemoMode() && !signUpMode.loading) {
+    const current = signUpMode;
+    current.loading = authApi.options().then(
+      ({ signUpMode: mode }) => void (current.mode = mode),
+      () => void (current.mode = "open"),
+    ).then(() => signUpModeListeners.forEach((notify) => notify()));
+  }
+  return () => void signUpModeListeners.delete(listener);
+}
+
+/** Open, invite-only or closed; null until the API answers (and on the server). Always open in the demo. */
+export function useSignUpMode(): SignUpMode | null {
+  return useSyncExternalStore(
+    subscribeSignUpMode,
+    () => (isDemoMode() ? "open" : signUpMode.mode),
+    () => null,
+  );
+}
 /**
  * True when screens show the demo (no API, or a guest). Screens the API doesn't cover yet use it
  * to say so instead of pretending to work.
@@ -1687,6 +1812,18 @@ export const useUser = (id?: string) => useStore(useCallback((s: State) => s.use
 export const useBot = (id?: string) => useStore(useCallback((s: State) => s.bots.find((b) => b.id === id), [id]));
 export const useModel = (id?: string) => useStore(useCallback((s: State) => s.models.find((m) => m.id === id), [id]));
 export const useThread = (id?: string) => useStore(useCallback((s: State) => s.threads.find((t) => t.id === id), [id]));
+
+/** Whether you may change this group's lead: its creator, and the organization's owners and admins. */
+export const useCanChangeLead = (thread: Thread) =>
+  useStore(
+    useCallback(
+      (s: State) => {
+        const me = s.users.find((u) => u.id === s.currentUserId);
+        return thread.kind === "group" && (thread.createdBy === s.currentUserId || me?.role === "owner" || me?.role === "admin");
+      },
+      [thread.kind, thread.createdBy],
+    ),
+  );
 
 /** All threads, newest activity first. */
 export const useThreads = () => useStore(useCallback((s: State) => [...s.threads].sort(newestFirst), []));

@@ -12,6 +12,8 @@ export interface MentionOption {
   role?: string;
   color?: BotAvatarColor;
   status?: BotStatus;
+  /** Shown instead of the role, e.g. "Joins as a guest" for another bot offered in a DM. */
+  hint?: string;
 }
 
 export const MENTION_LIST_ID = "mention-suggestions";
@@ -60,7 +62,7 @@ export function MentionSuggestions({
               <span className="block truncate text-sm font-medium">{option.name}</span>
               <span className="block truncate text-xs text-muted-foreground">
                 @{option.handle}
-                {option.type === "bot" ? ` · ${option.role || "Bot"}` : " · Teammate"}
+                {option.type === "bot" ? ` · ${option.hint ?? (option.role || "Bot")}` : " · Teammate"}
               </span>
             </span>
           </li>

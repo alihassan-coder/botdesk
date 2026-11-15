@@ -40,8 +40,10 @@ from langgraph.runtime import Runtime
 from langgraph.types import interrupt
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from src.core.config import Settings
 from src.core.database import utcnow
 from src.models.bot import Bot, SecurityLevel
+from src.models.run import Run
 from src.plugins.registry import ToolRegistry
 from src.runtime import tool_pipeline
 from src.runtime.chat_model import (
@@ -59,7 +61,7 @@ from src.runtime.prompt import HistoryLine, build_prompt
 from src.runtime.reporter import RunReporter
 from src.runtime.token_batcher import BackgroundSender, TokenBatcher
 from src.runtime.tool_pipeline import ToolCallRequest, finished_event
-from src.services import pricing, run_service, thread_service, tool_execution_service, usage_service
+from src.services import pricing, run_service, tool_execution_service, usage_service
 from src.services.tool_execution_service import RunRef
 
 logger = logging.getLogger(__name__)
@@ -102,6 +104,8 @@ class RunState(TypedDict, total=False):
     tainted: bool
     member_id: str | None
     group: bool  # a group chat: messages are labelled with who wrote them (missing in old checkpoints: a DM)
+    guest: bool  # pulled into someone's DM by an @mention (ADR 0009; missing in old checkpoints: no)
+    hop: int  # 0 when a person's message started the run (missing in old checkpoints: 0)
     memory_on: bool  # the bot's memory switch when the run started (missing in old checkpoints)
     # Oldest first, ending with the trigger: {"fromThisBot", "text", "authorType", "author"}
     # (checkpoints saved before speaker labels have only the first two).
@@ -139,6 +143,9 @@ class RunDeps:
     registry: ToolRegistry
     tool_timeout_seconds: float
     approval_expiry: timedelta
+    settings: Settings  # the hop limit and run limits for runs a reply's @mentions start
+    # Starts runs in the background (`RunManager.start`); called after they're committed.
+    start_runs: Callable[[list[Run]], None]
 
     @property
     def run_ref(self) -> RunRef:
@@ -200,6 +207,8 @@ async def load_context(state: RunState, runtime: Runtime[RunDeps]) -> RunState:
         "tainted": context.tainted,
         "member_id": str(context.member_id) if context.member_id else None,
         "group": context.group,
+        "guest": context.guest,
+        "hop": context.hop,
         "memory_on": context.memory_enabled,
         "history": [
             {
@@ -245,6 +254,8 @@ async def call_model(state: RunState, runtime: Runtime[RunDeps]) -> RunState:
         memories=state.get("memories", []),
         history=_history_lines(state),
         group=state.get("group", False),
+        guest=state.get("guest", False),
+        asked_by_bot=state.get("hop", 0) > 0,
     )
     turns = state.get("turns", [])
     messages = [*prompt, *messages_from_dict(turns)]
@@ -500,30 +511,36 @@ def after_call(state: RunState) -> Literal["prepare_call", "call_model"]:
 
 
 async def save_reply(state: RunState, runtime: Runtime[RunDeps]) -> RunState:
+    """Save the reply (with its event) and, in the same transaction, a queued run for each bot it
+    @mentions (ADR 0009), or the "chain stopped" notice past the hop limit. Those runs start once
+    it's committed; they wait for this run to finish (one run at a time per chat)."""
     deps = runtime.context
     async with deps.sessionmaker() as db:
         cards = await tool_execution_service.reply_cards(db, deps.run_id)
-        message = await run_service.save_reply(
+        saved = await run_service.save_reply(
             db,
             run_id=deps.run_id,
             message_id=uuid.UUID(state["reply_message_id"]),
             text=state.get("reply", ""),
+            settings=deps.settings,
             extra_parts=cards,
         )
-        message_json = thread_service.message_out(message).model_dump(mode="json", by_alias=True)
-        deps.reporter.add(db, "message_saved", {"message": message_json})
         await db.commit()
     deps.reporter.announce()
+    deps.start_runs(saved.runs)
     return {}
 
 
 async def remember(state: RunState, runtime: Runtime[RunDeps]) -> RunState:
     """Saving memories costs a model call, so it runs in the background and the reply isn't
     held up. Runs that read outside text (tainted) don't save memories (§9), and neither do
-    bots with memory turned off."""
+    bots with memory turned off, or runs another bot's message started (hop > 0, ADR 0009):
+    memories come from talking with people, not from one bot's output steering another's."""
     deps = runtime.context
-    # Memory off when the run started: skip the read. On: read it again, so turning it off applies at once.
-    if state.get("tainted") or not state.get("memory_on", True) or not await _bot_memory_on(deps):
+    if state.get("tainted") or state.get("hop", 0) > 0 or not state.get("memory_on", True):
+        return {}
+    # On when the run started: read the switch again, so turning it off applies at once.
+    if not await _bot_memory_on(deps):
         return {}
     conversation = [
         {"role": "user", "content": _last_human_text(state)},

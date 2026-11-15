@@ -57,6 +57,19 @@ describe("Composer", () => {
       expect(names.some((n) => n?.includes("@inbox"))).toBe(false);
     });
 
+    it("in a DM, offers the DM's bot first, then every other bot, which joins as a guest", async () => {
+      const chief = getStoreSnapshot().threads.find((t) => t.id === "t_chief")!;
+      const { user } = renderUI(<Composer thread={chief} />);
+      await user.type(screen.getByRole("textbox", { name: "Message Chief" }), "@");
+
+      const options = screen.getAllByRole("option").map((o) => o.textContent ?? "");
+      expect(options).toHaveLength(getStoreSnapshot().bots.length);
+      expect(options[0]).toContain("@chief");
+      expect(options[0]).not.toContain("Joins as a guest");
+      expect(options.find((o) => o.includes("@inbox"))).toContain("Joins as a guest");
+      expect(options.some((o) => o.includes("Teammate"))).toBe(false);
+    });
+
     it("filters as you type, and Enter picks instead of sending", async () => {
       const { user } = renderUI(<Composer thread={launchCrew()} />);
       const before = getStoreSnapshot().messages.length;

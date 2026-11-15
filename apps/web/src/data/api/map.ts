@@ -43,10 +43,12 @@ export function toApiBot(bot: Partial<Bot>): Partial<ApiBotInput> {
 }
 
 /** The API doesn't count unread messages yet, so every chat starts read. */
-export function toThread({ id, kind, title, botId, participants, lastMessageAt, lastMessagePreview }: ApiThread): Thread {
+export function toThread({ id, kind, title, botId, leadBotId, createdBy, participants, lastMessageAt, lastMessagePreview }: ApiThread): Thread {
   return {
     id, kind, title, participants, lastMessagePreview, lastMessageAt: asUtc(lastMessageAt), unread: 0,
     ...(botId ? { botId } : {}),
+    ...(leadBotId ? { leadBotId } : {}),
+    ...(createdBy ? { createdBy } : {}),
   };
 }
 

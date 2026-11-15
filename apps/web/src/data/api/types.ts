@@ -154,6 +154,10 @@ export interface ApiThread {
   title: string;
   /** For DMs, the bot the chat is with. */
   botId: string | null;
+  /** Groups: the bot that answers a message that mentions no bot. Always null for a DM. */
+  leadBotId: string | null;
+  /** Who started the chat (null if their account is gone). */
+  createdBy: string | null;
   participants: { type: "user" | "bot"; id: string }[];
   lastMessageAt: string;
   /** "" until the chat has a message. */

@@ -6,13 +6,15 @@ import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Field, FieldError, FieldGroup, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
+import { NativeSelect, NativeSelectOption } from "@/components/ui/native-select";
 import { actions, useBots, useCurrentUser, useUsers } from "@/data/store";
 import { BotAvatar, MemberAvatar } from "@/features/bots/bot-avatar";
 import { GroupPickList } from "./group-pick-list";
 
 /**
  * "New group" from the sidebar: name it, pick bots and teammates, then open the new chat.
- * You're always in it. In a group, the bots you @mention are the ones who reply.
+ * You're always in it. In a group, the bots you @mention are the ones who reply; a message that
+ * mentions no bot goes to the lead (the first bot picked, unless you choose another).
  */
 export function NewGroupDialog({ open, onOpenChange, onCreated }: { open: boolean; onOpenChange: (open: boolean) => void; onCreated?: () => void }) {
   return (
@@ -33,6 +35,9 @@ function NewGroupForm({ onCancel, onCreated }: { onCancel: () => void; onCreated
   const [title, setTitle] = useState("");
   const [botIds, setBotIds] = useState<string[]>([]);
   const [userIds, setUserIds] = useState<string[]>([]);
+  const [chosenLead, setChosenLead] = useState<string>();
+  // The lead you chose while it's still picked; otherwise the first bot picked.
+  const leadBotId = chosenLead && botIds.includes(chosenLead) ? chosenLead : botIds[0];
   const [error, setError] = useState<string | null>(null);
   const [creating, startCreating] = useTransition();
   const ready = title.trim() !== "" && botIds.length > 0;
@@ -49,7 +54,7 @@ function NewGroupForm({ onCancel, onCreated }: { onCancel: () => void; onCreated
         e.preventDefault();
         if (!ready) return;
         startCreating(async () => {
-          const result = await actions.createGroup({ title, botIds, userIds });
+          const result = await actions.createGroup({ title, botIds, userIds, leadBotId });
           if (!result.ok) return setError(result.error);
           router.push(`/chat/${result.threadId}`);
           onCreated();
@@ -58,7 +63,7 @@ function NewGroupForm({ onCancel, onCreated }: { onCancel: () => void; onCreated
     >
       <DialogHeader>
         <DialogTitle>New group</DialogTitle>
-        <DialogDescription>You&apos;re in it too. Bots reply when you @mention them.</DialogDescription>
+        <DialogDescription>You&apos;re in it too. Bots reply when you @mention them; the lead answers everything else.</DialogDescription>
       </DialogHeader>
       <Field>
         <FieldLabel htmlFor="group-title">Name</FieldLabel>
@@ -84,6 +89,16 @@ function NewGroupForm({ onCancel, onCreated }: { onCancel: () => void; onCreated
           />
         )}
       </FieldGroup>
+      {botIds.length > 1 && (
+        <Field>
+          <FieldLabel htmlFor="group-lead">Lead</FieldLabel>
+          <NativeSelect id="group-lead" className="w-full" value={leadBotId} onChange={(e) => setChosenLead(e.target.value)}>
+            {botIds.map((botId) => (
+              <NativeSelectOption key={botId} value={botId}>{bots.find((b) => b.id === botId)?.name}</NativeSelectOption>
+            ))}
+          </NativeSelect>
+        </Field>
+      )}
       {error && <FieldError>{error}</FieldError>}
       <DialogFooter>
         <Button type="button" variant="ghost" onClick={onCancel}>Cancel</Button>

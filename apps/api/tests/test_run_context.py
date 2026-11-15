@@ -39,7 +39,9 @@ class Chat:
         """The run answers (as if it ran), tainted or not."""
         async with self.app.state.sessionmaker() as db:
             await db.execute(update(Run).where(Run.id == run_id).values(tainted=tainted, status="succeeded"))
-            await run_service.save_reply(db, run_id=run_id, message_id=uuid.uuid4(), text=text)
+            await run_service.save_reply(
+                db, run_id=run_id, message_id=uuid.uuid4(), text=text, settings=self.app.state.settings
+            )
             await db.commit()
 
     async def run_tainted(self, run_id: uuid.UUID) -> bool:

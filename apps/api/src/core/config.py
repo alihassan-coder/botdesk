@@ -10,6 +10,9 @@ from typing import Literal
 from pydantic import SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+# Who may create an account (SIGNUP_MODE); see `Settings.signup_mode`.
+SignUpMode = Literal["open", "invite-only", "closed"]
+
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
@@ -55,6 +58,9 @@ class Settings(BaseSettings):
     run_max_steps: int = 25
     run_max_seconds: int = 900
     bot_max_running_runs: int = 2
+    # Bots @mentioning bots (ADR 0009): how many hops a chain of bot replies may go from a
+    # person's message before it stops (and the chat says so).
+    bot_hop_limit: int = 3
 
     # Tools. PLUGINS is the allowlist of built-in plugins to load (ADR 0006); "demo" adds fake
     # tools (notes, a fake outbox) so approvals can be tried with no outside account.
@@ -75,6 +81,16 @@ class Settings(BaseSettings):
     session_cookie_name: str = "botdesk_session"
     session_days: int = 30
     invitation_days: int = 7
+
+    # Who may create an account: open (anyone who reaches the server), invite-only (only with an
+    # unused invite link for that email; they join the inviting organization) or closed (nobody
+    # new; existing accounts still sign in and accept invites).
+    signup_mode: SignUpMode = "open"
+
+    # Proxies whose X-Forwarded-For / X-Forwarded-Proto are believed (comma-separated IPs or
+    # CIDRs, "*" = any). The same variable uvicorn reads. Rate limits key on the client address,
+    # so behind a reverse proxy this must include it; anyone else's header is ignored.
+    forwarded_allow_ips: str = "127.0.0.1,::1"
 
     # Email through Brevo's transactional API. Without a key, emails are only logged (dev, tests).
     brevo_api_key: SecretStr | None = None

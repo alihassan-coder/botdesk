@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import { actions, getStoreSnapshot as state } from "./store";
 
 /** Lets the mock bot finish "thinking" and streaming its reply. */
-const finishBotReply = () => vi.advanceTimersByTime(10_000);
+const finishBotReply = () => vi.advanceTimersByTime(30_000);
 const messagesIn = (threadId: string) => state().messages.filter((m) => m.threadId === threadId);
 const lastMessageIn = (threadId: string) => messagesIn(threadId).at(-1)!;
 
@@ -24,22 +24,78 @@ describe("sendMessage", () => {
     ]);
   });
 
-  it("in a DM, the DM's bot replies even if another bot is mentioned", () => {
+  it("in a DM, mentioning another bot pulls it in as a guest, and only it replies", () => {
     vi.useFakeTimers();
     actions.sendMessage("t_chief", "Ask @inbox for a summary.");
     finishBotReply();
 
     const reply = lastMessageIn("t_chief");
-    expect(reply.author).toEqual({ type: "bot", id: "b_chief" });
+    expect(reply.author).toEqual({ type: "bot", id: "b_inbox" });
     expect(reply.status).toBe("complete");
+    expect(messagesIn("t_chief").at(-2)?.author).toEqual({ type: "user", id: "u_me" }); // Chief stays quiet
+    expect(state().threads.find((t) => t.id === "t_chief")?.title).toBe("Chief");
   });
 
-  it("in a group, the mentioned bot replies", () => {
+  it("in a DM, a message with no mention goes to the DM's bot", () => {
     vi.useFakeTimers();
-    actions.sendMessage("t_launch", "@sales hold the emails.");
+    actions.sendMessage("t_chief", "Morning!");
     finishBotReply();
 
-    expect(lastMessageIn("t_launch").author).toEqual({ type: "bot", id: "b_sales" });
+    expect(lastMessageIn("t_chief").author).toEqual({ type: "bot", id: "b_chief" });
+  });
+
+  it("in a group, the mentioned bots reply one at a time, in mention order", () => {
+    vi.useFakeTimers();
+    actions.sendMessage("t_launch", "@sales hold the emails, @bugs check signup.");
+    finishBotReply();
+
+    const replies = messagesIn("t_launch").slice(-2);
+    expect(replies.map((m) => m.author)).toEqual([
+      { type: "bot", id: "b_sales" },
+      { type: "bot", id: "b_bugs" },
+    ]);
+  });
+
+  it("in a group, a message that mentions no bot goes to the lead", () => {
+    vi.useFakeTimers();
+    actions.sendMessage("t_launch", "Where are we?");
+    finishBotReply();
+
+    expect(lastMessageIn("t_launch").author).toEqual({ type: "bot", id: "b_chief" });
+  });
+
+  it("a bot reply that mentions another bot starts its reply, until the hop limit stops the chain", () => {
+    vi.useFakeTimers();
+    actions.sendMessage("t_launch", "relay the launch plan");
+    finishBotReply();
+
+    const since = messagesIn("t_launch").slice(-5);
+    expect(since.map((m) => m.author.id)).toEqual(["b_chief", "b_sales", "b_bugs", "b_chief", "system"]);
+    expect(since[0].parts.find((p) => p.type === "text")).toMatchObject({ text: expect.stringContaining("@sales") });
+    expect(since[4].parts).toEqual([{ type: "text", text: "Stopped a chain of bot replies after 3 hops." }]);
+  });
+});
+
+describe("group leads (mock)", () => {
+  it("a new group is led by the first bot picked, or the one you choose", async () => {
+    const first = await actions.createGroup({ title: "Ops", botIds: ["b_sales", "b_bugs"], userIds: [] });
+    const chosen = await actions.createGroup({ title: "QA", botIds: ["b_sales", "b_bugs"], userIds: [], leadBotId: "b_bugs" });
+
+    expect(state().threads.find((t) => t.id === first.threadId)?.leadBotId).toBe("b_sales");
+    expect(state().threads.find((t) => t.id === chosen.threadId)?.leadBotId).toBe("b_bugs");
+  });
+
+  it("changing the lead changes who answers; with no lead nobody does", async () => {
+    vi.useFakeTimers();
+    await actions.setGroupLead("t_launch", "b_bugs");
+    actions.sendMessage("t_launch", "Anything new?");
+    finishBotReply();
+    expect(lastMessageIn("t_launch").author).toEqual({ type: "bot", id: "b_bugs" });
+
+    await actions.setGroupLead("t_launch", null);
+    actions.sendMessage("t_launch", "Hello?");
+    finishBotReply();
+    expect(lastMessageIn("t_launch").author).toEqual({ type: "user", id: "u_me" });
   });
 
   it("shows the bot working while it replies, then idle", () => {

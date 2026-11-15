@@ -31,7 +31,10 @@ import {
 /** Every API route the web app uses, one plain function each. Only store.ts calls these. */
 
 export const authApi = {
-  signUp: (input: { name: string; email: string; password: string }) =>
+  /** Public: whether sign-up is open, invite-only or closed on this server. */
+  options: () => apiFetch<{ signUpMode: "open" | "invite-only" | "closed" }>("/api/v1/auth/options"),
+  /** `inviteToken` (from an invite link): join that organization instead of getting your own. */
+  signUp: (input: { name: string; email: string; password: string; inviteToken?: string }) =>
     apiFetch<ApiMe>("/api/v1/auth/sign-up", { method: "POST", body: input }),
   signIn: (email: string, password: string) =>
     apiFetch<ApiMe>("/api/v1/auth/sign-in", { method: "POST", body: { email, password } }),
@@ -90,15 +93,19 @@ export const threadApi = {
   list: (orgId: string) => apiFetch<ApiThread[]>(`/api/v1/orgs/${orgId}/threads`),
   /** Your chat with a bot: the existing one, or a new one. */
   openDm: (orgId: string, botId: string) => apiFetch<ApiThread>(`/api/v1/orgs/${orgId}/threads/dm`, { method: "POST", body: { botId } }),
-  /** A group with you plus the bots and people you pick; they must all be in the org. */
-  createGroup: (orgId: string, group: { title: string; botIds: string[]; userIds: string[] }) =>
+  /** A group with you plus the bots and people you pick; they must all be in the org. `leadBotId`
+   *  (one of `botIds`) answers messages that mention no bot; left out, the first bot picked leads. */
+  createGroup: (orgId: string, group: { title: string; botIds: string[]; userIds: string[]; leadBotId?: string }) =>
     apiFetch<ApiThread>(`/api/v1/orgs/${orgId}/threads/groups`, { method: "POST", body: group }),
+  /** Change a group's lead (one of its bots), or clear it with null. Its creator, owners and admins may. */
+  setLead: (orgId: string, threadId: string, botId: string | null) =>
+    apiFetch<ApiThread>(`/api/v1/orgs/${orgId}/threads/${threadId}/lead`, { method: "PUT", body: { botId } }),
   /** Oldest first. For older ones, pass the first message's createdAt as `before`. */
   messages: (orgId: string, threadId: string, { limit, before }: { limit: number; before?: string }) => {
     const query = new URLSearchParams({ limit: String(limit), ...(before ? { before } : {}) });
     return apiFetch<ApiMessage[]>(`/api/v1/orgs/${orgId}/threads/${threadId}/messages?${query}`);
   },
-  /** In a DM the bot replies; in a group, the bots you @mention do. Replies arrive on the event stream. */
+  /** Who replies: see ADR 0009 (a DM's bot and guests, a group's mentioned bots or lead). Replies arrive on the event stream. */
   send: (orgId: string, threadId: string, text: string) =>
     apiFetch<ApiSentMessage>(`/api/v1/orgs/${orgId}/threads/${threadId}/messages`, { method: "POST", body: { text } }),
 

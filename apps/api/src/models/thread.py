@@ -24,6 +24,8 @@ class Thread(IdMixin, CreatedAtMixin, Base):
     # DMs: the bot this chat is with. Removing the bot removes its DMs.
     bot_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("bots.id", ondelete="CASCADE"), index=True)
     created_by: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
+    # Groups: the bot that answers a member's message that mentions no bot (ADR 0009). Optional.
+    lead_bot_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("bots.id", ondelete="SET NULL"))
     last_message_at: Mapped[datetime] = mapped_column(default=utcnow)
 
 

@@ -401,8 +401,27 @@ describe("chats on the API", () => {
     expect(result).toEqual({ ok: true, threadId: "g2" });
     const request = vi.mocked(fetch).mock.calls.find(([url]) => String(url).endsWith("/threads/groups"))!;
     // You're added by the API as the creator, so you aren't sent.
-    expect(JSON.parse(String(request[1]?.body))).toEqual({ title: "Research", botIds: ["b1"], userIds: ["u2"] });
+    expect(JSON.parse(String(request[1]?.body))).toEqual({ title: "Research", botIds: ["b1"], userIds: ["u2"], leadBotId: "b1" });
     expect(state().threads[0]).toMatchObject({ id: "g2", kind: "group", title: "Research" });
+  });
+
+  it("setGroupLead changes the lead on the API, and clears it with null", async () => {
+    routes["PUT /api/v1/orgs/o1/threads/g1/lead"] = { status: 200, body: { ...thread("g1", null, "group"), leadBotId: "b2" } };
+    await expect(actions.setGroupLead("g1", "b2")).resolves.toEqual({ ok: true });
+    expect(state().threads.find((t) => t.id === "g1")?.leadBotId).toBe("b2");
+
+    routes["PUT /api/v1/orgs/o1/threads/g1/lead"] = { status: 200, body: { ...thread("g1", null, "group"), leadBotId: null } };
+    await actions.setGroupLead("g1", null);
+    expect(state().threads.find((t) => t.id === "g1")?.leadBotId).toBeUndefined();
+    const bodies = vi.mocked(fetch).mock.calls.filter(([url]) => String(url).endsWith("/g1/lead")).map(([, init]) => JSON.parse(String(init?.body)));
+    expect(bodies).toEqual([{ botId: "b2" }, { botId: null }]);
+  });
+
+  it("setGroupLead passes on the API's refusal", async () => {
+    routes["PUT /api/v1/orgs/o1/threads/g1/lead"] = { status: 403, body: { detail: "Only the group's creator, owners and admins can change its lead." } };
+    await expect(actions.setGroupLead("g1", "b2")).resolves.toEqual({
+      ok: false, error: "Only the group's creator, owners and admins can change its lead.",
+    });
   });
 
   it("createGroup passes on the API's refusal and adds nothing", async () => {

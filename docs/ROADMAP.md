@@ -76,17 +76,17 @@ When you finish something, tick it here in the same pull request.
 - [x] Plugins found through `botdesk.plugins` entry points, loaded only from the `PLUGINS` allowlist, checked at load (a broken one is skipped)
 - [x] `GET /orgs/{id}/plugins` for the "Connect apps" page
 - [x] Web: Connect apps shows the server's plugins as built in; the app catalogue is "coming soon" until connections exist
-- [ ] `plugins/_template`, a generated `manifest.json` checked in CI, import rules in CI
-- [ ] Release the SDK to PyPI with release-please (separate `sdk-v*` version)
+- [x] `plugins/_template`, a generated `manifest.json` checked in CI, import rules in CI ([author guide](plugins/README.md))
+- [ ] Release the SDK to PyPI with release-please (separate `sdk-v*` version): config and `release.yml` are ready; waiting on the owner's one-time PyPI and GitHub setup ([steps](../packages/plugin-sdk/README.md#releases))
 
 ### Gmail (step 5)
 - [ ] Connect with your own Google client; read, label, draft, and send only after approval
 
 ### Multi-bot (from the 2026-11-14 test)
-- [ ] Speaker names in group history, so a bot knows who said what
-- [ ] Bot-to-bot @mentions start runs, with a hop limit
+- [x] Speaker names in group history, so a bot knows who said what
+- [x] Bot-to-bot @mentions start runs, with a hop limit (ADR 0009); guests in DMs
 - [ ] Handoffs and Chief delegation: a handoff tool and tasks
-- [ ] A default responder when no bot is mentioned in a group
+- [x] A default responder when no bot is mentioned in a group: the group's lead
 
 ### Memory and routines (steps 6–7)
 - [x] Memory screen: see, search, correct and forget what a bot remembers; a memory switch per bot
@@ -98,9 +98,10 @@ When you finish something, tick it here in the same pull request.
 ### Self-hosting
 - [ ] Job queue and a separate worker process ([ADR 0005](adr/0005-job-queue-and-scaling.md)); approvals expire on a timer
 - [x] `deploy/docker-compose.yml` for one-command self-hosting ([docs/self-hosting](self-hosting/README.md), checked by the CI smoke test)
-- [ ] Sign-ups: open or invite-only (today anyone who can reach the server can sign up and gets their own organization)
+- [x] Sign-ups: open, invite-only or closed (`SIGNUP_MODE`); signing up from an invite link joins that organization
 - [ ] Row-level security in Postgres, before one install serves teams that don't trust each other
-- [ ] Rate limits (forgot password, sign-in) and your own email domain in Brevo
+- [x] Rate limits on sign-in, sign-up, forgot password and reset password (in-process; per address, and per email for sign-in and forgot password)
+- [ ] Your own email domain in Brevo
 
 ### Later
 - [x] Usage and budgets on the API

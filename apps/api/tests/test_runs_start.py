@@ -1,4 +1,5 @@
-"""Which bots reply to a message: always the bot in a DM, only @mentioned bots in a group."""
+"""Which bots reply to a member's message: the DM's bot in a DM; in a group, the @mentioned bots,
+or the lead when none is mentioned (ADR 0009; every case is in test_mention_routing.py)."""
 
 import httpx
 
@@ -27,24 +28,25 @@ async def test_a_message_in_a_bot_chat_starts_one_run(client: httpx.AsyncClient)
     assert run["triggerMessageId"] == sent.json()["id"]
 
 
-async def test_in_a_group_only_mentioned_bots_reply(client: httpx.AsyncClient) -> None:
+async def test_in_a_group_mentioned_bots_reply_or_else_the_lead(client: httpx.AsyncClient) -> None:
     org, (scout, inbox) = await _org_with_bots(client)
     group = (
         await client.post(f"{org}/threads/groups", json={"title": "Launch", "botIds": [scout["id"], inbox["id"]]})
     ).json()
     messages = f"{org}/threads/{group['id']}/messages"
 
-    assert (await client.post(messages, json={"text": "Morning all"})).json()["runIds"] == []
+    lead = (await client.post(messages, json={"text": "Morning all"})).json()["runIds"]
     one = (await client.post(messages, json={"text": "@inbox-manager any news?"})).json()["runIds"]
     both = (await client.post(messages, json={"text": "@Scout and @inbox-manager, sync up"})).json()["runIds"]
 
-    bots_of = [(await client.get(f"{org}/runs/{run_id}")).json()["botId"] for run_id in [*one, *both]]
-    assert bots_of == [inbox["id"], scout["id"], inbox["id"]]
+    bots_of = [(await client.get(f"{org}/runs/{run_id}")).json()["botId"] for run_id in [*lead, *one, *both]]
+    assert bots_of == [scout["id"], inbox["id"], scout["id"], inbox["id"]]  # Scout, picked first, leads
 
 
 async def test_a_bot_that_is_not_in_the_group_is_not_started(client: httpx.AsyncClient) -> None:
     org, (scout, _) = await _org_with_bots(client)
     group = (await client.post(f"{org}/threads/groups", json={"title": "Just Scout", "botIds": [scout["id"]]})).json()
+    await client.put(f"{org}/threads/{group['id']}/lead", json={"botId": None})
     sent = await client.post(f"{org}/threads/{group['id']}/messages", json={"text": "@inbox-manager hello?"})
     assert sent.json()["runIds"] == []
 

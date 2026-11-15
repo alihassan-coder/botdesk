@@ -2,6 +2,21 @@
 
 A short history of BotDesk, newest first. For one checklist of what is done and what is next, see [ROADMAP.md](ROADMAP.md).
 
+## 2026-11-15: bots working together
+
+[ADR 0009](adr/0009-bots-working-together.md), slice 1. Details: [backend guide](backend/README.md#bots-working-together).
+
+- **Mention routing** is one pure module (`services/mention_routing.py`, mirrored for the demo in `apps/web/src/lib/mention-routing.ts`), tested case by case.
+- **Bots @mention bots:** a reply that mentions a bot in the chat starts its run one hop on, after the reply's run ends. Runs record `parent_run_id` and `hop` (migration `dca6e06f506b`). Past `BOT_HOP_LIMIT` (3) nothing starts and the chat shows "Stopped a chain of bot replies after 3 hops.". Taint travels along the chain; runs another bot started don't save memories.
+- **Groups have a lead** (`lead_bot_id`): the first bot picked, or the one chosen in New group; it answers messages that mention no bot. Its creator, owners and admins change it in the details pane (`PUT /threads/{id}/lead`).
+- **Guests in DMs:** @mention another bot of the org in a DM and it replies once as a guest (the DM's bot replies only if mentioned too). The @ list in a DM offers every bot, the others marked "Joins as a guest"; a guest's reply shows its name.
+- **Demo:** the mock follows the same rules; say "relay" in a group to watch bots hand over until the hop limit stops them.
+
+## 2026-11-15: who can sign up, and rate limits on auth
+
+- **`SIGNUP_MODE`** (`open` by default, `invite-only`, `closed`): `POST /auth/sign-up` takes an optional `inviteToken`; with one, the new account joins the inviting organization instead of getting its own. Invite-only needs a valid invite for that email; closed takes no new accounts (sign-in and accepting invites still work); refusals are 403. `GET /auth/options` tells the web, whose sign-up, sign-in and invite pages adapt. Self-hosting now recommends invite-only once the first owner has signed up.
+- **Rate limits:** sign-in (10/min per address, 5/min per email), sign-up (20/hour per address), forgot-password (20/hour per address, 5/hour per email) and reset-password (20/hour per address) answer 429 with `Retry-After`. A small in-process limiter with bounded memory (one API process, ADR 0007). The client address comes from `X-Forwarded-For` only from proxies in `FORWARDED_ALLOW_IPS`.
+
 ## 2026-11-15: no screen pretends to work
 
 - **Default security level for new bots is real:** organizations have `default_security_level` (migration `381735fe703b`, default `ask-before-acting`), set with `PATCH /orgs/{id}` by owners and admins (members 403). A bot hired without a level gets it; create bot and marketplace hires start at it. Settings → Security loads and saves it, and says "saved" only once the API has.

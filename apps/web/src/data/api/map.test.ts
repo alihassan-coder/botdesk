@@ -41,8 +41,16 @@ describe("API → web shapes", () => {
 
   it("a chat starts read, and only DMs have a bot", () => {
     const participants = [{ type: "user" as const, id: "u1" }];
-    const group = { id: "t1", kind: "group" as const, title: "Launch", botId: null, participants, lastMessageAt: "2026-11-12T08:00:00Z", lastMessagePreview: "Hi" };
+    const group = { id: "t1", kind: "group" as const, title: "Launch", botId: null, leadBotId: null, createdBy: null, participants, lastMessageAt: "2026-11-12T08:00:00Z", lastMessagePreview: "Hi" };
     expect(toThread(group)).toEqual({ id: "t1", kind: "group", title: "Launch", participants, lastMessageAt: "2026-11-12T08:00:00Z", lastMessagePreview: "Hi", unread: 0 });
+  });
+
+  it("a group keeps its lead and who made it", () => {
+    const group = {
+      id: "t1", kind: "group" as const, title: "Launch", botId: null, leadBotId: "b1", createdBy: "u1",
+      participants: [], lastMessageAt: "2026-11-12T08:00:00Z", lastMessagePreview: "",
+    };
+    expect(toThread(group)).toMatchObject({ leadBotId: "b1", createdBy: "u1" });
   });
 
   it("a message keeps the parts the web app can show, and system messages have no author id", () => {

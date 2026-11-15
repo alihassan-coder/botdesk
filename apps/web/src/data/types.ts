@@ -103,6 +103,10 @@ export interface Thread {
   title: string;
   /** For DMs, the bot this thread is with. */
   botId?: ID;
+  /** Groups: the bot that answers a message that @mentions no bot (ADR 0009). None: nobody does. */
+  leadBotId?: ID;
+  /** Who started the chat. A group's creator, owners and admins may change its lead. */
+  createdBy?: ID;
   participants: Participant[];
   lastMessageAt: ISODate;
   lastMessagePreview: string;

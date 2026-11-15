@@ -39,6 +39,10 @@ class Run(IdMixin, CreatedAtMixin, Base):
     thread_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("threads.id", ondelete="CASCADE"))
     trigger_message_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("messages.id", ondelete="SET NULL"))
     reply_message_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("messages.id", ondelete="SET NULL"))
+    # ADR 0009: the run whose reply @mentioned this bot (empty when a person's message started it),
+    # and how far this run is from a person: 0 for a person's message, the parent's hop + 1 after.
+    parent_run_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("runs.id", ondelete="SET NULL"), index=True)
+    hop: Mapped[int] = mapped_column(Integer, default=0, server_default=text("0"))
     status: Mapped[str] = mapped_column(String(20), default="queued")
     # Limits, copied from settings when the run is created, and what has been used so far.
     max_steps: Mapped[int] = mapped_column(Integer)

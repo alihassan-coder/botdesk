@@ -9,7 +9,7 @@ from fastapi.sse import EventSourceResponse, ServerSentEvent
 from src.api.deps import Db, OrgAccess, Runs
 from src.controllers import thread_controller
 from src.schemas.run import ThreadRunsOut
-from src.schemas.thread import GroupIn, MessageIn, MessageOut, OpenDmIn, SentMessageOut, ThreadOut
+from src.schemas.thread import GroupIn, LeadIn, MessageIn, MessageOut, OpenDmIn, SentMessageOut, ThreadOut
 
 router = APIRouter(prefix="/orgs/{org_id}/threads", tags=["threads"])
 
@@ -28,13 +28,21 @@ async def open_dm(body: OpenDmIn, access: OrgAccess, db: Db) -> ThreadOut:
 
 @router.post("/groups", status_code=status.HTTP_201_CREATED)
 async def create_group(body: GroupIn, access: OrgAccess, db: Db) -> ThreadOut:
-    """A group chat with you plus the people and bots you pick."""
+    """A group chat with you plus the people and bots you pick. `leadBotId` (one of `botIds`)
+    answers messages that mention no bot; left out, the first bot picked leads."""
     return await thread_controller.create_group(db, access, body)
 
 
 @router.get("/{thread_id}")
 async def get_thread(thread_id: uuid.UUID, access: OrgAccess, db: Db) -> ThreadOut:
     return await thread_controller.get_thread(db, access, thread_id)
+
+
+@router.put("/{thread_id}/lead")
+async def set_lead(thread_id: uuid.UUID, body: LeadIn, access: OrgAccess, db: Db) -> ThreadOut:
+    """Change a group's lead bot (one of its bots), or clear it with `botId: null`. The lead
+    answers a message that mentions no bot. The group's creator, owners and admins may."""
+    return await thread_controller.set_lead(db, access, thread_id, body)
 
 
 @router.get("/{thread_id}/messages")
@@ -51,7 +59,8 @@ async def list_messages(
 
 @router.post("/{thread_id}/messages", status_code=status.HTTP_201_CREATED)
 async def post_message(thread_id: uuid.UUID, body: MessageIn, access: OrgAccess, db: Db, runs: Runs) -> SentMessageOut:
-    """Send a message. In a DM the bot replies; in a group, the bots you @mention do.
+    """Send a message. In a group, the bots you @mention reply (no bot mentioned: the lead). In a
+    DM, its bot replies; @mention another bot of the organization and it replies once as a guest.
     Returns at once with the ids of the runs it started; replies arrive on `/events`."""
     return await thread_controller.post_message(db, access, runs, thread_id, body)
 

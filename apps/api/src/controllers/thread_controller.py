@@ -12,7 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src.api.deps import Access
 from src.runtime.runner import RunManager
 from src.schemas.run import ThreadRunsOut
-from src.schemas.thread import GroupIn, MessageIn, MessageOut, SentMessageOut, ThreadOut
+from src.schemas.thread import GroupIn, LeadIn, MessageIn, MessageOut, SentMessageOut, ThreadOut
 from src.services import run_event_service, run_service, thread_service
 
 RECHECK_SECONDS = 5.0  # how often an idle stream looks for events saved by another API process
@@ -42,7 +42,15 @@ async def create_group(db: AsyncSession, access: Access, body: GroupIn) -> Threa
         title=body.title,
         user_ids=body.user_ids,
         bot_ids=body.bot_ids,
+        lead_bot_id=body.lead_bot_id,
     )
+    await db.commit()
+    return await thread_service.thread_out(db, thread)
+
+
+async def set_lead(db: AsyncSession, access: Access, thread_id: uuid.UUID, body: LeadIn) -> ThreadOut:
+    thread = await thread_service.get_thread(db, org_id=access.org.id, user_id=access.user.id, thread_id=thread_id)
+    await thread_service.set_lead(db, thread, user_id=access.user.id, role=access.role, bot_id=body.bot_id)
     await db.commit()
     return await thread_service.thread_out(db, thread)
 

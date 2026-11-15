@@ -12,6 +12,10 @@ class RunOut(ApiModel):
     thread_id: uuid.UUID
     trigger_message_id: uuid.UUID | None
     reply_message_id: uuid.UUID | None
+    # ADR 0009: the run whose reply @mentioned this bot (null when a person's message started it),
+    # and the hop: 0 for a person's message, one more than the parent's after that.
+    parent_run_id: uuid.UUID | None
+    hop: int
     status: RunStatus
     steps_used: int
     max_steps: int

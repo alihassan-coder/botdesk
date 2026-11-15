@@ -22,7 +22,9 @@ from src.core.handles import mentioned_handles
 from src.models import Bot, Message, Run, RunEvent, Thread, ThreadParticipant, User
 from src.models.run import ACTIVE_STATUSES, PAUSED_STATUSES
 from src.schemas.run import RunOut
-from src.services.thread_service import text_of, text_part
+from src.services.mention_routing import BotAuthor, ChatBots, Reply, route
+from src.services.run_event_service import add_event
+from src.services.thread_service import message_out, text_of, text_part
 from src.services.tool_execution_service import runs_with_a_started_call
 
 HISTORY_LENGTH = 30  # messages the bot sees: the newest ones up to its trigger
@@ -37,40 +39,59 @@ def half_run_tool_error(tool_name: str) -> str:
     )
 
 
-async def bots_to_reply(db: AsyncSession, *, thread: Thread, text: str) -> list[uuid.UUID]:
-    """In a DM, the bot always replies. In a group, only the bots @mentioned that are in the chat."""
-    if thread.kind == "dm":
-        return [thread.bot_id] if thread.bot_id else []
+async def _org_bots_by_handle(db: AsyncSession, *, org_id: uuid.UUID, text: str) -> dict[str, uuid.UUID]:
+    """The organization's bots that the text @mentions, by handle (no query when it mentions nobody)."""
     handles = mentioned_handles(text)
     if not handles:
-        return []
-    in_this_chat = select(ThreadParticipant.participant_id).where(
-        ThreadParticipant.thread_id == thread.id, ThreadParticipant.participant_type == "bot"
+        return {}
+    rows = await db.execute(select(Bot.handle, Bot.id).where(Bot.org_id == org_id, Bot.handle.in_(handles)))
+    return {handle: bot_id for handle, bot_id in rows}
+
+
+async def _chat_bots(db: AsyncSession, thread: Thread, *, with_guests: bool) -> ChatBots:
+    """A group: its bots and its lead. A DM: its own bot, plus (`with_guests`) every bot already
+    pulled into it, i.e. any bot that has had a run there."""
+    if thread.kind == "group":
+        bots = await db.scalars(
+            select(ThreadParticipant.participant_id).where(
+                ThreadParticipant.thread_id == thread.id, ThreadParticipant.participant_type == "bot"
+            )
+        )
+        return ChatBots(kind="group", bots=frozenset(bots), default_bot=thread.lead_bot_id)
+    guests = (
+        set(await db.scalars(select(Run.bot_id).where(Run.thread_id == thread.id).distinct())) if with_guests else set()
     )
-    rows = await db.execute(
-        select(Bot.id, Bot.handle).where(Bot.org_id == thread.org_id, Bot.handle.in_(handles), Bot.id.in_(in_this_chat))
+    own = {thread.bot_id} if thread.bot_id else set()
+    return ChatBots(kind="dm", bots=frozenset(own | guests), default_bot=thread.bot_id)
+
+
+def _queued_run(thread: Thread, reply: Reply, *, trigger: Message, settings: Settings, parent: uuid.UUID | None) -> Run:
+    return Run(
+        org_id=thread.org_id,
+        bot_id=reply.bot_id,
+        thread_id=thread.id,
+        trigger_message_id=trigger.id,
+        parent_run_id=parent,
+        hop=reply.hop,
+        status="queued",
+        max_steps=settings.run_max_steps,
+        max_seconds=settings.run_max_seconds,
+        created_at=utcnow(),
     )
-    by_handle = {handle: bot_id for bot_id, handle in rows}
-    return [by_handle[handle] for handle in handles if handle in by_handle]  # in mention order
 
 
 async def create_runs(
     db: AsyncSession, *, thread: Thread, message: Message, settings: Settings, text: str
 ) -> list[Run]:
-    """A queued run for each bot that should reply. Saved with the message, in the same transaction."""
-    runs = [
-        Run(
-            org_id=thread.org_id,
-            bot_id=bot_id,
-            thread_id=thread.id,
-            trigger_message_id=message.id,
-            status="queued",
-            max_steps=settings.run_max_steps,
-            max_seconds=settings.run_max_seconds,
-            created_at=utcnow(),
-        )
-        for bot_id in await bots_to_reply(db, thread=thread, text=text)
-    ]
+    """A member's message: a queued run (hop 0) for each bot that should reply (see
+    `mention_routing`). Saved with the message, in the same transaction."""
+    routing = route(
+        await _chat_bots(db, thread, with_guests=False),
+        text,
+        org_bots=await _org_bots_by_handle(db, org_id=thread.org_id, text=text),
+        hop_limit=settings.bot_hop_limit,
+    )
+    runs = [_queued_run(thread, reply, trigger=message, settings=settings, parent=None) for reply in routing.replies]
     db.add_all(runs)
     await db.flush()
     return runs
@@ -160,7 +181,10 @@ class RunContext:
     # that did (a bot quoting an email must not turn it into a clean instruction for the next run).
     tainted: bool
     group: bool
-    member_id: uuid.UUID | None  # in a DM, the person the bot is talking to
+    # A bot pulled into someone's DM by an @mention (ADR 0009): it answers there once.
+    guest: bool
+    hop: int  # 0 when a person's message started the run, one more per bot reply since
+    member_id: uuid.UUID | None  # in a DM, the person the bot is talking to (a guest's too)
     history: list[ChatLine]  # oldest first, ending with the run's trigger message
 
 
@@ -183,12 +207,14 @@ async def run_context(db: AsyncSession, run_id: uuid.UUID) -> RunContext:
                 Run.bot_id,
                 Run.thread_id,
                 Run.tainted,
+                Run.hop,
                 Bot.name,
                 Bot.instructions,
                 Bot.model_id,
                 Bot.security_level,
                 Bot.memory_enabled,
                 Thread.kind,
+                Thread.bot_id.label("dm_bot_id"),
                 Thread.created_by,
                 trigger.created_at.label("trigger_at"),
                 trigger.id.label("trigger_id"),
@@ -218,7 +244,8 @@ async def run_context(db: AsyncSession, run_id: uuid.UUID) -> RunContext:
         )
         .outerjoin(User, and_(Message.author_type == "user", User.id == Message.author_id))
         .outerjoin(author_bot, and_(Message.author_type == "bot", author_bot.id == Message.author_id))
-        .where(Message.thread_id == row.thread_id)
+        # Notices like "Stopped a chain of bot replies" are for people, not part of the conversation.
+        .where(Message.thread_id == row.thread_id, Message.author_type != "system")
         .order_by(Message.created_at.desc(), Message.id.desc())
         .limit(HISTORY_LENGTH)
     )
@@ -251,9 +278,22 @@ async def run_context(db: AsyncSession, run_id: uuid.UUID) -> RunContext:
         memory_enabled=row.memory_enabled,
         tainted=tainted,
         group=row.kind == "group",
+        guest=row.kind == "dm" and row.dm_bot_id != row.bot_id,
+        hop=row.hop,
         member_id=row.created_by if row.kind == "dm" else None,
         history=history,
     )
+
+
+def chain_stopped_text(hop_limit: int) -> str:
+    return f"Stopped a chain of bot replies after {hop_limit} hops."
+
+
+@dataclass(frozen=True)
+class SavedReply:
+    message: Message
+    runs: list[Run]  # queued runs for the bots the reply @mentions (start them after commit)
+    notice: Message | None  # "Stopped a chain…", when a mention passed the hop limit
 
 
 async def save_reply(
@@ -262,29 +302,69 @@ async def save_reply(
     run_id: uuid.UUID,
     message_id: uuid.UUID,
     text: str,
+    settings: Settings,
     extra_parts: list[dict[str, Any]] | None = None,
-) -> Message:
-    """The bot's reply becomes a message in the chat. `extra_parts` (approval cards, tool lines) go before
-    the text. The caller commits. Safe to call twice: a saved reply is returned as it is."""
-    run = (
-        await db.execute(select(Run.org_id, Run.thread_id, Run.bot_id, Run.reply_message_id).where(Run.id == run_id))
-    ).one()
+) -> SavedReply:
+    """The bot's reply becomes a message in the chat (`extra_parts`, such as approval cards and
+    tool lines, go before the text), with its `message_saved` event. Bots the reply @mentions
+    get queued runs one hop on (ADR 0009); past the hop limit, a system message says the chain
+    stopped instead. The caller commits, then starts `runs`.
+
+    Safe to call twice: a saved reply is returned as it is, and starts nothing again."""
+    run = await db.get(Run, run_id)
+    if run is None:
+        raise NotFound("This run doesn't exist.")
     if run.reply_message_id and (saved := await db.get(Message, run.reply_message_id)):
-        return saved
-    message = Message(
-        id=message_id,
-        org_id=run.org_id,
-        thread_id=run.thread_id,
-        author_type="bot",
-        author_id=run.bot_id,
-        parts=[*(extra_parts or []), text_part(text)],
+        return SavedReply(message=saved, runs=[], notice=None)
+    thread = await db.get(Thread, run.thread_id)
+    assert thread is not None  # a run's chat is removed with it
+    message = _message(thread, author_type="bot", author_id=run.bot_id, parts=[*(extra_parts or []), text_part(text)])
+    message.id = message_id
+    db.add(message)
+    await db.flush()  # before the run points at it (no ORM relationships to order the writes)
+    thread.last_message_at = message.created_at
+    run.reply_message_id = message_id
+    _message_saved(db, run, message)
+
+    routing = route(
+        await _chat_bots(db, thread, with_guests=True),
+        text,
+        org_bots=await _org_bots_by_handle(db, org_id=thread.org_id, text=text),
+        hop_limit=settings.bot_hop_limit,
+        by_bot=BotAuthor(bot_id=run.bot_id, hop=run.hop),
+    )
+    runs = [_queued_run(thread, reply, trigger=message, settings=settings, parent=run.id) for reply in routing.replies]
+    db.add_all(runs)
+    notice = None
+    if routing.chain_stopped:
+        notice = _message(
+            thread, author_type="system", author_id=None, parts=[text_part(chain_stopped_text(settings.bot_hop_limit))]
+        )
+        db.add(notice)
+        thread.last_message_at = notice.created_at  # it's the chat's preview now, so it sorts by it too
+    await db.flush()
+    if notice is not None:
+        _message_saved(db, run, notice)
+    return SavedReply(message=message, runs=runs, notice=notice)
+
+
+def _message(thread: Thread, *, author_type: str, author_id: uuid.UUID | None, parts: list[dict[str, Any]]) -> Message:
+    return Message(
+        org_id=thread.org_id,
+        thread_id=thread.id,
+        author_type=author_type,
+        author_id=author_id,
+        parts=parts,
         status="complete",
         created_at=utcnow(),
     )
-    db.add(message)
-    await db.execute(update(Thread).where(Thread.id == run.thread_id).values(last_message_at=message.created_at))
-    await db.execute(update(Run).where(Run.id == run_id).values(reply_message_id=message_id))
-    return message
+
+
+def _message_saved(db: AsyncSession, run: Run, message: Message) -> None:
+    out = message_out(message).model_dump(mode="json", by_alias=True)
+    add_event(
+        db, org_id=run.org_id, thread_id=run.thread_id, run_id=run.id, kind="message_saved", data={"message": out}
+    )
 
 
 async def finish_run(db: AsyncSession, run_id: uuid.UUID, *, status: str, error: str | None = None) -> bool:

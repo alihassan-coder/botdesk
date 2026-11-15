@@ -12,12 +12,13 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.core.database import utcnow
-from src.core.errors import NotFound
+from src.core.errors import BadRequest, Forbidden, NotFound
 from src.models import Bot, Membership, Message, Thread, ThreadParticipant
 from src.schemas.thread import AuthorOut, MessageOut, ParticipantOut, ThreadOut
 
 PREVIEW_LENGTH = 80
 NOT_FOUND = "This chat doesn't exist."
+LEAD_NOT_IN_GROUP = "The lead must be one of the group's bots."
 
 
 def text_part(text: str) -> dict[str, str]:
@@ -70,6 +71,8 @@ async def thread_outs(db: AsyncSession, threads: list[Thread]) -> list[ThreadOut
                 "kind": thread.kind,
                 "title": bot_names.get(thread.bot_id, thread.title) if thread.bot_id else thread.title,
                 "bot_id": thread.bot_id,
+                "lead_bot_id": thread.lead_bot_id,
+                "created_by": thread.created_by,
                 "participants": participants[thread.id],
                 "last_message_at": thread.last_message_at,
                 "last_message_preview": previews.get(thread.id, ""),
@@ -164,8 +167,12 @@ async def create_group(
     title: str,
     user_ids: list[uuid.UUID],
     bot_ids: list[uuid.UUID],
+    lead_bot_id: uuid.UUID | None = None,
 ) -> Thread:
-    """A group with you, the people and the bots you pick. Everyone must be in the organization."""
+    """A group with you, the people and the bots you pick. Everyone must be in the organization.
+    Its lead is `lead_bot_id` (one of the bots) or, left out, the first bot picked (ADR 0009)."""
+    if lead_bot_id is not None and lead_bot_id not in bot_ids:
+        raise BadRequest(LEAD_NOT_IN_GROUP)
     users = {creator_id, *user_ids}
     members = set(
         await db.scalars(select(Membership.user_id).where(Membership.org_id == org_id, Membership.user_id.in_(users)))
@@ -175,10 +182,38 @@ async def create_group(
     if members != users or org_bots != bots:
         raise NotFound("Some of those people or bots aren't in this organization.")
 
-    thread = Thread(org_id=org_id, kind="group", title=title.strip(), bot_id=None, created_by=creator_id)
+    lead = lead_bot_id or (bot_ids[0] if bot_ids else None)
+    thread = Thread(
+        org_id=org_id, kind="group", title=title.strip(), bot_id=None, created_by=creator_id, lead_bot_id=lead
+    )
     db.add(thread)
     await db.flush()
     _add_participants(db, thread, users=users, bots=bots)
+    return thread
+
+
+async def set_lead(
+    db: AsyncSession, thread: Thread, *, user_id: uuid.UUID, role: str, bot_id: uuid.UUID | None
+) -> Thread:
+    """Change a group's lead, or clear it (None). Its creator, and the organization's owners and
+    admins who are in it, may; other members may not (the caller already checked they're in it).
+    The caller commits."""
+    if thread.kind != "group":
+        raise BadRequest("Only a group has a lead.")
+    if thread.created_by != user_id and role not in ("owner", "admin"):
+        raise Forbidden("Only the group's creator, owners and admins can change its lead.")
+    if bot_id is not None:
+        in_group = await db.scalar(
+            select(ThreadParticipant.participant_id).where(
+                ThreadParticipant.thread_id == thread.id,
+                ThreadParticipant.participant_type == "bot",
+                ThreadParticipant.participant_id == bot_id,
+            )
+        )
+        if in_group is None:
+            raise BadRequest(LEAD_NOT_IN_GROUP)
+    thread.lead_bot_id = bot_id
+    await db.flush()
     return thread
 
 

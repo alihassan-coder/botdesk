@@ -51,7 +51,7 @@ export function MessageList({ thread }: { thread: Thread }) {
             {load?.hasOlder && <LoadOlderMessages threadId={thread.id} />}
             {messages.map((message) => (
               <MessageScrollerItem key={message.id} messageId={message.id}>
-                <MessageItem message={message} isGroup={thread.kind === "group"} />
+                <MessageItem message={message} isGroup={thread.kind === "group"} dmBotId={thread.botId} />
               </MessageScrollerItem>
             ))}
             <RunAttentionNotices threadId={thread.id} />

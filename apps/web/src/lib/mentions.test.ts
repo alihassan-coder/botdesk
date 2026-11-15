@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { parseMentions, splitMentions } from "./mentions";
+import { activeMention, insertMention, parseMentions, rankMentionables, splitMentions } from "./mentions";
 
 const bots = [
   { id: "b_inbox", handle: "inbox" },
@@ -58,5 +58,53 @@ describe("splitMentions", () => {
 
   it("returns no pieces for empty text", () => {
     expect(splitMentions("")).toEqual([]);
+  });
+});
+
+describe("activeMention", () => {
+  it("finds the @word the caret is in", () => {
+    expect(activeMention("hi @sa", 6)).toEqual({ start: 3, query: "sa" });
+  });
+  it("opens on a bare @", () => {
+    expect(activeMention("@", 1)).toEqual({ start: 0, query: "" });
+  });
+  it("works after an opening bracket", () => {
+    expect(activeMention("(@in", 4)).toEqual({ start: 1, query: "in" });
+  });
+  it("ignores the @ in an email address", () => {
+    expect(activeMention("mail sara@ac", 12)).toBeNull();
+  });
+  it("closes once a space follows the handle", () => {
+    expect(activeMention("@sara hi", 8)).toBeNull();
+  });
+  it("only looks at the text before the caret", () => {
+    expect(activeMention("@sales and more", 3)).toEqual({ start: 0, query: "sa" });
+  });
+});
+
+describe("insertMention", () => {
+  it("replaces the typed @word with the handle and a space", () => {
+    expect(insertMention("hi @sa", { start: 3, query: "sa" }, 6, "sales")).toEqual({ text: "hi @sales ", caret: 10 });
+  });
+  it("keeps the text after the caret, without doubling the space", () => {
+    expect(insertMention("@in please", { start: 0, query: "in" }, 3, "inbox")).toEqual({ text: "@inbox please", caret: 7 });
+  });
+});
+
+describe("rankMentionables", () => {
+  const people = [
+    { id: "1", handle: "sales", name: "Sales Outbound" },
+    { id: "2", handle: "inbox", name: "Inbox Manager" },
+    { id: "3", handle: "sara", name: "Sara Khan" },
+  ];
+  it("lists everyone, in order, for an empty query", () => {
+    expect(rankMentionables("", people).map((p) => p.id)).toEqual(["1", "2", "3"]);
+  });
+  it("puts handle prefix matches first, then name matches", () => {
+    expect(rankMentionables("sa", people).map((p) => p.id)).toEqual(["1", "3"]);
+    expect(rankMentionables("man", people).map((p) => p.id)).toEqual(["2"]);
+  });
+  it("ignores case", () => {
+    expect(rankMentionables("IN", people).map((p) => p.id)).toEqual(["2"]);
   });
 });

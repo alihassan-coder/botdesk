@@ -28,6 +28,46 @@ export function splitMentions(text: string): TextPiece[] {
   return pieces;
 }
 
+/** The @word being typed: where its @ is, and the letters after it so far. */
+export interface ActiveMention {
+  start: number;
+  query: string;
+}
+
+// Same rule as MENTION, anchored at the caret: an @ that starts a word, then handle letters.
+const TYPING_MENTION = /(?<![\w.@])@([a-z0-9_-]*)$/i;
+
+/** The @word the caret is at the end of, or null (so the suggestion list stays closed). */
+export function activeMention(text: string, caret: number): ActiveMention | null {
+  const match = TYPING_MENTION.exec(text.slice(0, caret));
+  return match ? { start: match.index, query: match[1] } : null;
+}
+
+/** Replaces the typed @word with `@handle ` and says where the caret goes next. */
+export function insertMention(
+  text: string,
+  mention: ActiveMention,
+  caret: number,
+  handle: string,
+): { text: string; caret: number } {
+  const after = text.slice(caret);
+  const inserted = `@${handle}${after.startsWith(" ") ? "" : " "}`;
+  const before = text.slice(0, mention.start) + inserted;
+  return { text: before + after, caret: before.length + (after.startsWith(" ") ? 1 : 0) };
+}
+
+/**
+ * Who matches what's typed after the @: handles that start with it first, then names
+ * that contain it. An empty query keeps everyone in their original order.
+ */
+export function rankMentionables<T extends Mentionable & { name: string }>(query: string, items: T[]): T[] {
+  const q = query.toLowerCase();
+  if (!q) return items;
+  const byHandle = items.filter((i) => i.handle.toLowerCase().startsWith(q));
+  const byName = items.filter((i) => !byHandle.includes(i) && i.name.toLowerCase().includes(q));
+  return [...byHandle, ...byName];
+}
+
 /**
  * Finds the bots and members a message mentions, in the order they appear.
  * Unknown handles are ignored and each participant is listed once.

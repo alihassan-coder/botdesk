@@ -42,6 +42,54 @@ describe("Composer", () => {
     expect(getStoreSnapshot().messages.length).toBe(before);
   });
 
+  describe("@mention suggestions", () => {
+    const launchCrew = () => getStoreSnapshot().threads.find((t) => t.id === "t_launch")!;
+    const box = () => screen.getByRole("textbox", { name: "Message Launch crew" });
+
+    it("typing @ lists the bots and people in the chat, not you", async () => {
+      const { user } = renderUI(<Composer thread={launchCrew()} />);
+      await user.type(box(), "@");
+      const names = screen.getAllByRole("option").map((o) => o.textContent);
+      expect(names.some((n) => n?.includes("@chief"))).toBe(true);
+      expect(names.some((n) => n?.includes("@sara"))).toBe(true);
+      expect(names.some((n) => n?.includes("@ali"))).toBe(false);
+      // Bots that aren't in this group aren't offered.
+      expect(names.some((n) => n?.includes("@inbox"))).toBe(false);
+    });
+
+    it("filters as you type, and Enter picks instead of sending", async () => {
+      const { user } = renderUI(<Composer thread={launchCrew()} />);
+      const before = getStoreSnapshot().messages.length;
+      await user.type(box(), "ask @bu");
+      expect(screen.getAllByRole("option")).toHaveLength(1);
+      await user.keyboard("{Enter}");
+      expect(box()).toHaveValue("ask @bugs ");
+      expect(screen.queryByRole("listbox")).not.toBeInTheDocument();
+      expect(getStoreSnapshot().messages.length).toBe(before);
+    });
+
+    it("arrow keys move the highlight; clicking picks", async () => {
+      const { user } = renderUI(<Composer thread={launchCrew()} />);
+      await user.type(box(), "@");
+      const first = screen.getAllByRole("option")[0];
+      expect(first).toHaveAttribute("aria-selected", "true");
+      await user.keyboard("{ArrowDown}");
+      expect(screen.getAllByRole("option")[1]).toHaveAttribute("aria-selected", "true");
+      await user.click(screen.getAllByRole("option")[0]);
+      expect((box() as HTMLTextAreaElement).value).toMatch(/^@[a-z0-9_-]+ $/);
+    });
+
+    it("Escape closes the list, and an email address never opens it", async () => {
+      const { user } = renderUI(<Composer thread={launchCrew()} />);
+      await user.type(box(), "@");
+      await user.keyboard("{Escape}");
+      expect(screen.queryByRole("listbox")).not.toBeInTheDocument();
+      await user.clear(box());
+      await user.type(box(), "mail sara@ac");
+      expect(screen.queryByRole("listbox")).not.toBeInTheDocument();
+    });
+  });
+
   it("the Send button works too, and trims extra spaces", async () => {
     const { user } = renderUI(<Composer thread={salesThread()} />);
     await user.type(screen.getByRole("textbox", { name: "Message Sales Outbound" }), "   Hello   ");

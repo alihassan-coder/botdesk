@@ -176,6 +176,7 @@ Publishing never runs for pull requests (the workflow only runs on pushes to `ma
    A pending publisher reserves the name and turns into a normal trusted publisher on the first upload. (If the project already exists on PyPI, add the same publisher under the project's *Settings* → *Publishing* instead.)
 2. **GitHub environment:** repo *Settings* → *Environments* → *New environment* → `pypi`. Optional but recommended: add yourself under *Required reviewers*, so every upload waits for a click, and limit *Deployment branches and tags* to `main` (the publish job runs from the push to `main` that merged the release pull request).
 3. **Let release-please open pull requests:** repo *Settings* → *Actions* → *General* → *Workflow permissions* → tick *Allow GitHub Actions to create and approve pull requests*.
+4. **Turn releases on:** repo *Settings* → *Secrets and variables* → *Actions* → *Variables* → add `SDK_RELEASES` = `on`. Until then the release workflow is skipped on every push.
 
 If a publish fails after the tag exists, fix the cause and use *Re-run jobs* on that workflow run: it checks out the same tag.
 

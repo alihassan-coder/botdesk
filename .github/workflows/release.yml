@@ -22,7 +22,9 @@ permissions:
 jobs:
   release-please:
     name: Release pull request and tags
-    if: github.repository == 'alihassan-coder/botdesk'
+    # Off until the owner finishes the PyPI setup (packages/plugin-sdk/README.md, Releases),
+    # then sets the repository variable SDK_RELEASES=on (Settings → Secrets and variables → Actions → Variables).
+    if: github.repository == 'alihassan-coder/botdesk' && vars.SDK_RELEASES == 'on'
     runs-on: ubuntu-latest
     permissions:
       contents: write # tags, releases, the release branch

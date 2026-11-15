@@ -8,6 +8,10 @@ transaction commits, and two transactions can commit in either order. A stream t
 id 8 would never see an id 7 committed after it. So a transaction that adds events to a chat
 first takes that chat's advisory lock (held until it commits): within a chat, ids are taken
 and committed one transaction at a time, in order.
+
+The same statement sends `NOTIFY botdesk_run_events, '<chat id>'`, delivered when the
+transaction commits: that's how a chat's streams in another process (the API, when the worker
+runs separately) hear about new events (`runtime.event_bus.listen_to_postgres`).
 """
 
 import uuid
@@ -21,6 +25,7 @@ from src.models import RunEvent
 from src.schemas.run import RunEventOut
 
 PAGE_SIZE = 200
+RUN_EVENTS_CHANNEL = "botdesk_run_events"
 
 
 def add_event(
@@ -71,8 +76,11 @@ def _lock_chats_before_adding_events(session: Session, _context: Any, _instances
             "A transaction added run events to a chat whose lock sorts before one it already holds; "
             "this can deadlock. Add events to chats in order of thread_lock_key, or commit in between."
         )
-    for key in new_keys:
-        session.connection().execute(text("SELECT pg_advisory_xact_lock(:key)"), {"key": key})
+    for thread_id in sorted(threads - held, key=thread_lock_key):
+        session.connection().execute(
+            text(f"SELECT pg_advisory_xact_lock(:key), pg_notify('{RUN_EVENTS_CHANNEL}', :thread)"),
+            {"key": thread_lock_key(thread_id), "thread": str(thread_id)},
+        )
     held.update(threads)
 
 

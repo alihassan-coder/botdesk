@@ -1,10 +1,36 @@
 {
+  "auth": {
+    "header": "X-Api-Key",
+    "prefix": "",
+    "type": "api_key"
+  },
+  "botSettingsSchema": null,
   "description": "Fake tools for trying BotDesk: a clock, a tiny knowledge base, notes and an email outbox.",
+  "egress": [
+    "postman-echo.com"
+  ],
   "id": "demo",
-  "manifestVersion": 1,
+  "manifestVersion": 2,
   "name": "Demo",
   "runtime": "builtin",
+  "settingsSchema": null,
   "tools": [
+    {
+      "description": "Call the demo web service with the connected Demo account and say which host answered.",
+      "egress": "fixed",
+      "idempotent": true,
+      "inputSchema": {
+        "description": "The args model for a tool that takes no arguments.",
+        "properties": {},
+        "title": "NoArgs",
+        "type": "object"
+      },
+      "name": "call_api",
+      "risk": "read",
+      "scopes": [],
+      "title": "Call the demo API",
+      "untrustedOutput": false
+    },
     {
       "description": "Save a note for the team inside BotDesk.",
       "egress": "fixed",
@@ -32,6 +58,7 @@
       },
       "name": "create_note",
       "risk": "write-internal",
+      "scopes": [],
       "title": "Create a note",
       "untrustedOutput": false
     },
@@ -47,6 +74,7 @@
       },
       "name": "current_time",
       "risk": "read",
+      "scopes": [],
       "title": "Look up the time",
       "untrustedOutput": false
     },
@@ -83,6 +111,7 @@
       },
       "name": "draft_email",
       "risk": "write-external",
+      "scopes": [],
       "title": "Draft an email",
       "untrustedOutput": false
     },
@@ -98,6 +127,7 @@
       },
       "name": "read_inbox",
       "risk": "read",
+      "scopes": [],
       "title": "Read the inbox",
       "untrustedOutput": true
     },
@@ -123,6 +153,7 @@
       },
       "name": "search_kb",
       "risk": "read",
+      "scopes": [],
       "title": "Search the knowledge base",
       "untrustedOutput": false
     },
@@ -159,9 +190,11 @@
       },
       "name": "send_email",
       "risk": "external-send",
+      "scopes": [],
       "title": "Send an email",
       "untrustedOutput": false
     }
   ],
+  "triggers": [],
   "version": "0.1.0"
 }

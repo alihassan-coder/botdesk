@@ -87,4 +87,11 @@ def template_plugin(outbox: Outbox | None = None) -> PluginManifest:
                 summarize=summarize_send,  # the line on the approval card
             ),
         ),
+        # Calling a real service on someone's account (manifest version 2): declare how it's
+        # authorised and the only hosts the tools call, then use `ctx.http` in the handlers.
+        # BotDesk adds the credential to each request; the plugin never sees a token.
+        #   auth=ApiKeyAuth(header="X-Api-Key"),  # or OAuth2Auth(...) for "Sign in with ..."
+        #   egress=("api.example.com",),
+        # In a handler:  response = await ctx.http.request("GET", f"https://api.example.com/orders/{args.order_id}")
+        # In tests: FakeHttp(template_plugin()) answers ctx.http from canned routes (see the SDK README).
     )

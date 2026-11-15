@@ -1,0 +1,146 @@
+"""`ctx.http`: the HTTP client a tool gets, bound to its plugin's hosts and (maybe) one connection.
+
+ADR 0010 §8. A tool never sees a token; this client:
+
+- allows only `https` URLs whose host is in the plugin's manifest `egress` (exact host names),
+  checked before anything leaves, with httpx's own URL parser (the host checked is the host called);
+- adds the connection's credential itself, after the tool's own headers, so a tool can't replace
+  or read it. The credential is decrypted on the first request, not before;
+- never follows redirects: a 3xx answer fails the call, so a credential can't be bounced elsewhere;
+- connects through `GuardedTransport` (core/url_guard.py) with private addresses always refused,
+  so an allowed name that resolves to 10.0.0.1 or 169.254.169.254 is never reached;
+- reads at most `max_bytes` of a response and gives up after `timeout_seconds`;
+- logs method, host, path and status only: never headers, query strings or bodies.
+
+Every refusal is an SDK `HttpError` whose message is safe for the model and for people.
+"""
+
+import logging
+from collections.abc import Callable, Iterable, Mapping
+from typing import Any
+
+import httpx
+from botdesk_plugin_sdk import HostNotAllowed, HttpError, HttpResponse, NotConnected, ResponseTooLarge
+from botdesk_plugin_sdk.http import Params
+
+from src.core.url_guard import GuardedTransport, UnsafeUrl
+from src.services.credential_vault import Credential, CredentialUnavailable
+
+logger = logging.getLogger(__name__)
+
+DEFAULT_MAX_BYTES = 10 * 1024 * 1024
+REDIRECTS = {301, 302, 303, 307, 308}
+
+
+def guarded_client(timeout_seconds: float, transport: httpx.AsyncBaseTransport | None = None) -> httpx.AsyncClient:
+    """An httpx client for tool calls: guarded transport (private addresses refused), no redirects,
+    no proxy from the environment. `transport` replaces the network in tests."""
+    return httpx.AsyncClient(
+        transport=transport or GuardedTransport(allow_private=False),
+        follow_redirects=False,
+        trust_env=False,
+        timeout=httpx.Timeout(timeout_seconds),
+    )
+
+
+class AuthorisedHttp:
+    """The SDK's `HttpClient` for one tool call. Holds no open resources of its own: `client` is
+    owned (and closed) by whoever made it."""
+
+    def __init__(
+        self,
+        *,
+        client: httpx.AsyncClient,
+        egress: Iterable[str],
+        credential: Callable[[], Credential] | None = None,
+        max_bytes: int = DEFAULT_MAX_BYTES,
+    ) -> None:
+        self._client = client
+        self._hosts = frozenset(egress)
+        self._open_credential = credential
+        self._credential: Credential | None = None
+        self._max_bytes = max_bytes
+        self.used = False  # at least one request reached the service
+
+    def __repr__(self) -> str:
+        return f"AuthorisedHttp(hosts={sorted(self._hosts)})"
+
+    async def request(
+        self,
+        method: str,
+        url: str,
+        *,
+        params: Params | None = None,
+        json: Any = None,
+        data: Mapping[str, str] | None = None,
+        headers: Mapping[str, str] | None = None,
+    ) -> HttpResponse:
+        target = self._allowed(url)
+        merged = dict(headers or {})
+        if self._open_credential is not None:
+            auth = self._auth_headers()
+            taken = {name.lower() for name in auth}
+            # The tool can't set (or overwrite) the credential's own header.
+            merged = {name: value for name, value in merged.items() if name.lower() not in taken} | auth
+        try:
+            async with self._client.stream(
+                method.upper(), target, params=dict(params or {}), json=json, data=data, headers=merged
+            ) as response:
+                if response.status_code in REDIRECTS:
+                    raise HttpError(
+                        f"{target.host} answered with a redirect ({response.status_code}). "
+                        "Tools never follow redirects; call the final address directly."
+                    )
+                content = await self._read_capped(response, target.host)
+        except UnsafeUrl as error:
+            raise HostNotAllowed(
+                f"{target.host} resolves to a private network address, which tools can't reach."
+            ) from error
+        except httpx.TimeoutException as error:
+            raise HttpError(f"{target.host} took too long to answer.") from error
+        except httpx.HTTPError as error:
+            raise HttpError(f"Couldn't reach {target.host} ({type(error).__name__}).") from error
+        self.used = True
+        logger.info("Tool request %s %s%s → %s", method.upper(), target.host, target.path, response.status_code)
+        return HttpResponse(
+            status_code=response.status_code,
+            headers={key.lower(): value for key, value in response.headers.items()},
+            content=content,
+            url=str(target.copy_with(query=None)),
+        )
+
+    def _allowed(self, url: str) -> httpx.URL:
+        try:
+            target = httpx.URL(url)
+        except httpx.InvalidURL as error:
+            raise HostNotAllowed("That isn't a valid address.") from error
+        if target.scheme != "https":
+            raise HostNotAllowed(f"Only https addresses are allowed (got {target.scheme or 'none'}).")
+        if target.userinfo:
+            raise HostNotAllowed("Addresses with a user name or password aren't allowed.")
+        if target.host not in self._hosts:
+            raise HostNotAllowed(f"{target.host or 'That address'} is not one of this plugin's egress hosts.")
+        return target
+
+    def _auth_headers(self) -> dict[str, str]:
+        if self._credential is None:
+            assert self._open_credential is not None
+            try:
+                self._credential = self._open_credential()
+            except CredentialUnavailable as error:
+                raise NotConnected(str(error)) from error
+        return self._credential.auth_headers()
+
+    async def _read_capped(self, response: httpx.Response, host: str) -> bytes:
+        too_large = ResponseTooLarge(f"{host}'s answer is larger than {self._max_bytes // 1024} KB, the limit.")
+        declared = response.headers.get("content-length")
+        if declared and declared.isdigit() and int(declared) > self._max_bytes:
+            raise too_large
+        chunks: list[bytes] = []
+        size = 0
+        async for chunk in response.aiter_bytes():
+            size += len(chunk)
+            if size > self._max_bytes:
+                raise too_large
+            chunks.append(chunk)
+        return b"".join(chunks)

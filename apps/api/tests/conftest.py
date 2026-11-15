@@ -3,8 +3,9 @@
 - `client`: a fresh app on an in-memory SQLite database. No network, runs anywhere in seconds.
   Bots don't reply here (runs are created but not started): these tests are about the API.
   Calls to model providers go to `providers` (a `FakeProviders`), never to the internet.
-- `pg`: a fresh app on real Postgres (TEST_DATABASE_URL), with bots replying. Everything that
-  depends on Postgres (runs, checkpoints, the one-run-per-chat guard, JSONB) is tested here.
+- `pg`: a fresh app on real Postgres (TEST_DATABASE_URL), with bots replying through the job
+  queue (procrastinate, with the worker inside the app). Everything that depends on Postgres
+  (runs, jobs, checkpoints, the one-run-per-chat guard, JSONB) is tested here.
   Skipped, with a reason, when TEST_DATABASE_URL isn't set.
 """
 
@@ -13,6 +14,7 @@ import os
 from collections.abc import AsyncIterator, Callable, Mapping
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 import httpx
@@ -128,19 +130,31 @@ class Postgres:
 _tables_created = False
 
 
+# The same pinned schema the migration applies.
+QUEUE_SCHEMA = Path(__file__).parent.parent / "migrations" / "sql" / "procrastinate-3.11.0.sql"
+QUEUE_TABLES = "procrastinate_events, procrastinate_periodic_defers, procrastinate_jobs, procrastinate_workers"
+
+
 async def _empty_database(url: str) -> None:
-    """Create the tables once per test session (from the models), then empty them before each test."""
+    """Create the tables once per test session (from the models, and the job queue's from
+    procrastinate's schema when they're missing), then empty them before each test."""
     global _tables_created
     engine = create_engine(Settings(database_url=url, _env_file=None).sqlalchemy_url)
     async with engine.begin() as connection:
         if not _tables_created:
             await connection.run_sync(Base.metadata.drop_all)
             await connection.run_sync(Base.metadata.create_all)
+            if not await connection.scalar(text("SELECT to_regclass('procrastinate_jobs') IS NOT NULL")):
+                raw = await connection.get_raw_connection()
+                await raw.driver_connection.execute(QUEUE_SCHEMA.read_text(encoding="utf-8"))  # type: ignore[union-attr]
             _tables_created = True
-        else:
-            tables = ", ".join(f'"{table.name}"' for table in Base.metadata.sorted_tables)
-            await connection.execute(text(f"TRUNCATE {tables} RESTART IDENTITY CASCADE"))
+        tables = ", ".join(f'"{table.name}"' for table in Base.metadata.sorted_tables)
+        await connection.execute(text(f"TRUNCATE {tables}, {QUEUE_TABLES} RESTART IDENTITY CASCADE"))
     await engine.dispose()
+
+
+def pg_settings(**changes: Any) -> Settings:
+    return Settings(environment="test", database_url=TEST_DATABASE_URL, _env_file=None, **changes)
 
 
 @pytest.fixture
@@ -148,8 +162,7 @@ async def pg() -> AsyncIterator[Postgres]:
     if not TEST_DATABASE_URL:
         pytest.skip("Postgres test: set TEST_DATABASE_URL to run it (see docs/backend/README.md)")
     await _empty_database(TEST_DATABASE_URL)
-    settings = Settings(environment="test", database_url=TEST_DATABASE_URL, _env_file=None)
-    app = create_app(settings)
+    app = create_app(pg_settings())
     async with app.router.lifespan_context(app), await _client_for(app) as http:
         yield Postgres(client=http, runs=app.state.runs)
 

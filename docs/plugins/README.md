@@ -10,14 +10,15 @@ This guide is for **built-in plugins**, the ones in this repo's `plugins/` folde
 cp -r plugins/_template plugins/calendar
 ```
 
-[`plugins/_template/README.md`](../../plugins/_template/README.md) lists every name to change (package, import name, entry point, plugin id, `package.json`). The plugin id is lowercase letters, digits and dashes, and the entry-point name in `pyproject.toml` must be the same id. [`plugins/demo`](../../plugins/demo) is a bigger example with six tools.
+[`plugins/_template/README.md`](../../plugins/_template/README.md) lists every name to change (package, import name, entry point, plugin id, `package.json`). The plugin id is lowercase letters, digits and dashes, and the entry-point name in `pyproject.toml` must be the same id. [`plugins/demo`](../../plugins/demo) is a bigger example with seven tools; its `call_api` calls a web service with a connected API key.
 
 ## 2. Write the tools
 
 Each tool is a `ToolSpec` in the list your entry-point function returns:
 
 - **Arguments** are a Pydantic model (`args_model`). The model is shown its JSON schema and BotDesk validates every call against it, so the handler only sees clean input. Describe each field with `Field(description=...)`.
-- **The handler** is an `async def handler(args, ctx) -> dict`. `ctx` is a `ToolContext`: org, bot and run ids, the tool call id, `idempotency_key` and a `logger`. It has no database and no settings: a plugin gets only what BotDesk hands it.
+- **The handler** is an `async def handler(args, ctx) -> dict`. `ctx` is a `ToolContext`: org, bot and run ids, the tool call id, `idempotency_key`, a `logger`, and `http` / `connection` / `settings`. It has no database and no token: a plugin gets only what BotDesk hands it.
+- **Calling another app** (manifest version 2): declare `auth=ApiKeyAuth(...)` or `OAuth2Auth(...)` and `egress=("api.example.com",)` on the manifest, then call `await ctx.http.request("GET", "https://api.example.com/...")`. BotDesk adds the connected account's credential, allows only those hosts over https, and refuses redirects and private addresses. Test with `FakeHttp`. Details: [SDK README](../../packages/plugin-sdk/README.md#calling-another-app-auth-egress-and-ctxhttp-manifest-version-2).
 - **Return** a small JSON-friendly dict, never secrets. **Raise** when something fails; the bot sees a short message.
 - **Imports:** the standard library, your own package, the SDK and the libraries listed under `[project] dependencies`. CI checks this (step 5).
 

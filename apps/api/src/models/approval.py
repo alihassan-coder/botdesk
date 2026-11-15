@@ -45,3 +45,6 @@ class Approval(IdMixin, CreatedAtMixin, Base):
     decided_at: Mapped[datetime | None]
     # Nobody answered in time = no (approvals fail closed). Checked when someone decides.
     expires_at: Mapped[datetime]
+    # The account the call would work on (ADR 0010 §9). Set once each bot's tools come with their
+    # connection (bindings, roadmap slice 5.2); until then it stays empty.
+    connection_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("connections.id", ondelete="SET NULL"))

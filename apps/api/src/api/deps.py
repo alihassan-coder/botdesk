@@ -16,6 +16,7 @@ from src.models import Organization, User
 from src.runtime.memory import MemoryService
 from src.runtime.runner import RunManager
 from src.services import auth_service, organization_service
+from src.services.credential_vault import CredentialVault
 from src.services.email_service import EmailSender
 from src.services.model_catalog import ModelCatalog
 
@@ -64,6 +65,15 @@ def get_secrets(request: Request) -> SecretBox:
 
 
 Secrets = Annotated[SecretBox, Depends(get_secrets)]
+
+
+def get_vault(request: Request) -> CredentialVault:
+    """Encrypts connections' credentials (its own key from SECRET_KEY; ADR 0010 §6)."""
+    vault: CredentialVault = request.app.state.vault
+    return vault
+
+
+Vault = Annotated[CredentialVault, Depends(get_vault)]
 
 
 def get_model_catalog(request: Request) -> ModelCatalog:

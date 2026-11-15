@@ -19,7 +19,7 @@ from src.models import ProviderCredential
 from src.runtime.chat_model import ModelResolver, ModelUnavailable, StandInModel, describe_model_error
 from src.services import provider_service
 from src.services.model_catalog import ModelCatalog
-from src.services.provider_service import Connection
+from src.services.provider_service import ProviderAccess
 from tests.conftest import TEST_SETTINGS, FakeProviders, api_client, sign_up
 
 # Encryption
@@ -135,7 +135,7 @@ def test_private_model_urls_are_refused_everywhere_unless_asked() -> None:
 
 async def test_a_custom_server_on_a_private_address_is_refused(providers: FakeProviders) -> None:
     catalog = ModelCatalog(httpx.AsyncClient(transport=httpx.MockTransport(providers.handle)), allow_private_urls=False)
-    local = Connection("custom-1", "custom", "Ollama", "", base_url="http://127.0.0.1:11434/v1")
+    local = ProviderAccess("custom-1", "custom", "Ollama", "", base_url="http://127.0.0.1:11434/v1")
     with pytest.raises(UnsafeUrl):
         await catalog.fetch(local)
     assert providers.requests == []  # never called
@@ -245,17 +245,17 @@ async def test_the_cache_expires_and_follows_key_changes(providers: FakeProvider
     http = httpx.AsyncClient(transport=httpx.MockTransport(providers.handle))
     catalog = ModelCatalog(http, allow_private_urls=False, ttl_seconds=600, clock=lambda: now[0])
     org = uuid.uuid4()
-    groq = Connection("groq", "groq", "Groq", "gsk_one")
+    groq = ProviderAccess("groq", "groq", "Groq", "gsk_one")
 
     await catalog.models(org, groq)
     await catalog.models(org, groq)
     assert providers.calls_to("api.groq.com") == 1
     await catalog.models(uuid.uuid4(), groq)  # another organization has its own entry
     assert providers.calls_to("api.groq.com") == 2
-    await catalog.models(org, Connection("groq", "groq", "Groq", "gsk_two"))  # a replaced key
+    await catalog.models(org, ProviderAccess("groq", "groq", "Groq", "gsk_two"))  # a replaced key
     assert providers.calls_to("api.groq.com") == 3
     now[0] += 601
-    await catalog.models(org, Connection("groq", "groq", "Groq", "gsk_two"))
+    await catalog.models(org, ProviderAccess("groq", "groq", "Groq", "gsk_two"))
     assert providers.calls_to("api.groq.com") == 4
 
 
@@ -282,7 +282,7 @@ async def test_a_run_uses_the_org_key_then_the_server_key_then_the_stand_in(prov
 
         async with app.state.sessionmaker() as db:
             for kind, key in (("openai", "sk-org-openai-key"), ("anthropic", "sk-ant-org-key")):
-                connection = Connection(kind, kind, kind, key)  # type: ignore[arg-type]
+                connection = ProviderAccess(kind, kind, kind, key)  # type: ignore[arg-type]
                 await provider_service.save_credential(
                     db,
                     org_id=org_id,
@@ -324,7 +324,7 @@ async def test_two_first_saves_at_once_end_as_one_key_not_a_500(
                     db,
                     org_id=org_id,
                     user_id=user_id,
-                    connection=Connection("openai", "openai", "OpenAI", key),
+                    connection=ProviderAccess("openai", "openai", "OpenAI", key),
                     secrets=app.state.secrets,
                     verified_at=utcnow(),
                 )

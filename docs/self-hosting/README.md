@@ -12,10 +12,11 @@ Run BotDesk on your own server with Docker: Postgres, the API and the web app, s
 |---|---|
 | `postgres` | PostgreSQL 17 with pgvector (for bot memory). Data lives in the `postgres-data` volume. Not reachable from outside Docker. |
 | `migrate` | Brings the database tables up to date (`alembic upgrade head`), then exits. Runs on every start, so updates migrate themselves. |
-| `api` | The BotDesk API on port 8000. Bot runs happen inside this process for now ([ADR 0007](../adr/0007-runs-in-the-api-process-for-now.md)), so run **one** copy and don't scale it. |
+| `api` | The BotDesk API on port 8000. With the default `WORKER_MODE=embedded` it also runs bot runs and timers ([ADR 0013](../adr/0013-the-job-queue-lands.md)). Run **one** copy (rate limits count per process). |
+| `worker` | Optional (`--profile worker`, with `WORKER_MODE=separate`): runs bot runs and timers in its own process. |
 | `web` | The web app on port 3000. |
 
-There is no separate worker yet. It arrives with the job queue ([ADR 0005](../adr/0005-job-queue-and-scaling.md)) as the same API image started another way; the compose file has a commented stub for it.
+Bot runs, approval expiry and other background jobs run inside the `api` service by default ([ADR 0013](../adr/0013-the-job-queue-lands.md)); a restart doesn't lose them (an interrupted reply carries on afterwards). To run them in their own process, set `WORKER_MODE=separate` in `deploy/.env` and start the optional `worker` service: `docker compose -f deploy/docker-compose.yml --profile worker up -d` (add `--scale worker=2` for more).
 
 ## Requirements
 
@@ -203,7 +204,7 @@ Any Postgres 15+ works if the `vector` extension (pgvector) is available; [Neon]
 | Sign-in fails with a network or CORS error in the browser console | `WEB_ORIGINS` doesn't match the web app's address exactly (scheme, host, port). Fix it and `up -d`. |
 | Bots answer with a stand-in reply | No model key: add one in **Settings → Models & keys**, or set `ANTHROPIC_API_KEY` (etc.) in `deploy/.env`. |
 | Invite or reset emails never arrive | Without `BREVO_API_KEY` and a verified `EMAIL_FROM_ADDRESS` nothing is sent (`docker compose -f deploy/docker-compose.yml logs api` shows "Email not sent"). Copy the invite link from the invite dialog instead, or set up Brevo. |
-| A reply stopped half way after a restart | Expected for now: a restart fails unfinished runs ([ADR 0007](../adr/0007-runs-in-the-api-process-for-now.md)). Send the message again. |
+| A reply stopped half way after a restart | It carries on once the API (or worker) is back, usually within seconds; after a crash, within two minutes. If the run shows *needs attention*, a tool call may have half run: check, then Stop. |
 | Web image build is killed | Not enough memory for `next build`. Give Docker 3 GB or more, or add swap. |
 
 Health checks you can run yourself: `curl http://localhost:8000/api/v1/health` (API and database) and `docker compose -f deploy/docker-compose.yml ps`.

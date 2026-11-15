@@ -1,9 +1,13 @@
 {
+  "auth": null,
+  "botSettingsSchema": null,
   "description": "A starting point for a plugin: look up an order, send a message.",
+  "egress": [],
   "id": "template",
-  "manifestVersion": 1,
+  "manifestVersion": 2,
   "name": "Template",
   "runtime": "builtin",
+  "settingsSchema": null,
   "tools": [
     {
       "description": "Find an order by its number and return its status and total.",
@@ -28,6 +32,7 @@
       },
       "name": "look_up_order",
       "risk": "read",
+      "scopes": [],
       "title": "Look up an order",
       "untrustedOutput": false
     },
@@ -61,9 +66,11 @@
       },
       "name": "send_message",
       "risk": "external-send",
+      "scopes": [],
       "title": "Send a message",
       "untrustedOutput": false
     }
   ],
+  "triggers": [],
   "version": "0.1.0"
 }

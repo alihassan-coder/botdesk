@@ -29,7 +29,7 @@ from src.runtime.chat_model import (
 from src.runtime.graph import Streamed, TokensUsed, usage_of
 from src.services import pricing, provider_service, usage_service
 from src.services.model_catalog import ModelCatalog
-from src.services.provider_service import Connection
+from src.services.provider_service import ProviderAccess
 from tests.conftest import TEST_SETTINGS, FakeProviders, api_client, sign_up, sql_statements
 
 # Prices and costs
@@ -270,7 +270,7 @@ async def test_prices_come_from_the_table_from_openrouters_list_or_nowhere(acme:
     resolver = ModelResolver(TEST_SETTINGS, acme.app.state.sessionmaker, acme.app.state.secrets, acme.app.state.models)
     acme.app.state.models.remember(
         acme.id,
-        Connection("openrouter", "openrouter", "OpenRouter", "sk-or-test"),
+        ProviderAccess("openrouter", "openrouter", "OpenRouter", "sk-or-test"),
         [ModelInfo("meta/llama-4", "Llama 4", pricing=Pricing(0.2, 0.6))],
     )
 
@@ -308,7 +308,7 @@ class SlowCatalog:
     def cached(self, _org_id: uuid.UUID, _provider_id: str) -> list[ModelInfo] | None:
         return self.list
 
-    async def models(self, _org_id: uuid.UUID, _connection: Connection) -> list[ModelInfo]:
+    async def models(self, _org_id: uuid.UUID, _connection: ProviderAccess) -> list[ModelInfo]:
         self.fetches += 1
         await asyncio.sleep(0.01)
         if self.fail:
@@ -318,8 +318,8 @@ class SlowCatalog:
 
 
 def _resolver(acme: Org, catalog: SlowCatalog, monkeypatch: pytest.MonkeyPatch, clock: list[float]) -> ModelResolver:
-    async def connection_for(*_args: object) -> Connection:
-        return Connection("openrouter", "openrouter", "OpenRouter", "sk-or-test")
+    async def connection_for(*_args: object) -> ProviderAccess:
+        return ProviderAccess("openrouter", "openrouter", "OpenRouter", "sk-or-test")
 
     monkeypatch.setattr(provider_service, "connection_for", connection_for)
     sessionmaker, secrets = acme.app.state.sessionmaker, acme.app.state.secrets

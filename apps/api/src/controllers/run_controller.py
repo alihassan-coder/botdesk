@@ -40,6 +40,6 @@ async def cancel_run(db: AsyncSession, access: Access, runs: RunManager, run_id:
         )
     await db.commit()
     runs.bus.announce(run.thread_id)
-    runs.stop_now(run.id)  # if it's running in this process, stop it now, not at its next step
+    await runs.stop_now(run.id)  # if it's running, stop it now, not at its next step
     await db.refresh(run)
     return run_service.run_out(run)

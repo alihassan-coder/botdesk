@@ -24,7 +24,7 @@ from src.core.errors import AppError
 from src.core.url_guard import check_base_url
 from src.model_providers import ModelInfo, ProviderError, adapter_for
 from src.schemas.provider import ModelListOut, ModelOut, PricingOut, ProviderProblem
-from src.services.provider_service import Connection
+from src.services.provider_service import ProviderAccess
 
 log = logging.getLogger(__name__)
 
@@ -38,7 +38,7 @@ class _Entry:
     models: list[ModelInfo]
 
 
-def _fingerprint(connection: Connection) -> str:
+def _fingerprint(connection: ProviderAccess) -> str:
     return hashlib.sha256(f"{connection.api_key}\0{connection.base_url or ''}".encode()).hexdigest()
 
 
@@ -72,7 +72,7 @@ class ModelCatalog:
         self.clock = clock
         self._cache: dict[tuple[uuid.UUID, str], _Entry] = {}
 
-    async def fetch(self, connection: Connection) -> list[ModelInfo]:
+    async def fetch(self, connection: ProviderAccess) -> list[ModelInfo]:
         """Ask the provider now. This is also how a key is tested. Raises `ProviderError`, or
         `UnsafeUrl` for a custom server on an address this server may not call."""
         base_url = connection.base_url
@@ -83,7 +83,7 @@ class ModelCatalog:
                 base_url = await check_base_url(base_url, allow_private=self.allow_private_urls)
         return await adapter_for(connection.kind).list_models(http, connection.api_key, base_url)
 
-    async def models(self, org_id: uuid.UUID, connection: Connection, *, refresh: bool = False) -> list[ModelInfo]:
+    async def models(self, org_id: uuid.UUID, connection: ProviderAccess, *, refresh: bool = False) -> list[ModelInfo]:
         key = (org_id, connection.provider_id)
         fingerprint = _fingerprint(connection)
         entry = self._cache.get(key)
@@ -93,7 +93,7 @@ class ModelCatalog:
         self.remember(org_id, connection, models)
         return models
 
-    def remember(self, org_id: uuid.UUID, connection: Connection, models: list[ModelInfo]) -> None:
+    def remember(self, org_id: uuid.UUID, connection: ProviderAccess, models: list[ModelInfo]) -> None:
         entry = _Entry(_fingerprint(connection), self.clock() + self.ttl_seconds, models)
         self._cache[(org_id, connection.provider_id)] = entry
 
@@ -107,7 +107,7 @@ class ModelCatalog:
         self._cache.pop((org_id, provider_id), None)
 
     async def merged(
-        self, org_id: uuid.UUID, connections: Sequence[Connection], *, refresh: bool = False
+        self, org_id: uuid.UUID, connections: Sequence[ProviderAccess], *, refresh: bool = False
     ) -> ModelListOut:
         """Every connected provider's models, asked at the same time. A provider that fails is
         reported in `errors`; the others' models still come back."""
@@ -126,7 +126,7 @@ class ModelCatalog:
         return ModelListOut(models=models, errors=errors)
 
 
-def _problem(connection: Connection, error: Exception) -> str:
+def _problem(connection: ProviderAccess, error: Exception) -> str:
     if isinstance(error, ProviderError):
         return f"{connection.name}: {error}"
     if isinstance(error, AppError):  # e.g. UnsafeUrl: its message is written for people

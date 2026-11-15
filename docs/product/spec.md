@@ -53,7 +53,7 @@ Layout: bot sidebar (left) · thread (centre) · bot details pane (right, collap
 ## Build order
 
 1. **UI first, on mock data** (done). Every screen clickable against `apps/web/src/data/mock/`.
-2. **API** (`apps/api`; runs start inside the API process until the job queue arrives, [ADR 0007](../adr/0007-runs-in-the-api-process-for-now.md)): auth, orgs, bots, threads, runs, approvals; swap the mock source for the API (current phase).
+2. **API** (`apps/api`; runs are jobs on a Postgres job queue, [ADR 0013](../adr/0013-the-job-queue-lands.md)): auth, orgs, bots, threads, runs, approvals; swap the mock source for the API (current phase).
 3. **Gmail plugin**, memory, computers, routines.
 4. Desktop, then mobile.
 

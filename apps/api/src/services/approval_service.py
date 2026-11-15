@@ -25,6 +25,10 @@ LIST_LIMIT = 100
 ALREADY_DECIDED = "This approval was already decided."
 EXPIRED = "This approval expired, so the bot didn't do it."
 NOT_FOUND = "This approval doesn't exist."
+# What the paused run is told when it carries on (the model reads these).
+DENIED_MESSAGE = "A person denied this action, so it wasn't done. Don't try it again without asking."
+EXPIRED_MESSAGE = "Nobody approved this action in time, so it wasn't done."
+EXPIRE_BATCH = 100  # approvals the expiry job handles per tick
 
 
 @dataclass(frozen=True)
@@ -199,6 +203,40 @@ async def _settle_tool_call(db: AsyncSession, execution_id: uuid.UUID, approved_
         .where(*waiting)
         .values(status="ready", args=approved_args, args_hash=args_hash(approved_args))
     )
+
+
+async def status_of(db: AsyncSession, approval_id: uuid.UUID) -> str | None:
+    return await db.scalar(select(Approval.status).where(Approval.id == approval_id))
+
+
+def resume_answer(status: str | None) -> dict[str, Any] | None:
+    """What a paused run continues with, from its approval's status: `{"approved", "message"}`.
+    None while nobody has decided. Expired counts as no; so does an approval that's gone."""
+    if status == "pending":
+        return None
+    if status in ("approved", "edited"):
+        return {"approved": True, "message": None}
+    return {"approved": False, "message": DENIED_MESSAGE if status == "denied" else EXPIRED_MESSAGE}
+
+
+async def overdue(db: AsyncSession, *, limit: int = EXPIRE_BATCH) -> list[uuid.UUID]:
+    """Pending approvals past their `expires_at`, oldest first."""
+    rows = await db.scalars(
+        select(Approval.id)
+        .where(Approval.status == "pending", Approval.expires_at <= utcnow())
+        .order_by(Approval.expires_at)
+        .limit(limit)
+    )
+    return list(rows)
+
+
+async def expire(db: AsyncSession, approval_id: uuid.UUID) -> bool:
+    """Nobody answered in time: pending → expired, and its tool call is denied. False if someone
+    decided it first. The caller commits."""
+    approval = await db.get(Approval, approval_id)
+    if approval is None or approval.status != "pending":
+        return False
+    return await _settle(db, approval, status="expired", user_id=None, final_args=None)
 
 
 async def expire_for_run(db: AsyncSession, run_id: uuid.UUID) -> list[uuid.UUID]:

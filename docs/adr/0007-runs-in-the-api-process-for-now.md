@@ -1,6 +1,6 @@
 # 0007: Runs start inside the API process, for now
 
-- Status: accepted
+- Status: superseded by [ADR 0013](0013-the-job-queue-lands.md)
 - Date: 2026-11-12
 - Changes: [ADR 0005](0005-job-queue-and-scaling.md) decisions 1 and 2 (the job queue and the worker) are deferred
 

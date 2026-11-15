@@ -15,7 +15,9 @@ from src.schemas.run import ThreadRunsOut
 from src.schemas.thread import GroupIn, LeadIn, MessageIn, MessageOut, SentMessageOut, ThreadOut
 from src.services import run_event_service, run_service, thread_service
 
-RECHECK_SECONDS = 5.0  # how often an idle stream looks for events saved by another API process
+# How often an idle stream looks for new events anyway: Postgres notifications wake it at once,
+# but one sent while the listening connection reconnects is lost.
+RECHECK_SECONDS = 5.0
 
 
 async def list_threads(db: AsyncSession, access: Access) -> list[ThreadOut]:
@@ -76,8 +78,8 @@ async def list_runs(db: AsyncSession, access: Access, thread_id: uuid.UUID, *, a
 async def post_message(
     db: AsyncSession, access: Access, runs: RunManager, thread_id: uuid.UUID, body: MessageIn
 ) -> SentMessageOut:
-    """Save the message and a queued run for each bot that should reply, in one transaction,
-    then start the runs in the background. The reply streams in over the event stream."""
+    """Save the message, a queued run for each bot that should reply and the runs' jobs, in one
+    transaction. A worker picks the jobs up; the reply streams in over the event stream."""
     thread = await thread_service.get_thread(db, org_id=access.org.id, user_id=access.user.id, thread_id=thread_id)
     message = await thread_service.post_message(db, thread=thread, user_id=access.user.id, text=body.text)
     new_runs = await run_service.create_runs(db, thread=thread, message=message, settings=runs.settings, text=body.text)
@@ -90,9 +92,9 @@ async def post_message(
         kind="message_saved",
         data={"message": out.model_dump(mode="json", by_alias=True)},
     )
+    await runs.start(db, new_runs)
     await db.commit()
     runs.bus.announce(thread.id)
-    runs.start(new_runs)
     return SentMessageOut(**out.model_dump(), run_ids=[run.id for run in new_runs])
 
 
@@ -131,7 +133,7 @@ async def follow_events(
                 continue  # more saved events to catch up on
             if not follow:
                 return
-            # Wait for a wake-up, or look again anyway after a few seconds: events saved by
-            # another API process don't reach this process's bus.
+            # Wait for a wake-up (this process's bus, fed by Postgres notifications from other
+            # processes), or look again anyway after a few seconds.
             with suppress(TimeoutError):
                 await asyncio.wait_for(wake_up.wait(), RECHECK_SECONDS)

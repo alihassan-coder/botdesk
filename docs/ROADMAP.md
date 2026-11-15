@@ -79,6 +79,11 @@ When you finish something, tick it here in the same pull request.
 - [x] `plugins/_template`, a generated `manifest.json` checked in CI, import rules in CI ([author guide](plugins/README.md))
 - [ ] Release the SDK to PyPI with release-please (separate `sdk-v*` version): config and `release.yml` are ready; waiting on the owner's one-time PyPI and GitHub setup ([steps](../packages/plugin-sdk/README.md#releases))
 
+### Connections (before Gmail and MCP; [build plan](architecture/connections-gmail-mcp.md), [ADR 0010](adr/0010-connections-and-credentials.md))
+- [x] 5.1 Connection platform (backend): `connections` table, credential vault, API-key connections (`/orgs/{id}/connections`), `ctx.http` (declared hosts only, no redirects, no private addresses, size and time caps, credential added by BotDesk), SDK manifest v2, demo `call_api` tool
+- [ ] 5.2 Bindings: each bot's Tools tab, the run's requester, member connections only in their member's DMs
+- [ ] 5.3 OAuth connections and Connect apps on the API (token refresh with a lease, reconnect, revoke)
+
 ### Gmail (step 5)
 - [ ] Connect with your own Google client; read, label, draft, and send only after approval
 
@@ -96,7 +101,7 @@ When you finish something, tick it here in the same pull request.
 - [ ] Connect a remote MCP server; its tools become bot tools
 
 ### Self-hosting
-- [ ] Job queue and a separate worker process ([ADR 0005](adr/0005-job-queue-and-scaling.md)); approvals expire on a timer
+- [x] Job queue and a separate worker process ([ADR 0005](adr/0005-job-queue-and-scaling.md), [ADR 0013](adr/0013-the-job-queue-lands.md)); approvals expire on a timer
 - [x] `deploy/docker-compose.yml` for one-command self-hosting ([docs/self-hosting](self-hosting/README.md), checked by the CI smoke test)
 - [x] Sign-ups: open, invite-only or closed (`SIGNUP_MODE`); signing up from an invite link joins that organization
 - [ ] Row-level security in Postgres, before one install serves teams that don't trust each other

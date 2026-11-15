@@ -134,6 +134,55 @@ Also set:
 - `idempotent=True` only when running it twice does no harm. Other tools stop and ask a person after a crash instead of running again. For services that accept an idempotency key, pass on `ctx.idempotency_key`; it stays the same across retries of one call.
 - `summarize=lambda args: f"Send an email to {args.to}"` for a clearer approval card.
 
+## Calling another app: auth, egress and `ctx.http` (manifest version 2)
+
+A plugin that works on someone's account never handles a token. It declares how the account is authorised and which hosts it calls, and makes requests through `ctx.http`; BotDesk adds the credential to each request.
+
+```python
+from botdesk_plugin_sdk import ApiKeyAuth, NoArgs, PluginManifest, ToolContext, ToolResult, ToolSpec
+
+
+async def whoami(_args: NoArgs, ctx: ToolContext) -> ToolResult:
+    response = await ctx.http.request("GET", "https://api.example.com/v1/me")
+    return {"name": response.json()["name"], "account": ctx.connection.account_label if ctx.connection else None}
+
+
+PluginManifest(
+    id="acme",
+    name="Acme",
+    version="0.1.0",
+    description="Acme's API.",
+    tools=(
+        ToolSpec(name="whoami", title="Who am I", description="...", args_model=NoArgs, risk="read", handler=whoami),
+    ),
+    auth=ApiKeyAuth(header="X-Api-Key"),  # people paste a key in Connect apps
+    egress=("api.example.com",),  # the only hosts ctx.http may call
+)
+```
+
+All optional, so a version-1 plugin loads unchanged:
+
+| Field | What it is |
+|---|---|
+| `auth` | `ApiKeyAuth(header, prefix)`, or `OAuth2Auth(provider, authorize_url, token_url, scope_sets={"read": (...), "full": (...)}, revoke_url, extra_authorize_params, account)` for "Sign in with ...". None: the plugin needs no account. |
+| `egress` | exact host names, lowercase, no scheme or port. Required with `auth`, and enforced: any other host is refused. |
+| `ToolSpec.scopes` | the OAuth scopes a tool needs (from `scope_sets`); a connection granted fewer isn't offered the tool. |
+| `settings_model`, `bot_settings_model` | Pydantic models for the organization's and each bot's settings; their JSON Schema drives the forms. The bot's validated settings arrive as `ctx.settings`. |
+| `triggers` | `TriggerSpec(name, title, description, poll, interval_seconds=300, untrusted_payload=True)`: things in the other app that start a run. Declared now; BotDesk runs them later (roadmap 6.3). |
+
+`ctx.http.request(method, url, *, params, json, data, headers) -> HttpResponse` (`status_code`, `headers`, `content`, `.text`, `.json()`, `.ok`). It allows only `https` to your `egress` hosts, never follows redirects, refuses private network addresses, caps the response at 10 MB and times out with the tool. Refusals raise `HttpError` subclasses (`HostNotAllowed`, `ResponseTooLarge`, `NotConnected` when no account is connected); let them propagate and the bot sees the message. `ctx.connection` (`ConnectionInfo`: id, connector, account label, owner kind, granted scopes) says which account the call works on; it never holds a secret.
+
+Test without a network or a token:
+
+```python
+from botdesk_plugin_sdk.testing import FakeHttp, call_tool, make_context
+
+http = FakeHttp(acme_plugin())  # only the manifest's egress hosts; others raise HostNotAllowed
+http.route("GET", "https://api.example.com/v1/me", json={"name": "Acme Inc"})
+result = await call_tool(acme_plugin(), "whoami", {}, make_context(http=http))
+assert http.requests[0].url == "https://api.example.com/v1/me"
+```
+
 ## The rules BotDesk checks at load time
 
 A plugin that breaks one is skipped with a log line saying why; it never stops the API.
@@ -143,16 +192,17 @@ A plugin that breaks one is skipped with a log line saying why; it never stops t
 - Every tool has a title, a description, a known risk class and egress.
 - `args_model` is a Pydantic `BaseModel` class.
 - The handler is an `async def`. A blocking handler would stall every other bot on the server.
+- Version 2: `auth` is `ApiKeyAuth` or `OAuth2Auth` (OAuth URLs are https); a plugin with `auth` lists its `egress` hosts; tool `scopes` come from the auth's scope sets; trigger names are unique, `poll` is async and runs at most once a minute. A plugin with `auth` or triggers may have no tools yet.
 
 Run the same checks in your tests with `validate_manifest(your_plugin())`.
 
 ## What a handler may and may not do
 
-`ToolContext` carries the organization, bot and run ids, the tool call id, the idempotency key and a logger. It has no database session and no settings: a plugin gets only what BotDesk hands it. Return a small JSON-friendly dict, never secrets. Raise an exception when something fails; BotDesk records the error and the bot sees a short message.
+`ToolContext` carries the organization, bot and run ids, the tool call id, the idempotency key, a logger, and (version 2) `http`, `connection` and `settings`. It has no database session and no token: a plugin gets only what BotDesk hands it. Return a small JSON-friendly dict, never secrets. Raise an exception when something fails; BotDesk records the error and the bot sees a short message.
 
 ## Versions and releases
 
-The SDK follows semantic versioning on its own clock (`sdk-v0.1.0`), separate from the BotDesk app ([ADR 0006](../../docs/adr/0006-repo-structure-plugins-and-project.md)). `PluginManifest.to_json()` carries a `manifestVersion`, so the app can tell which manifest shape it is reading.
+The SDK follows semantic versioning on its own clock (`sdk-v0.1.0`), separate from the BotDesk app ([ADR 0006](../../docs/adr/0006-repo-structure-plugins-and-project.md)). `PluginManifest.to_json()` carries a `manifestVersion` (now 2: it adds `auth`, `egress`, per-tool `scopes`, `triggers`, `settingsSchema` and `botSettingsSchema`), so the app can tell which manifest shape it is reading.
 
 ### Releases
 

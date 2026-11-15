@@ -2,8 +2,8 @@
 
 Rules:
 - A built-in provider has at most one key per organization; custom servers may have several.
-- Keys are encrypted with the app's SecretBox and decrypted only into a `Connection`, right
-  before a call to the provider. A `Connection` never prints its key.
+- Keys are encrypted with the app's SecretBox and decrypted only into a `ProviderAccess`, right
+  before a call to the provider. A `ProviderAccess` never prints its key.
 - An organization's own key wins; the server's environment key (self-hosting) is the fallback.
 
 Nothing here calls a provider: that's `model_catalog`, so no transaction waits on the network.
@@ -44,8 +44,10 @@ KEY_FOR_NEW_URL = (
 
 
 @dataclass(frozen=True)
-class Connection:
-    """A provider ready to call: its decrypted key and where it lives. Lives for one request or one run."""
+class ProviderAccess:
+    """A provider ready to call: its decrypted key and where it lives. Lives for one request or one run.
+
+    Not a *connection*: that word means an authorised account on a connector (GLOSSARY, ADR 0010)."""
 
     provider_id: str
     kind: ProviderKind
@@ -147,7 +149,7 @@ def provider_views(credentials: Sequence[ProviderCredential], settings: Settings
     return views
 
 
-def connection_of(credential: ProviderCredential, secrets: SecretBox) -> Connection:
+def connection_of(credential: ProviderCredential, secrets: SecretBox) -> ProviderAccess:
     kind: ProviderKind = credential.provider  # type: ignore[assignment]
     name = credential.label or spec_for(kind).name
     try:
@@ -156,18 +158,18 @@ def connection_of(credential: ProviderCredential, secrets: SecretBox) -> Connect
         raise ProviderError(
             "its saved key can't be read (did SECRET_KEY change?). Add the key again in Settings → Models & keys."
         ) from error
-    return Connection(provider_id_of(credential), kind, name, api_key, credential.base_url, "org", credential.id)
+    return ProviderAccess(provider_id_of(credential), kind, name, api_key, credential.base_url, "org", credential.id)
 
 
-def env_connection(settings: Settings, kind: str) -> Connection | None:
+def env_connection(settings: Settings, kind: str) -> ProviderAccess | None:
     spec = BUILT_IN.get(kind)
     api_key = env_key(settings, kind)
-    return Connection(spec.kind, spec.kind, spec.name, api_key, source="env") if spec and api_key else None
+    return ProviderAccess(spec.kind, spec.kind, spec.name, api_key, source="env") if spec and api_key else None
 
 
 async def connection_for(
     db: AsyncSession, org_id: uuid.UUID, provider_id: str, settings: Settings, secrets: SecretBox
-) -> Connection | None:
+) -> ProviderAccess | None:
     """The key a call to this provider uses: the organization's, else the environment's, else None.
     Raises `ProviderError` when the organization's key exists but can't be decrypted."""
     try:
@@ -183,10 +185,10 @@ async def connection_for(
 
 async def connections(
     db: AsyncSession, org_id: uuid.UUID, settings: Settings, secrets: SecretBox
-) -> tuple[list[Connection], dict[str, str]]:
+) -> tuple[list[ProviderAccess], dict[str, str]]:
     """Every connected provider in one query, plus {provider id: problem} for keys that can't be read."""
     credentials = await list_credentials(db, org_id)
-    found: list[Connection] = []
+    found: list[ProviderAccess] = []
     problems: dict[str, str] = {}
     for credential in credentials:
         try:
@@ -221,14 +223,14 @@ async def require_usable_model(db: AsyncSession, org_id: uuid.UUID, model_id: st
 
 def draft_connection(
     target: Target, body: ProviderKeyIn, existing: ProviderCredential | None, secrets: SecretBox
-) -> Connection:
+) -> ProviderAccess:
     """What the request asks to save, checked for completeness (the live check comes next)."""
     api_key = body.api_key.strip()
     if target.kind != "custom":
         if not api_key:
             raise BadRequest("Paste the API key.")
         spec = BUILT_IN[target.kind]
-        return Connection(spec.kind, spec.kind, spec.name, api_key)
+        return ProviderAccess(spec.kind, spec.kind, spec.name, api_key)
     label = (body.label or "").strip() or (existing.label if existing else "")
     base_url = ((body.base_url or "").strip() or (existing.base_url if existing else "") or "").rstrip("/")
     if not label:
@@ -238,7 +240,7 @@ def draft_connection(
     if not api_key and not body.no_key and existing is not None and existing.encrypted_key:
         api_key = _kept_key(existing, base_url, secrets)
     credential_id = existing.id if existing else uuid.uuid4()
-    return Connection(f"{CUSTOM_PREFIX}{credential_id}", "custom", label, api_key, base_url, "org", credential_id)
+    return ProviderAccess(f"{CUSTOM_PREFIX}{credential_id}", "custom", label, api_key, base_url, "org", credential_id)
 
 
 def _kept_key(existing: ProviderCredential, base_url: str, secrets: SecretBox) -> str:
@@ -259,7 +261,7 @@ async def save_credential(
     *,
     org_id: uuid.UUID,
     user_id: uuid.UUID,
-    connection: Connection,
+    connection: ProviderAccess,
     secrets: SecretBox,
     verified_at: datetime,
 ) -> ProviderCredential:
@@ -289,7 +291,9 @@ async def save_credential(
     return credential
 
 
-def _fill(credential: ProviderCredential, connection: Connection, secrets: SecretBox, verified_at: datetime) -> None:
+def _fill(
+    credential: ProviderCredential, connection: ProviderAccess, secrets: SecretBox, verified_at: datetime
+) -> None:
     """Every key is encrypted with the current SECRET_KEY, so saving also finishes a rotation."""
     credential.provider = connection.kind
     credential.label = connection.name if connection.kind == "custom" else ""

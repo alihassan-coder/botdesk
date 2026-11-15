@@ -3,6 +3,7 @@
 
 from src.models.approval import Approval
 from src.models.bot import Bot
+from src.models.connection import AuditEntry, Connection
 from src.models.invitation import Invitation
 from src.models.organization import Membership, Organization
 from src.models.provider_credential import ProviderCredential
@@ -13,7 +14,9 @@ from src.models.user import PasswordResetToken, Session, User
 
 __all__ = [
     "Approval",
+    "AuditEntry",
     "Bot",
+    "Connection",
     "Invitation",
     "Membership",
     "Message",

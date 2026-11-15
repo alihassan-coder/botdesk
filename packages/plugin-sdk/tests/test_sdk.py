@@ -67,7 +67,7 @@ def test_the_seven_risk_classes_in_order_of_danger() -> None:
 def test_a_good_manifest_passes_and_turns_into_json() -> None:
     manifest = validate_manifest(plugin(greet_tool(), greet_tool(name="ping", args_model=NoArgs, handler=ping)))
     data = manifest.to_json()
-    assert data["manifestVersion"] == 1
+    assert data["manifestVersion"] == 2
     assert data["id"] == "hello"
     first = data["tools"][0]
     assert first["risk"] == "read"

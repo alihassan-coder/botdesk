@@ -60,6 +60,7 @@ from src.runtime.policy import LEVELS
 from src.runtime.prompt import HistoryLine, build_prompt
 from src.runtime.reporter import RunReporter
 from src.runtime.token_batcher import BackgroundSender, TokenBatcher
+from src.runtime.tool_access import ToolAccessProvider
 from src.runtime.tool_pipeline import ToolCallRequest, finished_event
 from src.services import pricing, run_service, tool_execution_service, usage_service
 from src.services.tool_execution_service import RunRef
@@ -144,8 +145,10 @@ class RunDeps:
     tool_timeout_seconds: float
     approval_expiry: timedelta
     settings: Settings  # the hop limit and run limits for runs a reply's @mentions start
-    # Starts runs in the background (`RunManager.start`); called after they're committed.
-    start_runs: Callable[[list[Run]], None]
+    # Defers the runs' jobs in the given transaction (`RunManager.start`), before it commits.
+    start_runs: Callable[[AsyncSession, list[Run]], Awaitable[None]]
+    # Tools' `ctx.http` and `ctx.connection` (ADR 0010). None: tools get no web access.
+    tool_access: ToolAccessProvider | None = None
 
     @property
     def run_ref(self) -> RunRef:
@@ -485,6 +488,7 @@ async def execute_tool(state: RunState, runtime: Runtime[RunDeps]) -> RunState:
             reporter=deps.reporter,
             run=deps.run_ref,
             timeout_seconds=deps.tool_timeout_seconds,
+            access=deps.tool_access,
         ),
         uuid.UUID(call["executionId"]),
     )
@@ -512,8 +516,8 @@ def after_call(state: RunState) -> Literal["prepare_call", "call_model"]:
 
 async def save_reply(state: RunState, runtime: Runtime[RunDeps]) -> RunState:
     """Save the reply (with its event) and, in the same transaction, a queued run for each bot it
-    @mentions (ADR 0009), or the "chain stopped" notice past the hop limit. Those runs start once
-    it's committed; they wait for this run to finish (one run at a time per chat)."""
+    @mentions (ADR 0009) with their jobs, or the "chain stopped" notice past the hop limit. Those
+    runs wait for this run to finish (one run at a time per chat)."""
     deps = runtime.context
     async with deps.sessionmaker() as db:
         cards = await tool_execution_service.reply_cards(db, deps.run_id)
@@ -525,9 +529,9 @@ async def save_reply(state: RunState, runtime: Runtime[RunDeps]) -> RunState:
             settings=deps.settings,
             extra_parts=cards,
         )
+        await deps.start_runs(db, saved.runs)
         await db.commit()
     deps.reporter.announce()
-    deps.start_runs(saved.runs)
     return {}
 
 

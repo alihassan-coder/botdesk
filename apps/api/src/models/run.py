@@ -106,3 +106,5 @@ class ToolExecution(IdMixin, CreatedAtMixin, Base):
     error: Mapped[str | None] = mapped_column(Text)
     started_at: Mapped[datetime | None]
     finished_at: Mapped[datetime | None]
+    # The account the call worked on (ADR 0010 §9), when its plugin has one.
+    connection_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("connections.id", ondelete="SET NULL"))

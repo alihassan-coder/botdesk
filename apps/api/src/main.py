@@ -17,8 +17,9 @@ from src.core.errors import AppError, TooManyRequests
 from src.core.rate_limit import RateLimiter
 from src.core.secrets import build_secret_box
 from src.core.url_guard import GuardedTransport
+from src.jobs.background import background
 from src.runtime.memory import build_memory
-from src.runtime.runner import run_manager
+from src.services.credential_vault import CredentialVault
 from src.services.email_service import build_email_sender
 from src.services.model_catalog import ModelCatalog
 
@@ -62,10 +63,12 @@ def create_app(settings: Settings | None = None, *, outbound: httpx.AsyncBaseTra
             app.state.email = build_email_sender(settings, http)
             # One catalog: Models & keys and runs (OpenRouter's prices) share its cache.
             app.state.models = ModelCatalog(http, allow_private_urls=allow_private, custom_http=custom)
-            async with run_manager(
+            # Runs and other background jobs (ADR 0013): a worker in this process, unless
+            # WORKER_MODE=separate on Postgres (then `python -m src.worker` runs them).
+            async with background(
                 settings, app.state.sessionmaker, build_memory(settings), secrets, app.state.models
-            ) as runs:
-                app.state.runs = runs
+            ) as jobs:
+                app.state.runs = jobs.runs
                 yield
         await engine.dispose()
 
@@ -80,6 +83,7 @@ def create_app(settings: Settings | None = None, *, outbound: httpx.AsyncBaseTra
     )
     app.state.settings = settings
     app.state.secrets = secrets
+    app.state.vault = CredentialVault.from_settings(settings)  # connections' credentials (ADR 0010)
     app.state.limiter = RateLimiter()
 
     app.add_middleware(

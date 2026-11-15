@@ -28,6 +28,14 @@ class Settings(BaseSettings):
     # connections. Empty = use DATABASE_URL. On Neon: the same URL without `-pooler` in the host.
     database_url_direct: str = ""
 
+    # Where background jobs (bot runs, approval expiry, timers) run (ADR 0013). embedded: a worker
+    # inside the API process (development, small installs). separate: the API only adds jobs;
+    # run `python -m src.worker` as its own process (and as many copies as you like). Postgres only:
+    # on SQLite jobs always run inside the API process.
+    worker_mode: Literal["embedded", "separate"] = "embedded"
+    # Jobs one worker runs at once (bot runs mostly wait on the model, so this can be generous).
+    worker_concurrency: int = 10
+
     # A separate, throwaway Postgres database for the Postgres tests. Never your dev database:
     # the tests wipe it. Empty = those tests are skipped.
     test_database_url: str = ""
@@ -77,6 +85,10 @@ class Settings(BaseSettings):
 
     # Where the web app lives; invite links point here.
     web_app_url: str = "http://localhost:3000"
+
+    # The API's own public address. OAuth providers send people back to
+    # {API_PUBLIC_URL}/api/v1/oauth/callback (ADR 0010 §5), so it must be reachable from their browser.
+    api_public_url: str = "http://localhost:8000"
 
     session_cookie_name: str = "botdesk_session"
     session_days: int = 30

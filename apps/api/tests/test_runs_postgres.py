@@ -260,16 +260,16 @@ async def test_a_run_stops_at_its_step_limit(pg: Postgres) -> None:
     assert run["error"] == "This run reached its limit of 0 model steps."
 
 
-async def test_runs_left_by_a_restart_fail_with_a_clear_message(pg: Postgres) -> None:
-    pg.runs.enabled = False
+async def test_a_run_that_lost_its_job_is_picked_up_again(pg: Postgres) -> None:
+    pg.runs.enabled = False  # saved with no job, as if its job were lost
     org, thread = await _bot_chat(pg.client)
     run_id = await _send(pg.client, thread, "Hi")
+    pg.runs.enabled = True
 
     await pg.runs.recover_after_restart()
+    await pg.runs.wait_until_idle()
 
-    run = (await pg.client.get(f"{org}/runs/{run_id}")).json()
-    assert run["status"] == "failed"
-    assert run["error"] == "Interrupted by a restart. Send your message again."
+    assert (await pg.client.get(f"{org}/runs/{run_id}")).json()["status"] == "succeeded"
 
 
 class FakeMemory(NoMemory):

@@ -22,6 +22,7 @@ Open **http://localhost:8000/api/docs** to see and try every route.
 | `pnpm start:api` | Migrate, then run without reload. In production, migrations will move to their own `migrate` step ([ADR 0005](../adr/0005-job-queue-and-scaling.md)) |
 | `pnpm test:api` | pytest: unit and HTTP tests on in-memory SQLite (seconds, no network), plus the Postgres tests when `TEST_DATABASE_URL` is set |
 | `pnpm db:migrate` | Apply migrations to `DATABASE_URL` |
+| `pnpm --filter @botdesk/api worker` | The job worker as its own process, for `WORKER_MODE=separate` (not needed by default: the API runs one inside) |
 | `pnpm db:seed` | Add the demo team (ali@acme.dev / botdesk123, Sara, Omar in Acme Labs) and three bots. Not in production |
 | `pnpm check` | typecheck (mypy) + lint (ruff) + tests, for web, API, plugin SDK and plugins together |
 
@@ -34,7 +35,7 @@ Every setting is in [`apps/api/.env.example`](../../apps/api/.env.example). The 
 | Setting | Default | What it does |
 |---|---|---|
 | `DATABASE_URL` | local SQLite | The app database. On Neon the **pooled** address is fine |
-| `DATABASE_URL_DIRECT` | = `DATABASE_URL` | The **direct** address (Neon: no `-pooler` in the host). Run checkpoints and mem0 keep their own connections here |
+| `DATABASE_URL_DIRECT` | = `DATABASE_URL` | The **direct** address (Neon: no `-pooler` in the host). The job queue, live events (`LISTEN`), run checkpoints and mem0 keep their own connections here |
 | `TEST_DATABASE_URL` | empty | A **separate** database for the Postgres tests. They wipe it. Empty = those tests are skipped |
 | `ENVIRONMENT` | development | `development`, `test` or `production`. Only an **explicit** `development` or `test` relaxes the `SECRET_KEY` rules below; left unset, the API treats `SECRET_KEY` as production does (fails closed) |
 | `SECRET_KEY` | empty | Encrypts the model keys organizations save. **Required, at least 32 characters**, unless `ENVIRONMENT` is explicitly `development` or `test` (the API refuses to start otherwise); those fall back to a fixed, public development key with a warning. Generate: `python -c "import secrets; print(secrets.token_urlsafe(48))"`. To change it, rotate with `SECRET_KEY_OLD` |
@@ -45,9 +46,11 @@ Every setting is in [`apps/api/.env.example`](../../apps/api/.env.example). The 
 | `RUN_MAX_STEPS`, `RUN_MAX_SECONDS` | 25, 900 | Limits on every run; a run that hits one fails with a clear message |
 | `BOT_MAX_RUNNING_RUNS` | 2 | Runs one bot may have going at once (across chats) |
 | `BOT_HOP_LIMIT` | 3 | How many hops a chain of bot replies may go from a person's message. A bot @mention past it starts nothing; the chat gets a "Stopped a chain…" notice ([Bots working together](#bots-working-together)) |
+| `WORKER_MODE` | `embedded` | Where background jobs (bot runs, approval expiry, timers) run. `embedded`: a worker inside the API process. `separate` (Postgres only): the API only adds jobs; run `python -m src.worker` (`pnpm worker` in `apps/api`) as its own process. See [Background jobs](#background-jobs) |
+| `WORKER_CONCURRENCY` | 10 | Jobs one worker runs at once (runs mostly wait on the model) |
 | `PLUGINS` | `demo` | Allowlist of plugin ids to load (comma-separated), found through `botdesk.plugins` entry points. An id nobody provides stops startup; a broken plugin is skipped with a log line. `demo` = fake tools for trying approvals |
 | `TOOL_TIMEOUT_SECONDS` | 30 | A tool call that takes longer fails |
-| `APPROVAL_EXPIRY_HOURS` | 72 | An approval nobody answers in time counts as "no" (checked when someone decides) |
+| `APPROVAL_EXPIRY_HOURS` | 72 | An approval nobody answers in time expires and counts as "no" (a job checks every minute) |
 | `MEMORY_ENABLED` | false | mem0 memory on pgvector, in the same database. Also needs Postgres and `OPENAI_API_KEY` |
 | `BREVO_API_KEY` | empty | Sends real email through Brevo. Empty = emails are only written to the log (see [Email](#email)) |
 | `EMAIL_FROM_ADDRESS`, `EMAIL_FROM_NAME` | empty, BotDesk | The sender. The address must be verified in Brevo |
@@ -92,8 +95,15 @@ apps/api/
       email_service.py       EmailSender: Brevo, or the log when there's no key
     emails/                  email templates: (subject, html, text)
     controllers/             one request at a time: call services, commit, set cookies
-    runtime/                 how a bot run happens (ADR 0007: inside the API process for now)
-      runner.py              RunManager: starts and resumes runs as tasks, one at a time per chat, Stop, restart recovery
+    jobs/                    background work (ADR 0013): the JobQueue seam and its two adapters
+      queue.py               Job, JobQueue (defer / abort / recover), JobRegistry (how a task is declared)
+      tasks.py               JOBS: run_bot, expire_approvals (every minute), recover_runs (every minute)
+      postgres.py            ProcrastinateQueue: procrastinate on Postgres, the worker and its restarts
+      local.py               LocalQueue: asyncio tasks in this process (SQLite, unit tests)
+      background.py          puts runs + queue + live-events listener together for the API or the worker
+    worker.py                `python -m src.worker`: the worker as its own process (WORKER_MODE=separate)
+    runtime/                 how a bot run happens
+      runner.py              RunManager: defers run jobs; take_turn starts, resumes or carries on a run; Stop; restart recovery
       graph.py               the LangGraph graph: model ↔ tool pipeline loop, approval_gate (interrupt), save_reply
       tool_pipeline.py       one door for every tool call: validate → risk → policy → record → execute at most once
       policy.py              security level × risk class → auto / ask / deny, plus taint (pure)
@@ -102,7 +112,7 @@ apps/api/
       token_batcher.py       streamed tokens → a few database writes, not one per token
       limits.py              steps and time per run
       memory.py              MemoryService: NoMemory (with the reason), or mem0 when switched on
-      event_bus.py           wakes a chat's live streams when new events are saved
+      event_bus.py           wakes a chat's live streams when new events are saved (in-process, plus Postgres LISTEN)
       reporter.py            saves a run's events
     model_providers/         one small adapter per model provider: list models (= test a key), build a chat model
     plugins/                 what bots can do (the contract itself is packages/plugin-sdk)
@@ -128,18 +138,47 @@ route (api/v1/routes/auth.py)      declares POST /api/v1/auth/sign-in
 ### How a reply flows
 
 ```
-POST /threads/{id}/messages       one transaction: the message, a queued run per bot that should reply,
-                                  and a message_saved event. Returns at once with the run ids.
-  → RunManager.start              an asyncio task per run
-    → waits for its turn          one run per chat: a lock in this process + a guarded UPDATE in Postgres
+POST /threads/{id}/messages       one transaction: the message, a queued run per bot that should reply, a run_bot
+                                  job per run (lock chat:{thread}) and a message_saved event. Returns at once.
+  → worker takes the job          RunManager.take_turn: one run per chat (the job lock + a guarded UPDATE);
+                                  not its turn yet → a new job a second later
     → graph                       load_context → recall → call_model (streams message_delta events)
                                   → tool calls? one at a time through the tool pipeline (see Tools and approvals)
                                   → save_reply (the message + message_saved, and in the same transaction a queued
-                                    run per bot the reply @mentions, or the "chain stopped" notice; started after
-                                    commit) → remember (in the background)
+                                    run and its job per bot the reply @mentions, or the "chain stopped" notice)
+                                  → remember (in the background)
     → run_finished / run_failed, or paused: approval_requested (waiting_approval) / run_needs_attention
-GET /threads/{id}/events          SSE: replays run_events after Last-Event-ID, then follows new ones
+GET /threads/{id}/events          SSE: replays run_events after Last-Event-ID, then follows new ones (woken by
+                                  this process's bus, by Postgres NOTIFY from other processes, or every 5 s)
 ```
+
+### Background jobs
+
+[ADR 0013](../adr/0013-the-job-queue-lands.md). Bot runs and timers are **jobs** on a queue: [procrastinate](https://procrastinate.readthedocs.io/) on Postgres (MIT; its tables come from the migration `b7f3a9c1d2e4`, so `pnpm db:migrate` is still the one step). Code reaches it only through `JobQueue` (`src/jobs/queue.py`):
+
+- `await queue.defer(Job("task", {...}, lock=…, queueing_lock=…, run_at=…), db=session)`: with `db`, the job is saved in that transaction (only if it commits). Jobs with the same `lock` run one at a time in order; one *waiting* job per `queueing_lock`; `run_at` delays it.
+- `abort(queueing_lock)` stops the running job with that key on any worker (Stop uses it); `recover(jobs)` puts back jobs of dead workers and defers the given ones that have no job; `wait_until_idle()` is for tests.
+- **Adding a job** (routines, Gmail polling): declare it on `JOBS` in `src/jobs/tasks.py` (or a module it imports). A handler gets a `JobEnv` (runs, queue, sessionmaker, settings) and the job's arguments, and must be safe to run twice (read what to do from the database):
+
+  ```python
+  @JOBS.task("routines.fire")                    # deferred: queue.defer(Job("routines.fire", {"routine_id": id}, run_at=when))
+  async def fire(env: JobEnv, routine_id: str) -> None: ...
+
+  @JOBS.task("gmail.poll", cron="*/2 * * * *")  # periodic: every 2 minutes, on one worker (also gets `timestamp`)
+  async def poll(env: JobEnv, timestamp: int) -> None: ...
+  ```
+
+| Database | `WORKER_MODE` | API process | `python -m src.worker` |
+|---|---|---|---|
+| SQLite | (ignored) | jobs are asyncio tasks here (`LocalQueue`); lost on restart | refuses to start |
+| Postgres | `embedded` (default) | procrastinate worker inside, + `LISTEN` for live events | not needed |
+| Postgres | `separate` | only adds jobs, + `LISTEN` for live events | runs every job; start as many as you like |
+
+- **Restarts.** A stopping worker gives running jobs 5 s, then aborts them and puts them back; the run stays `running` and, after the restart, carries on from its last saved step (`run_resumed`; the step it was in runs again). A crashed worker's jobs come back once its heartbeat is a minute old (`recover_runs`, at worker start and every minute, which also re-defers any run that should be moving but has no job). A tool call left half done stops the run as `needs_attention`. On SQLite nothing can resume, so a restart fails unfinished runs ("Interrupted by a restart. Send your message again.").
+- **Approval expiry.** `expire_approvals` (every minute) expires pending approvals past `APPROVAL_EXPIRY_HOURS`: the tool call is denied, an `approval_decided` event (status `expired`) is saved, and the run resumes told "Nobody approved this action in time".
+- **Live events across processes.** The statement that takes a chat's advisory lock before saving its events also sends `pg_notify('botdesk_run_events', '<chat id>')`, delivered at commit. Each API process keeps one `LISTEN` connection (direct address, pinged every minute, reconnecting with backoff) that wakes its streams.
+- **Neon.** The queue's pool and `LISTEN` use `DATABASE_URL_DIRECT` (`LISTEN` doesn't work through the pooler); idle connections are tested before use and recycled before Neon's 5 minutes, like every other pool. A running worker polls every 10 s and sends heartbeats, so the compute doesn't suspend while a worker runs.
+- **Upgrading procrastinate:** it's pinned below the next minor version; an upgrade needs a migration running its `procrastinate/sql/migrations/*.sql` files for the versions in between.
 
 A chat opened later (or in a second tab) first asks `GET /threads/{id}/runs?active=true`: the runs still going, the chat's newest event id (`lastEventId`) and `replayFrom` (just before the first events of the runs still streaming, queued or running), read in one statement. It then follows `/events?after={replayFrom}`, which replays those runs from their start (their words so far and tool lines) and carries on live, and loads the messages. A paused run (waiting for approval, or needing attention) doesn't move `replayFrom`: it's rebuilt from the list and the approvals list (its card), and its words come with the saved reply.
 
@@ -168,7 +207,7 @@ A chat opened later (or in a second tab) first asks `GET /threads/{id}/runs?acti
 - **Memory.** A guest reads and saves its *own* memories scoped to that DM's member (`MemoryScope(bot=guest, member=the DM's member)`), exactly as if the member had DMed it: only that member is in the chat, so nothing reaches anyone else. A run another bot started (hop > 0) **recalls but never saves** memories: what a bot remembers comes from people, not from one bot's output steering another's.
 - **What a mentioned bot is told.** A run another bot started (hop > 0) is told so in its system prompt: help with what the bot asks using what it knows, but take actions (tools) only for what the people in the chat asked. The bot's message stays wrapped as `<bot-message>` (never an instruction), and the stand-in model never runs a `/tool` from it; this keeps ADR 0009 §5's no-laundering rule even for an untainted chain.
 - **Guests stay reachable.** "Replies once" is per mention: a member's mention starts one run. After that the guest counts as in the DM, so the DM's bot (or another guest) may @mention it back; each such run is one more hop.
-- **Known gaps (next slices).** Stop ends one run, not a whole chain: runs its reply already queued still go (stop them one by one). Runs are claimed in the order they were created, so a member message posted while a chain runs is answered before the chain's next hop. If the API restarts between saving a reply and starting its child runs, the startup sweep fails those runs ("Interrupted by a restart") and the chain ends there. Groups can't drop a bot yet, so a lead is always in its group (deleting the bot clears it).
+- **Known gaps (next slices).** Stop ends one run, not a whole chain: runs its reply already queued still go (stop them one by one). Runs are claimed in the order they were created, so a member message posted while a chain runs is answered before the chain's next hop. Groups can't drop a bot yet, so a lead is always in its group (deleting the bot clears it).
 - **The lead.** `threads.lead_bot_id` (FK to bots, `ON DELETE SET NULL`). `POST /threads/groups` sets it to `leadBotId` (one of `botIds`, else 400) or the first bot picked. `PUT /threads/{id}/lead` `{botId | null}` changes or clears it: the group's **creator**, or an org **owner or admin** in the group; other members get 403 "Only the group's creator, owners and admins can change its lead.". 400 for a bot not in the group or for a DM. Groups made before migration `dca6e06f506b` have no lead and behave as before.
 
 **Dropped connections.** Neon suspends after 5 idle minutes and closes every connection (networks drop idle TLS connections too). Every pool tests a connection that sat idle 10 s or more before handing it out (one short round trip; busy connections are never tested), and replaces it if it's dead: the SQLAlchemy engine through a `checkout` listener (`pool_recycle=240` as well), the LangGraph checkpoint pool and mem0's pool through psycopg_pool's `configure`/`check`/`reset` callbacks (`IdleCheck` in `core/database.py`), with `max_lifetime` and `max_idle` of 240 s. mem0 gets its pool from us (`memory_pool`) instead of opening its own.
@@ -251,7 +290,7 @@ Each SSE message has `id:` (a growing number), `event:` (the kind) and `data:` J
 | `tool_finished` | `{toolExecutionId, tool, status, result, error}`: `status` is `succeeded` (with `result`), `failed` (with `error`) or `denied` (refused by the policy; it never ran, `error` says why). Bad arguments or an unknown tool also come as `failed` without a `tool_started` |
 | `approval_requested` | `{approval}`: the run paused on a risky call and is now `waiting_approval`. `approval` is the [Approval JSON](#approval-json) |
 | `approval_decided` | `{approval}`: someone decided (`approved` / `edited` / `denied`), or it `expired` (run stopped, or decided too late) |
-| `run_resumed` | `{botId}`: a paused run carries on after a decision |
+| `run_resumed` | `{botId}`: a paused run carries on after a decision, or a run carries on after a restart interrupted it |
 | `run_needs_attention` | `{status: "needs_attention", error}`: a tool may have half run (e.g. the API restarted mid-call); a person must check. Stop is the only action so far |
 
 Run `status` values: `queued`, `running`, `waiting_approval`, `needs_attention`, `succeeded`, `failed`, `cancelled`.
@@ -325,7 +364,7 @@ The code: `src/model_providers/` holds one small adapter per provider behind one
 
 - **At rest:** Fernet (AES-128-CBC + HMAC-SHA256, `cryptography`), with a key derived from `SECRET_KEY` by HKDF-SHA256. The database holds the token and `key_hint` (last 4 characters, only for keys of 12+ characters).
 - **In answers:** no route returns a key; only `keyHint`. Provider error messages are scrubbed: the key itself and anything key-shaped (`sk-…`, `gsk_…`, `AIza…`, long tokens) become `[key]`, and they're cut to 200 characters.
-- **In logs:** keys are never logged; a `Connection` (a decrypted key in memory) prints without it. A test checks the key appears in no response and no log line.
+- **In logs:** keys are never logged; a `ProviderAccess` (a decrypted key in memory) prints without it. A test checks the key appears in no response and no log line.
 - **Who:** owners and admins add, replace, test and remove keys; every member can see providers (without keys) and models.
 - **Fails closed:** without an explicit `ENVIRONMENT=development` or `test`, the API refuses to start without a `SECRET_KEY` of at least 32 characters, so a forgotten setting never puts a real server on the public development key.
 - **Rotation:** set the new `SECRET_KEY` and move the old one to `SECRET_KEY_OLD` (comma-separate several). `MultiFernet` encrypts with the new key and decrypts with any of them; each key is re-encrypted with the new one the next time it's saved. Once every key has been saved again (or re-added), drop `SECRET_KEY_OLD`.
@@ -359,21 +398,32 @@ call_model ──(tool calls, one at a time)──→ prepare_call: validate arg
 - **Taint** (strict, run-level): a tool that returns outside text (`untrusted_output`) sets `runs.tainted`, and so does a history holding a reply that a tainted run wrote (see How a reply flows). After that, anything above `write-internal` asks, even for Autonomous bots, and the run saves no memories. Outside text reaches the model wrapped in `<untrusted-content>`. An `open`-egress read in a tainted run counts as `external-send`.
 - **`tool_executions`** records every call; run id + the model's tool call id is the idempotency key. Status: `ready` → `started` → `succeeded` / `failed`; `waiting_approval` → `ready` (approved) / `denied`; refused calls are saved as `denied` / `failed`. It also stores `risk`, `decision`, `decision_trace`, `args` and `args_hash`. Running a call that already `succeeded` reuses its result; one left `started` stops the run as `needs_attention` unless the tool is idempotent. A tool also gets `ctx.idempotency_key` (`"{runId}:{toolCallId}"`) to pass to services that accept one.
 - **Pausing:** `approval_gate` only calls `interrupt({"approvalId"})`. The run task ends, the run becomes `waiting_approval`, and the checkpoint waits in Postgres (it survives restarts; SQLite's in-memory checkpoints don't, and resuming then fails the run with a clear message).
-- **Deciding** is one conditional `UPDATE … WHERE status = 'pending'`, together with the tool call's update in one transaction, so a double click or two people can only decide once; the other gets 409. After the commit the API resumes the same checkpoint (thread id = run id) with `Command(resume={"approved", "message"})`. The tool runs with the arguments saved on the `tool_executions` row (the edited ones after an edit), never with arguments from the resume value.
+- **Deciding** is one conditional `UPDATE … WHERE status = 'pending'`, together with the tool call's update and the run's `run_bot` job in one transaction, so a double click or two people can only decide once; the other gets 409. The job resumes the same checkpoint (thread id = run id) with `Command(resume={"approved", "message"})`, the answer read from the approval's status. The tool runs with the arguments saved on the `tool_executions` row (the edited ones after an edit), never with arguments from the resume value.
 - **Who:** members of the organization who are in the approval's chat (the same people who can see the run; a DM stays private). Any role can decide.
-- **Expiry:** approvals expire after `APPROVAL_EXPIRY_HOURS`. With no job queue there is no sweeper yet: an expired approval is noticed when someone decides it (409, and the run is told "no"), or when the run is stopped.
+- **Expiry:** approvals expire after `APPROVAL_EXPIRY_HOURS`: the `expire_approvals` job (every minute) expires them and resumes their runs told "no". Deciding one that is overdue but not swept yet also expires it (409, and the run is told "no"); stopping the run expires its pending approvals.
 - **Short transactions:** none is open during a model call, a tool call, or the wait for a person.
 - **Results must be JSON objects.** A handler that returns something else (a list, None, a dict holding a `datetime` or `UUID`) fails that call with a clear message: the row ends `failed`, not `started`, and the run goes on.
 
 ### Plugins
 
-Build step 3 ([ADR 0006](../adr/0006-repo-structure-plugins-and-project.md)). The plugin contract is its own package, [`packages/plugin-sdk`](../../packages/plugin-sdk/README.md) (`botdesk-plugin-sdk`, import `botdesk_plugin_sdk`): `PluginManifest`, `ToolSpec`, `RiskClass`, `Egress`, `ToolContext`, `ToolResult`, `NoArgs`, `validate_manifest`, and test helpers. It depends only on Pydantic. The API imports the SDK; plugins import only the SDK; the API never imports a plugin by name.
+Build step 3 ([ADR 0006](../adr/0006-repo-structure-plugins-and-project.md)). The plugin contract is its own package, [`packages/plugin-sdk`](../../packages/plugin-sdk/README.md) (`botdesk-plugin-sdk`, import `botdesk_plugin_sdk`): `PluginManifest`, `ToolSpec`, `RiskClass`, `Egress`, `ToolContext`, `ToolResult`, `NoArgs`, `validate_manifest`, and test helpers. Manifest version 2 adds `auth`, `egress` hosts, per-tool `scopes`, settings models, `triggers`, `ctx.http` and `ctx.connection` (see [Connections](#connections)); version-1 plugins load unchanged. It depends only on Pydantic. The API imports the SDK; plugins import only the SDK; the API never imports a plugin by name.
 
 - **Layout:** one uv workspace at the repo root (`pyproject.toml`, `uv.lock`, `.venv`), members `apps/api`, `packages/plugin-sdk` and `plugins/*`. Built-in plugins live in `plugins/<name>/`, each its own package (`plugins/demo` = `botdesk-plugin-demo`, import `botdesk_demo`). The API lists them as workspace dependencies in `apps/api/pyproject.toml`.
 - **Finding:** a plugin package declares `[project.entry-points."botdesk.plugins"] <id> = "module:function"`; the function returns its `PluginManifest`, fresh each call so every app and test gets its own state.
 - **Allowlist first:** `src/plugins/loader.py` reads the entry points without importing anything, and imports only the ids in `PLUGINS`. Installed never means trusted.
 - **Checks at load** (`validate_manifest`, the same function plugin authors run in their tests): id is lowercase letters, digits and dashes and matches the entry-point name; tool names are lowercase with underscores and unique; title and description set; risk is one of the 7 classes and egress `fixed` / `open`; `args_model` is a Pydantic `BaseModel` class; the handler is `async`. A plugin that fails, or fails to import, or raises while building its manifest, or is provided by two packages, is **skipped with one `ERROR` log line** (`Plugin 'x' skipped: …`) and the API starts without it. An allowlisted id that no package provides is a settings typo and stops startup.
 - **Adding one:** see the SDK README's five-minute guide and [CONTRIBUTING.md](../../CONTRIBUTING.md#write-a-plugin).
+
+### Connections
+
+Slice 5.1 of [ADR 0010](../adr/0010-connections-and-credentials.md) ([build plan](../architecture/connections-gmail-mcp.md)). A **connection** is one authorised account on one connector (a plugin with `auth`), owned by a member, a bot or the organization.
+
+- **Table** `connections` (`models/connection.py`): owner kind and id (check constraint), `auth_type`, `account_label`, `account_ref`, `encrypted_secret`, granted `scopes`, `status` (`active` / `needs_reconnect` / `revoked`). One row per account per owner (unique index), so connecting the same account again replaces its credential. `tool_executions.connection_id` records the account each call used; `approvals.connection_id` is filled once bindings exist (5.2). `audit_log` gets a row on create, reconnect and disconnect (append-only, no secrets).
+- **Routes** (API-key connectors only; OAuth is 5.3): `GET /orgs/{id}/connections`, `GET …/{connectionId}`, `POST` `{connectorId, ownerKind: member|bot|org, botId?, accountLabel?, apiKey}` (201), `DELETE …/{connectionId}` (204, idempotent). A member creates and sees their own; owners and admins create org-owned ones and see that members' exist; owners, admins and a bot's creator create bot-owned ones. Another org's connection, or another member's to a non-admin, is 404. No response ever holds a credential; the key is a `SecretStr`, one line, at most 4 KB.
+- **Credential vault** (`services/credential_vault.py`): `save(connection, secret)`, `open(connection) → Credential`, `revoke(connection, reason)`. `SecretBox` with its own HKDF purpose (`botdesk:connections:v1`), so a model key's ciphertext can't decrypt as a connection's; rotation as for model keys. `open` refuses a connection that isn't active. A `Credential` prints as `<hidden>` and only gives out the request headers that carry it.
+- **Which connection a run uses** (until bindings, 5.2): the bot's own active connection for that connector, else the organization's. Member-owned connections are not used by runs yet: ADR 0010 allows them only in their member's DMs, which needs the run's requester (5.2). With none, the tool fails with "Demo isn't connected for this bot…" and the run goes on.
+- **`ctx.http`** (`plugins/authorised_http.py`, built per tool call by `runtime/tool_access.py`): the SDK's `HttpClient`. It allows only `https` URLs whose host is in the manifest's `egress` (checked with httpx's parser before anything is sent), adds the credential after the tool's headers (a tool can't set or replace that header), decrypts it only on the first request, never follows redirects (a 3xx fails the call), connects through `GuardedTransport` with private addresses always refused, reads at most 10 MB, times out with the tool timeout, and logs only method, host, path and status. Refusals are SDK `HttpError`s (`HostNotAllowed`, `ResponseTooLarge`, `NotConnected`) with messages safe to show. A plugin without `egress` gets an `http` that refuses everything.
+- **Settings:** `API_PUBLIC_URL` (the API's public address, for OAuth callbacks in 5.3).
 
 ### Approval JSON
 
@@ -527,7 +577,7 @@ The invite flow is the one that already existed: the link is `/invite/<token>`; 
 
 - **Nothing leaks:** unknown emails are counted exactly like known ones, and the limit is checked before the database, so a 429 says nothing about accounts. A refused attempt isn't counted, so waiting out `Retry-After` always works; the right password also waits (the point is to stop guessing). The trade-off: someone who knows an email can keep that person from signing in, one minute at a time, while they keep trying; the per-email limits are short for that reason.
 - **Bounded memory:** a key keeps at most its limit's timestamps; keys whose window has passed are swept out every 1,000 attempts, and past 50,000 keys the least recently used go first.
-- **One process:** counts live in the one API process ([ADR 0007](../adr/0007-runs-in-the-api-process-for-now.md)) and reset when it restarts. Several API copies would each count on their own: they need a shared store (Postgres or Redis), which comes with the job queue ([ADR 0005](../adr/0005-job-queue-and-scaling.md)).
+- **One process:** counts live in each API process and reset when it restarts. Several API copies would each count on their own: they need a shared store (Postgres or Redis), which comes with the job queue ([ADR 0005](../adr/0005-job-queue-and-scaling.md)).
 - **The client address** is the connection's, unless the connection comes from a proxy in `FORWARDED_ALLOW_IPS`; then uvicorn's `ProxyHeadersMiddleware` (added in `main.py`) takes the rightmost address in `X-Forwarded-For` that isn't a trusted proxy. Anyone else's `X-Forwarded-For` is ignored, so a made-up header can't buy a fresh allowance. Behind a reverse proxy that isn't listed, every request looks like it comes from the proxy and shares one allowance: set it (the self-hosting guide shows how for Docker).
 
 ## Security choices
@@ -544,7 +594,6 @@ The invite flow is the one that already existed: the link is `/invite/<token>`; 
 
 ## Not yet (in order)
 
-1. Approval follow-ups: an expiry sweeper (needs the job queue), *retry / skip* for `needs_attention` runs, saved rules ("always allow"), org ceiling and routine levels, per-call risk raising, `run_steps` audit rows, a tool-calls-per-run limit, an org-wide approvals stream. Then the rest of step 3: `plugins/_template`, a generated and CI-checked `manifest.json`, import rules in CI, release-please for the SDK. Full order: [agents-and-plugins.md §14](../architecture/agents-and-plugins.md#14-build-order-each-step-small-tested-and-usable).
-2. The job queue (procrastinate) and a separate worker, deferred by [ADR 0007](../adr/0007-runs-in-the-api-process-for-now.md); then the Postgres `LISTEN/NOTIFY` bus for several API copies.
-3. Memory: the org's OpenAI key for memory, `memory_audit`, tainted memories; trimming old `run_events` and checkpoints.
-4. Email verification; rate limits shared between several API copies (with the job queue).
+1. Approval follow-ups: *retry / skip* for `needs_attention` runs, saved rules ("always allow"), org ceiling and routine levels, per-call risk raising, `run_steps` audit rows, a tool-calls-per-run limit, an org-wide approvals stream. Then the rest of step 3: `plugins/_template`, a generated and CI-checked `manifest.json`, import rules in CI, release-please for the SDK. Full order: [agents-and-plugins.md §14](../architecture/agents-and-plugins.md#14-build-order-each-step-small-tested-and-usable).
+2. Memory: the org's OpenAI key for memory, `memory_audit`, tainted memories; trimming old `run_events` and checkpoints.
+3. Email verification; rate limits shared between several API copies.

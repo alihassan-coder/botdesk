@@ -1,6 +1,6 @@
 # 0005: Job queue, worker and how BotDesk scales
 
-> **Partly deferred by [ADR 0007](0007-runs-in-the-api-process-for-now.md):** no job queue or worker yet; runs start inside the API process.
+> Decisions 1–4 were deferred by [ADR 0007](0007-runs-in-the-api-process-for-now.md) and are now built: [ADR 0013](0013-the-job-queue-lands.md).
 
 - Status: accepted
 - Date: 2026-11-12

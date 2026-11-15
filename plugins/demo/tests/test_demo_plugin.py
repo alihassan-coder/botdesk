@@ -4,7 +4,7 @@ from importlib.metadata import entry_points
 
 import pytest
 from botdesk_plugin_sdk import ENTRY_POINT_GROUP, validate_manifest
-from botdesk_plugin_sdk.testing import call_tool, make_context
+from botdesk_plugin_sdk.testing import FakeHttp, call_tool, make_context
 from pydantic import ValidationError
 
 from botdesk_demo import DemoState, demo_plugin
@@ -13,7 +13,7 @@ from botdesk_demo import DemoState, demo_plugin
 def test_the_manifest_is_valid() -> None:
     manifest = validate_manifest(demo_plugin())
     assert manifest.id == "demo"
-    assert len(manifest.tools) == 6
+    assert len(manifest.tools) == 7
 
 
 def test_it_is_registered_under_the_botdesk_entry_point() -> None:
@@ -44,3 +44,14 @@ async def test_send_email_only_records_and_keeps_the_idempotency_key() -> None:
 async def test_search_finds_topics_by_word() -> None:
     result = await call_tool(demo_plugin(), "search_kb", {"query": "refunds policy"})
     assert [hit["topic"] for hit in result["results"]] == ["refunds"]
+
+
+async def test_call_api_goes_through_ctx_http_to_the_declared_host_only() -> None:
+    plugin = demo_plugin()
+    assert plugin.egress == ("postman-echo.com",)
+    http = FakeHttp(plugin)  # refuses any host the manifest doesn't list
+    http.route("GET", "https://postman-echo.com/get", json={"headers": {"x-api-key": "echoed"}})
+    result = await call_tool(plugin, "call_api", {}, make_context(http=http))
+    assert result == {"calledHost": "postman-echo.com", "status": 200, "account": None}
+    assert http.requests[0].params == {"from": "botdesk-demo"}
+    assert "echoed" not in str(result)  # the body (which could hold the key) never comes back

@@ -31,6 +31,25 @@ Then replace `template` everywhere in the copy:
 
 The entry-point name (`calendar`) must equal the manifest's `id`. `grep -rn template plugins/calendar` should find nothing when you're done.
 
+## Calling a service on someone's account
+
+The template's tools are fake. A real plugin that calls another app's API on someone's account adds two fields to its manifest (version 2), then calls the API through `ctx.http`:
+
+```python
+PluginManifest(
+    ...,
+    auth=ApiKeyAuth(header="X-Api-Key"),  # people paste a key in Connect apps; or OAuth2Auth(...)
+    egress=("api.example.com",),  # the only hosts ctx.http may call
+)
+
+
+async def look_up_order(args: LookUpOrderArgs, ctx: ToolContext) -> ToolResult:
+    response = await ctx.http.request("GET", f"https://api.example.com/orders/{args.order_id}")
+    return {"found": response.ok, "order": response.json() if response.ok else None}
+```
+
+BotDesk adds the connection's credential to each request, refuses other hosts, plain `http`, redirects and private addresses, and caps size and time. The plugin never sees a token. Test it with `FakeHttp` (see the SDK README). `plugins/demo`'s `call_api` is a working example.
+
 ## Check it
 
 ```bash

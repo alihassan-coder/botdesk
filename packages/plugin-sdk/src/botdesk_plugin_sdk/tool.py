@@ -3,11 +3,13 @@
 import logging
 import uuid
 from collections.abc import Awaitable, Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 from pydantic import BaseModel
 
+from botdesk_plugin_sdk.auth import ConnectionInfo
+from botdesk_plugin_sdk.http import HttpClient, NoHttp
 from botdesk_plugin_sdk.risk import Egress, RiskClass
 
 ToolResult = dict[str, Any]
@@ -25,6 +27,13 @@ class ToolContext:
     when the same call is retried, so a tool whose service accepts one (Stripe, for example) can
     pass it on and a retry never charges twice. `logger` is named after the plugin, so its lines
     are easy to find.
+
+    Manifest version 2 adds, with defaults so older plugins and tests keep working:
+
+    - `http`: calls the hosts in the plugin's `egress`, with the connection's credential added by
+      BotDesk (the tool never sees it). Without egress, every request is refused.
+    - `connection`: which account this call works on (no secret), or None.
+    - `settings`: the bot's validated settings for this plugin (`bot_settings_model`), or None.
     """
 
     org_id: uuid.UUID
@@ -33,6 +42,9 @@ class ToolContext:
     tool_call_id: str
     idempotency_key: str
     logger: logging.Logger
+    http: HttpClient = field(default_factory=NoHttp)
+    connection: ConnectionInfo | None = None
+    settings: BaseModel | None = None
 
 
 ToolHandler = Callable[[Any, ToolContext], Awaitable[ToolResult]]
@@ -67,6 +79,9 @@ class ToolSpec:
     egress: Egress = "fixed"
     idempotent: bool = False
     untrusted_output: bool = False
+    # The OAuth scopes the tool needs (from the manifest's `OAuth2Auth.scope_sets`). A connection
+    # granted fewer isn't offered the tool. Empty: any connection will do.
+    scopes: tuple[str, ...] = ()
     # A one-line summary of a call for the approval card ("Send an email to sara@acme.dev").
     # Default: the title.
     summarize: Callable[[Any], str] | None = None

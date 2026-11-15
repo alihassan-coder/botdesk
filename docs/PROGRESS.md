@@ -2,6 +2,27 @@
 
 A short history of BotDesk, newest first. For one checklist of what is done and what is next, see [ROADMAP.md](ROADMAP.md).
 
+## 2026-11-15: the job queue
+
+[ADR 0013](adr/0013-the-job-queue-lands.md) (supersedes ADR 0007). Details: [backend guide](backend/README.md#background-jobs).
+
+- **Runs are jobs** on procrastinate (Postgres; its tables come from migration `b7f3a9c1d2e4`). A message, a bot's @mention reply and an approval decision save their `run_bot` job in the same transaction. Runs in one chat share a job lock, so they still go one at a time in order; the database guard and the per-bot cap stay.
+- **Restarts don't lose replies:** a run interrupted by a restart carries on from its last saved step; a crashed worker's jobs are put back within a minute or two. Only SQLite still fails interrupted runs.
+- **Approvals expire on a timer:** a job every minute expires approvals past `APPROVAL_EXPIRY_HOURS` and resumes their runs told "no".
+- **Timers for the next slices:** periodic and delayed jobs are declared on one registry (`JOBS.task(name, cron=…)`); routines and Gmail polling will use it.
+- **`WORKER_MODE`:** `embedded` (default, the worker inside the API) or `separate` (`python -m src.worker`, an optional `worker` service in docker compose). Live events reach other processes through Postgres `LISTEN/NOTIFY`.
+
+## 2026-11-15: connections, slice 5.1 (backend)
+
+[ADR 0010](adr/0010-connections-and-credentials.md), step 5.1 of the [build plan](architecture/connections-gmail-mcp.md). Details: [backend guide](backend/README.md#connections).
+
+- **Connections:** a `connections` table (one authorised account on one connector, owned by a member, a bot or the organization) and an append-only `audit_log` (migration `6e4056385217`). `GET/POST/DELETE /orgs/{id}/connections` for API-key connections, with ADR 0010 §3's rules for who may create, see and disconnect. Disconnecting nulls the credential and keeps the row.
+- **Credential vault** (`services/credential_vault.py`): the only code that decrypts a credential, with its own key purpose (`botdesk:connections:v1`) and the same `SECRET_KEY` / `SECRET_KEY_OLD` rotation as model keys.
+- **`ctx.http`:** a tool calls other apps through an HTTP client that adds the credential itself (the tool never sees it), reaches only its plugin's declared hosts over https, never follows redirects, refuses private addresses (the SSRF guard), and caps response size (10 MB) and time.
+- **Plugin SDK manifest v2** (additive; v1 plugins load unchanged): `auth` (`ApiKeyAuth`, `OAuth2Auth`), `egress` hosts, per-tool `scopes`, settings models, `triggers`, `ctx.connection`, and `FakeHttp` for tests.
+- **Demo:** `demo.call_api` calls a web service with the connected Demo key. Until bindings (5.2), a run uses the bot's own connection, else the organization's; member connections wait for 5.2.
+- The model-key dataclass `Connection` is now `ProviderAccess`, so "connection" has one meaning.
+
 ## 2026-11-15: bots working together
 
 [ADR 0009](adr/0009-bots-working-together.md), slice 1. Details: [backend guide](backend/README.md#bots-working-together).

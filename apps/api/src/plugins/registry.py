@@ -79,6 +79,9 @@ class ToolRegistry:
     def plugins(self) -> list[PluginManifest]:
         return list(self._plugins.values())
 
+    def plugin(self, plugin_id: str) -> PluginManifest | None:
+        return self._plugins.get(plugin_id)
+
 
 def build_registry(plugin_ids: list[str]) -> ToolRegistry:
     """The registry for the allowlisted plugins, found through their entry points.

@@ -1,7 +1,8 @@
 """Handles approval requests: list them, look at one, decide one.
 
-Deciding commits the decision (and its event) first, then resumes the paused run, so a run
-never continues on a decision that wasn't saved.
+Deciding saves the decision, its event and the job that resumes the paused run in one
+transaction, so a run never continues on a decision that wasn't saved, and a saved decision
+always gets its run moving again.
 """
 
 import uuid
@@ -15,9 +16,6 @@ from src.models.approval import ApprovalStatus
 from src.runtime.runner import RunManager
 from src.schemas.approval import ApprovalOut, DecisionIn
 from src.services import approval_service, run_event_service
-
-DENIED_MESSAGE = "A person denied this action, so it wasn't done. Don't try it again without asking."
-EXPIRED_MESSAGE = "Nobody approved this action in time, so it wasn't done."
 
 
 async def list_approvals(
@@ -65,14 +63,11 @@ async def decide(
         data={"approval": approval_service.approval_json(decided.view, runs.registry)},
     )
     run = await db.get(Run, approval.run_id)
+    if run is not None:  # it carries on with the decision (expired counts as no)
+        await runs.resume(db, run)
     await db.commit()
     runs.bus.announce(approval.thread_id)
 
-    if run is not None:
-        if decided.expired:
-            runs.resume(run, {"approved": False, "message": EXPIRED_MESSAGE})
-        else:
-            runs.resume(run, {"approved": approve, "message": None if approve else DENIED_MESSAGE})
     if decided.expired:
         raise Conflict(approval_service.EXPIRED)
     return approval_service.approval_out(decided.view, runs.registry)

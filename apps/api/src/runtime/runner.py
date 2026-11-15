@@ -1,23 +1,24 @@
-"""Starts runs inside the API process and keeps track of them (ADR 0007).
+"""Moves runs forward, as jobs on the job queue (ADR 0013).
 
-Posting a message creates queued runs; `RunManager.start` turns each into an asyncio task.
-A run waits for its chat's turn (one run at a time per chat), runs the graph, and ends as
-succeeded, failed or cancelled, or pauses:
+Posting a message saves queued runs and, in the same transaction, a `run_bot` job for each
+(`RunManager.start`). A worker takes the job and calls `RunManager.take_turn`, which starts the
+run when it's its chat's turn (one run at a time per chat), runs the graph, and ends it as
+succeeded, failed or cancelled, or pauses it:
 
-- **waiting_approval:** the graph called `interrupt()`. The task ends; the run is rows in
-  Postgres. When a person decides, `RunManager.resume` starts a new task that continues the
-  same checkpoint with `Command(resume=...)`.
+- **waiting_approval:** the graph called `interrupt()`. The job ends; the run is rows in
+  Postgres. When a person decides (or the approval expires), `RunManager.resume` defers another
+  `run_bot` job, which continues the same checkpoint with `Command(resume=...)`.
 - **needs_attention:** a tool may have half run. A person has to look.
 
-Every step is saved in Postgres, so a job queue can take over starting and resuming runs
-later without changing what a run does.
+A run the worker was in the middle of when it stopped (a restart, a crash) is still `running`;
+its job comes back and `take_turn` carries on from the last saved step (Postgres checkpoints).
+On SQLite, checkpoints live in memory, so such runs fail instead (`recover_after_restart`).
 """
 
 import asyncio
 import logging
 import time
 import uuid
-from collections import Counter
 from collections.abc import AsyncIterator, Awaitable, Callable, Coroutine
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
@@ -39,6 +40,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from src.core.config import Settings
 from src.core.database import POOL_MAX_LIFETIME_SECONDS, IdleCheck, postgres_connect_args
 from src.core.secrets import SecretBox
+from src.jobs.queue import Job, JobQueue, run_key, run_lock
 from src.models import Run
 from src.plugins.registry import ToolRegistry, build_registry
 from src.runtime.chat_model import ModelPrice, ModelResolver
@@ -47,13 +49,15 @@ from src.runtime.graph import RunDeps, RunError, RunStopped, build_graph
 from src.runtime.limits import RunLimits, time_limit_message
 from src.runtime.memory import MemoryService, NoMemory
 from src.runtime.reporter import RunReporter
+from src.runtime.tool_access import ToolAccessProvider
 from src.runtime.tool_pipeline import NeedsAttention
 from src.services import approval_service, run_service
+from src.services.credential_vault import CredentialVault
 from src.services.model_catalog import ModelCatalog
 
 logger = logging.getLogger(__name__)
 
-TURN_CHECK_SECONDS = 0.5  # how often a waiting run asks "is it my turn yet?"
+RUN_BOT = "run_bot"  # the job that moves one run forward (src/jobs/tasks.py)
 SOMETHING_WENT_WRONG = "Something went wrong while replying. Try again."
 
 
@@ -94,13 +98,18 @@ class RunManager:
         bus: EventBus | None = None,
         registry: ToolRegistry | None = None,
         secrets: SecretBox,
+        queue: JobQueue,
         catalog: ModelCatalog | None = None,
     ) -> None:
         self.settings = settings
+        self.queue = queue
         self.sessionmaker = sessionmaker
         self.bus = bus or EventBus()
         self.memory: MemoryService = memory or NoMemory()
         self.registry = registry or build_registry(settings.plugin_ids)
+        # What tools may reach: their plugin's hosts, with its connection's credential (ADR 0010).
+        # Tests set `tool_access.transport` to answer tools' requests without a network.
+        self.tool_access = ToolAccessProvider(sessionmaker, self.registry, CredentialVault.from_settings(settings))
         resolver = ModelResolver(settings, sessionmaker, secrets, catalog)
         # (org id, model id) → the chat model, with the org's keys. Tests swap in a fake model here.
         self.model_for: Callable[[uuid.UUID, str], Awaitable[BaseChatModel]] = resolver
@@ -109,42 +118,34 @@ class RunManager:
         # Tests about chats (not replies) switch this off: runs are created but never start.
         self.enabled = True
         self._graph = build_graph(checkpointer)
+        # The runs executing in this process (their jobs' tasks), so Stop can cancel one at once.
+        self._runs: dict[uuid.UUID, asyncio.Task[Any]] = {}
         # Keep a reference to every task: asyncio only holds weak ones, and a task that is
         # garbage-collected mid-run just vanishes.
-        self._runs: dict[uuid.UUID, asyncio.Task[None]] = {}
         self._background: set[asyncio.Task[None]] = set()
         # Writes that must land even when their run is stopped or the API shuts down (usage).
         self._unstoppable: set[asyncio.Task[None]] = set()
-        self._chat_locks: dict[uuid.UUID, asyncio.Lock] = {}
-        self._chat_lock_users: Counter[uuid.UUID] = Counter()
 
-    def start(self, runs: list[Run]) -> None:
-        """Start each run in the background. Call after the runs are committed."""
+    async def start(self, db: AsyncSession, runs: list[Run]) -> None:
+        """Defer a job for each new run, in `db`'s transaction: the runs and their jobs are saved
+        together when the caller commits."""
         if not self.enabled:
             return
         for run in runs:
-            self._track(RunTicket.of(run), self._run)
+            await self.queue.defer(run_job(run.id, run.thread_id), db=db)
 
-    def resume(self, run: Run, answer: dict[str, Any]) -> None:
-        """Continue a run paused on an approval, with the person's answer. Call after the
-        decision is committed. `answer` is `{"approved": bool, "message": str | None}`."""
-        if not self.enabled:
-            return
-        self._track(RunTicket.of(run), partial(self._resume, answer=answer))
+    async def resume(self, db: AsyncSession, run: Run) -> None:
+        """Defer the job that continues a run paused on an approval, in `db`'s transaction (with
+        the decision). The job reads the answer from the approval itself."""
+        await self.start(db, [run])
 
-    def _track(self, ticket: RunTicket, work: Callable[[RunTicket], Coroutine[Any, Any, None]]) -> None:
-        task = asyncio.create_task(work(ticket), name=f"run {ticket.id}")
-        self._runs[ticket.id] = task
-        task.add_done_callback(partial(self._forget_run, ticket.id))
-
-    def _forget_run(self, run_id: uuid.UUID, task: asyncio.Task[None]) -> None:
-        if self._runs.get(run_id) is task:
-            del self._runs[run_id]
-
-    def stop_now(self, run_id: uuid.UUID) -> None:
-        """Stop a run running in this process straight away (its Stop flag is already saved)."""
+    async def stop_now(self, run_id: uuid.UUID) -> None:
+        """Stop a running run straight away, not at its next step (its Stop flag is already
+        saved): cancel it here, or ask the worker running it to."""
         if task := self._runs.get(run_id):
             task.cancel()
+        else:
+            await self.queue.abort(run_key(run_id))
 
     def in_background(self, work: Coroutine[Any, Any, None]) -> None:
         """Fire-and-forget work (like saving memories) that must not fail or slow a run."""
@@ -169,15 +170,24 @@ class RunManager:
             logger.warning("Couldn't look up the price of %s", model_id)
 
     async def wait_until_idle(self) -> None:
-        """Wait for every run and background task to finish (tests use this). A run that pauses
-        for approval counts as finished: its task has ended."""
-        while self._runs or self._background or self._unstoppable:
-            await asyncio.gather(*self._runs.values(), *self._background, *self._unstoppable, return_exceptions=True)
+        """Wait until no run job is waiting or running and every background task has finished
+        (tests use this). A run that pauses for approval counts as finished: its job has ended."""
+        await self.queue.wait_until_idle()
+        while self._background or self._unstoppable:
+            await asyncio.gather(*self._background, *self._unstoppable, return_exceptions=True)
+            await self.queue.wait_until_idle()  # a background task may have started a run
 
     async def recover_after_restart(self) -> None:
-        """At startup: runs a crash or restart left half done fail with a clear message, or wait
-        for a person if a tool call was half done. Runs waiting for approval stay paused.
-        (With several API copies this would also fail the others' runs; the job queue fixes that.)"""
+        """When a worker starts (and once a minute): runs that should be moving but have no job
+        get one again. That's a run left `running` by a crash (it carries on from its last saved
+        step), a `queued` one, and one `waiting_approval` whose approval was already decided.
+
+        On SQLite nothing survives a restart (jobs and checkpoints live in memory), so unfinished
+        runs fail with a clear message instead, or wait for a person if a tool call was half done.
+        Runs waiting for approval stay paused either way."""
+        if self.settings.uses_postgres:
+            await self.pick_up_stuck_runs()
+            return
         async with self.sessionmaker() as db:
             for run in await run_service.fail_interrupted_runs(db):
                 reporter = self._reporter(RunTicket.of(run))
@@ -187,61 +197,95 @@ class RunManager:
                     reporter.add(db, "run_failed", {"status": "failed", "error": run_service.RESTART_ERROR})
             await db.commit()
 
+    async def pick_up_stuck_runs(self) -> None:
+        """Postgres only: give every run that should be moving but has no job a job again."""
+        async with self.sessionmaker() as db:
+            stuck = await run_service.runs_to_pick_up(db)
+        await self.queue.recover([run_job(run_id, thread_id) for run_id, thread_id in stuck])
+
     async def close(self) -> None:
-        """At shutdown: stop what's running. Those runs fail as "interrupted by a restart"."""
-        for task in [*self._runs.values(), *self._background]:
+        """At shutdown (after the worker stopped): stop background work, and let the usage writes
+        of stopped runs finish."""
+        for task in self._background:
             task.cancel()
-        await asyncio.gather(*self._runs.values(), *self._background, return_exceptions=True)
-        # Stopped runs record what their model calls used: let those writes finish.
+        await asyncio.gather(*self._background, return_exceptions=True)
         await asyncio.gather(*self._unstoppable, return_exceptions=True)
 
     # The life of one run
 
-    async def _run(self, ticket: RunTicket) -> None:
-        reporter = self._reporter(ticket)
-        async with self._chat_lock(ticket.thread_id):
-            if not await self._wait_for_turn(ticket.id):
-                return  # cancelled while it waited
-            await reporter.send("run_started", {"botId": str(ticket.bot_id)})
-            outcome = await self._execute(ticket, reporter, {})
-            await self._finish(ticket, reporter, outcome)
+    async def take_turn(self, run_id: uuid.UUID) -> bool:
+        """The `run_bot` job: move this run forward. Starts a queued run, resumes a paused one
+        whose approval was decided, or carries on with one a restart interrupted. Does nothing for
+        a run that has ended or still waits for a person; safe to call again.
 
-    async def _resume(self, ticket: RunTicket, answer: dict[str, Any]) -> None:
+        False when the run can't go yet (an older run in its chat is still queued, or its bot
+        already has `BOT_MAX_RUNNING_RUNS` going): defer the job again a little later."""
+        async with self.sessionmaker() as db:
+            run = await db.get(Run, run_id)
+            if run is None:
+                return True
+            ticket, status = RunTicket.of(run), run.status
         reporter = self._reporter(ticket)
-        async with self._chat_lock(ticket.thread_id):
-            if not await self._wait_for_turn(ticket.id, from_status="waiting_approval"):
-                return  # stopped while it waited
-            if not await self._has_pause(ticket):
+        graph_input: Any
+        if status == "queued":
+            claimed = await self._claim(ticket, "queued")
+            if claimed is not True:
+                return claimed is None
+            await reporter.send("run_started", {"botId": str(ticket.bot_id)})
+            graph_input = {}
+        elif status == "waiting_approval":
+            snapshot = await self._graph.aget_state(self._config(ticket))
+            answer = None
+            if snapshot.interrupts:
+                answer = await self._answer(uuid.UUID(snapshot.interrupts[0].value["approvalId"]))
+                if answer is None:
+                    return True  # nobody has decided yet
+            claimed = await self._claim(ticket, "waiting_approval")
+            if claimed is not True:
+                return claimed is None
+            if answer is None:
                 # The checkpoint is gone (in-memory checkpoints don't survive a restart).
                 await self._finish(ticket, reporter, Outcome("failed", run_service.LOST_PAUSE_ERROR))
-                return
+                return True
             await reporter.send("run_resumed", {"botId": str(ticket.bot_id)})
-            outcome = await self._execute(ticket, reporter, Command(resume=answer))
-            await self._finish(ticket, reporter, outcome)
+            graph_input = Command(resume=answer)
+        elif status == "running":
+            # A restart stopped it mid-way: carry on from the last saved step (from the start if
+            # it hadn't saved one). A tool call left half done stops it as needs_attention.
+            snapshot = await self._graph.aget_state(self._config(ticket))
+            await reporter.send("run_resumed", {"botId": str(ticket.bot_id)})
+            graph_input = None if snapshot.values else {}
+        else:
+            return True
+        self._runs[ticket.id] = task = asyncio.current_task()  # type: ignore[assignment]
+        try:
+            outcome = await self._execute(ticket, reporter, graph_input)
+        finally:
+            if self._runs.get(ticket.id) is task:
+                del self._runs[ticket.id]
+        await self._finish(ticket, reporter, outcome)
+        return True
 
-    async def _wait_for_turn(self, run_id: uuid.UUID, *, from_status: str = "queued") -> bool:
-        """True once this run is running; False if it ended (or was stopped) before its turn came.
-        A run being resumed may still be `running` for a moment while it finishes pausing."""
-        keep_waiting = {from_status} if from_status == "queued" else {from_status, "running"}
-        while True:
-            async with self.sessionmaker() as db:
-                if await run_service.claim_run(
-                    db, run_id, bot_cap=self.settings.bot_max_running_runs, from_status=from_status
-                ):
-                    return True
-                if await run_service.run_status(db, run_id) not in keep_waiting:
-                    return False
-            await asyncio.sleep(TURN_CHECK_SECONDS)
+    async def _claim(self, ticket: RunTicket, from_status: str) -> bool | None:
+        """True if this run is now running; False if it must wait its turn; None if it ended (or
+        was stopped) meanwhile. The guarded UPDATE in `claim_run` keeps one running run per chat
+        across workers, under the job queue's lock per chat."""
+        async with self.sessionmaker() as db:
+            if await run_service.claim_run(
+                db, ticket.id, bot_cap=self.settings.bot_max_running_runs, from_status=from_status
+            ):
+                return True
+            return False if await run_service.run_status(db, ticket.id) == from_status else None
+
+    async def _answer(self, approval_id: uuid.UUID) -> dict[str, Any] | None:
+        async with self.sessionmaker() as db:
+            return approval_service.resume_answer(await approval_service.status_of(db, approval_id))
 
     @staticmethod
     def _config(ticket: RunTicket) -> RunnableConfig:
         # Checkpoints are saved under the run id. Our step limit (checked in call_model) is the
         # real guard; LangGraph's recursion limit only stops a graph that loops by mistake.
         return {"configurable": {"thread_id": str(ticket.id)}, "recursion_limit": 200}
-
-    async def _has_pause(self, ticket: RunTicket) -> bool:
-        snapshot = await self._graph.aget_state(self._config(ticket))
-        return bool(snapshot.interrupts)
 
     async def _execute(self, ticket: RunTicket, reporter: RunReporter, graph_input: Any) -> Outcome:
         """Run the graph (from the start, or on from a pause) until it ends or pauses."""
@@ -264,6 +308,7 @@ class RunManager:
             approval_expiry=timedelta(hours=self.settings.approval_expiry_hours),
             settings=self.settings,
             start_runs=self.start,
+            tool_access=self.tool_access,
         )
         try:
             # The time limit counts working time only: waiting for a person doesn't use it up.
@@ -275,10 +320,11 @@ class RunManager:
         except RunStopped:
             return Outcome("cancelled")
         except asyncio.CancelledError:
-            # Either Stop was pressed (stop_now) or the API is shutting down.
+            # Either Stop was pressed (stop_now) or the worker is shutting down. Then the run
+            # stays `running`: its job goes back in the queue and it carries on after the restart.
             if await self._stop_was_requested(ticket.id):
                 return Outcome("cancelled")
-            return Outcome("failed", run_service.RESTART_ERROR)
+            raise
         except TimeoutError:
             return Outcome("failed", time_limit_message(ticket.max_seconds))
         except NeedsAttention as error:
@@ -323,26 +369,22 @@ class RunManager:
     def _reporter(self, ticket: RunTicket) -> RunReporter:
         return RunReporter(self.sessionmaker, self.bus, ticket.org_id, ticket.thread_id, ticket.id)
 
-    @asynccontextmanager
-    async def _chat_lock(self, thread_id: uuid.UUID) -> AsyncIterator[None]:
-        """Runs in the same chat take turns inside this process. (The database guard in
-        `claim_run` covers other API copies.) The lock is dropped when nobody uses it."""
-        lock = self._chat_locks.setdefault(thread_id, asyncio.Lock())
-        self._chat_lock_users[thread_id] += 1
-        try:
-            async with lock:
-                yield
-        finally:
-            self._chat_lock_users[thread_id] -= 1
-            if not self._chat_lock_users[thread_id]:
-                del self._chat_lock_users[thread_id], self._chat_locks[thread_id]
-
     @staticmethod
     async def _log_failure(work: Coroutine[Any, Any, None]) -> None:
         try:
             await work
         except Exception:
             logger.exception("Background work failed")
+
+
+def run_job(run_id: uuid.UUID, thread_id: uuid.UUID) -> Job:
+    """The job that moves a run forward. Runs in one chat share a lock, so they take turns in order."""
+    return Job(
+        RUN_BOT,
+        {"run_id": str(run_id), "thread_id": str(thread_id)},
+        lock=run_lock(thread_id),
+        queueing_lock=run_key(run_id),
+    )
 
 
 def _once_per_model(
@@ -393,28 +435,3 @@ async def checkpointer_for(settings: Settings) -> AsyncIterator[BaseCheckpointSa
         yield checkpointer
     finally:
         await pool.close()
-
-
-@asynccontextmanager
-async def run_manager(
-    settings: Settings,
-    sessionmaker: async_sessionmaker[AsyncSession],
-    memory: MemoryService,
-    secrets: SecretBox,
-    catalog: ModelCatalog | None = None,
-) -> AsyncIterator[RunManager]:
-    """The API's run manager, for the lifetime of the app. `catalog` gives OpenRouter's prices."""
-    async with checkpointer_for(settings) as checkpointer:
-        runs = RunManager(
-            settings=settings,
-            sessionmaker=sessionmaker,
-            checkpointer=checkpointer,
-            memory=memory,
-            secrets=secrets,
-            catalog=catalog,
-        )
-        await runs.recover_after_restart()
-        try:
-            yield runs
-        finally:
-            await runs.close()

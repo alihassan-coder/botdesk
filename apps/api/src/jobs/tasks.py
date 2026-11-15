@@ -1,0 +1,68 @@
+"""BotDesk's background jobs (ADR 0013). `JOBS` is the registry every worker runs.
+
+- `run_bot` (deferred): move one run forward (`RunManager.take_turn`).
+- `expire_approvals` (every minute): approvals nobody answered in `APPROVAL_EXPIRY_HOURS`
+  expire, and their runs carry on told "no" (approvals fail closed, ADR 0004).
+- `recover_runs` (every minute, Postgres): runs that should be moving but lost their job (a
+  crashed worker) get one again.
+
+To add a job (routines, Gmail polling…), declare it on `JOBS` in a module this one imports, then
+defer it with `queue.defer(Job("name", {...}))`, or give it a `cron` to run on a schedule. See the
+backend guide, "Background jobs".
+"""
+
+import uuid
+from dataclasses import replace
+from datetime import timedelta
+
+from src.core.database import utcnow
+from src.jobs.queue import JobEnv, JobRegistry
+from src.models import Run
+from src.runtime.runner import RUN_BOT, run_job
+from src.services import approval_service, run_event_service
+
+JOBS = JobRegistry()
+
+# A run that can't start yet (its chat's turn, or its bot is busy) tries again this much later.
+# A new job, not a retry: it goes to the back of its chat's line, behind the run it waits for.
+TURN_RETRY = timedelta(seconds=1)
+
+
+@JOBS.task(RUN_BOT, retry_after_shutdown=True)
+async def run_bot(env: JobEnv, run_id: str, thread_id: str) -> None:
+    if not await env.runs.take_turn(uuid.UUID(run_id)):
+        job = run_job(uuid.UUID(run_id), uuid.UUID(thread_id))
+        await env.queue.defer(replace(job, run_at=utcnow() + TURN_RETRY))
+
+
+@JOBS.task("expire_approvals", cron="* * * * *")
+async def expire_approvals(env: JobEnv, timestamp: int) -> None:
+    """Each overdue approval in its own short transaction: expired, its `approval_decided` event,
+    and the job that resumes its run (the run reads "expired" and carries on told no)."""
+    async with env.sessionmaker() as db:
+        overdue = await approval_service.overdue(db)
+    for approval_id in overdue:
+        async with env.sessionmaker() as db:
+            if not await approval_service.expire(db, approval_id):
+                continue  # someone decided it meanwhile
+            view = await approval_service.view_by_id(db, approval_id)
+            approval = view.approval
+            run_event_service.add_event(
+                db,
+                org_id=approval.org_id,
+                thread_id=approval.thread_id,
+                run_id=approval.run_id,
+                kind="approval_decided",
+                data={"approval": approval_service.approval_json(view, env.runs.registry)},
+            )
+            run = await db.get(Run, approval.run_id)
+            if run is not None and run.status == "waiting_approval":
+                await env.runs.resume(db, run)
+            await db.commit()
+        env.runs.bus.announce(approval.thread_id)
+
+
+@JOBS.task("recover_runs", cron="* * * * *")
+async def recover_runs(env: JobEnv, timestamp: int) -> None:
+    if env.settings.uses_postgres:  # on SQLite nothing is lost while the process runs
+        await env.runs.pick_up_stuck_runs()

@@ -14,6 +14,7 @@ import asyncio
 import json
 import logging
 import uuid
+from contextlib import AbstractAsyncContextManager, nullcontext
 from dataclasses import dataclass
 from datetime import timedelta
 from typing import Any, Literal
@@ -27,6 +28,7 @@ from src.models.bot import SecurityLevel
 from src.plugins.registry import RegisteredTool, ToolRegistry
 from src.runtime.policy import LEVEL_NAMES, decide
 from src.runtime.reporter import RunReporter
+from src.runtime.tool_access import NO_ACCESS, ToolAccess, ToolAccessProvider
 from src.services import approval_service
 from src.services import tool_execution_service as executions
 from src.services.tool_execution_service import ApprovalDraft, NewCall, Recorded, RunRef
@@ -121,6 +123,14 @@ class ExecuteDeps:
     reporter: RunReporter
     run: RunRef
     timeout_seconds: float
+    # A tool's `ctx.http` and `ctx.connection`. None: no web access (tests that don't need it).
+    access: ToolAccessProvider | None = None
+
+
+def _access(deps: ExecuteDeps, tool: RegisteredTool, tool_call_id: str) -> AbstractAsyncContextManager[ToolAccess]:
+    if deps.access is None:
+        return nullcontext(NO_ACCESS)
+    return deps.access.open(deps.run, tool, tool_call_id, timeout_seconds=deps.timeout_seconds)
 
 
 async def execute(deps: ExecuteDeps, execution_id: uuid.UUID) -> ToolOutcome:
@@ -168,16 +178,20 @@ async def _run_tool(
     """Call the plugin with a timeout. Returns (result, None) or (None, why it failed)."""
     if tool is None:
         return None, "This tool isn't available any more."
-    context = ToolContext(
-        org_id=deps.run.org_id,
-        bot_id=deps.run.bot_id,
-        run_id=deps.run.run_id,
-        tool_call_id=tool_call_id,
-        idempotency_key=f"{deps.run.run_id}:{tool_call_id}",
-        logger=logging.getLogger(f"src.plugins.{tool.plugin_id}"),
-    )
     try:
-        async with asyncio.timeout(deps.timeout_seconds):
+        async with asyncio.timeout(deps.timeout_seconds), _access(deps, tool, tool_call_id) as access:
+            # `http` reaches only the plugin's hosts and adds the connection's credential itself:
+            # the tool never sees it (ADR 0010 §8).
+            context = ToolContext(
+                org_id=deps.run.org_id,
+                bot_id=deps.run.bot_id,
+                run_id=deps.run.run_id,
+                tool_call_id=tool_call_id,
+                idempotency_key=f"{deps.run.run_id}:{tool_call_id}",
+                logger=logging.getLogger(f"src.plugins.{tool.plugin_id}"),
+                http=access.http,
+                connection=access.connection,
+            )
             result = await tool.spec.handler(tool.spec.args_model.model_validate(args), context)
     except TimeoutError:
         return None, f"It took longer than {deps.timeout_seconds:g} seconds."

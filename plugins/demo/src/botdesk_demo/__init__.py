@@ -15,6 +15,13 @@ One tool per interesting case:
 | `demo.draft_email` | write-external | a reversible change "in another app": asks unless Autonomous |
 | `demo.send_email` | external-send | asks unless Autonomous; always asks in a tainted run |
 | `demo.read_inbox` | read | returns outside text (with a prompt injection in it): taints the run |
+| `demo.call_api` | read | calls a web service through `ctx.http` with the Demo API key someone connected |
+
+`demo.call_api` is the API-key example (manifest version 2): the plugin declares `ApiKeyAuth` and
+the one host it calls (`egress`). Someone connects "Demo" with any key in Connect apps; BotDesk
+adds the key to the request itself, so this code never sees it. The tool returns only which host
+answered and the status, never the body (an echo service would echo the key back).
+The key IS sent to the public echo service `postman-echo.com`: connect Demo with a made-up key only.
 """
 
 from collections import defaultdict
@@ -22,8 +29,12 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any
 
-from botdesk_plugin_sdk import NoArgs, PluginManifest, ToolContext, ToolSpec
+from botdesk_plugin_sdk import ApiKeyAuth, NoArgs, PluginManifest, ToolContext, ToolSpec
 from pydantic import BaseModel, EmailStr, Field
+
+# A public echo service. Only its host and status are used (see `call_api`).
+# The key someone connects for "Demo" IS sent to this host: use a made-up key, never a real one.
+DEMO_API_HOST = "postman-echo.com"
 
 KNOWLEDGE_BASE = {
     "refunds": "Refunds are issued within 14 days of purchase. Ask finance for anything older.",
@@ -106,6 +117,11 @@ def demo_plugin(state: DemoState | None = None) -> PluginManifest:
     async def read_inbox(_args: NoArgs, _ctx: ToolContext) -> dict[str, Any]:
         return {"emails": FAKE_INBOX}
 
+    async def call_api(_args: NoArgs, ctx: ToolContext) -> dict[str, Any]:
+        response = await ctx.http.request("GET", f"https://{DEMO_API_HOST}/get", params={"from": "botdesk-demo"})
+        account = ctx.connection.account_label if ctx.connection else None
+        return {"calledHost": DEMO_API_HOST, "status": response.status_code, "account": account}
+
     def email_summary(verb: str) -> Any:
         def summarize(args: EmailArgs) -> str:
             return f"{verb} an email to {args.to}: {args.subject}"
@@ -173,5 +189,16 @@ def demo_plugin(state: DemoState | None = None) -> PluginManifest:
                 idempotent=True,
                 untrusted_output=True,
             ),
+            ToolSpec(
+                name="call_api",
+                title="Call the demo API",
+                description="Call the demo web service with the connected Demo account and say which host answered.",
+                args_model=NoArgs,
+                risk="read",
+                handler=call_api,
+                idempotent=True,
+            ),
         ),
+        auth=ApiKeyAuth(header="X-Api-Key"),
+        egress=(DEMO_API_HOST,),
     )

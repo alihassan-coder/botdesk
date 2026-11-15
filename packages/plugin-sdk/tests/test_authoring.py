@@ -45,7 +45,8 @@ def test_manifest_json_is_the_same_whatever_order_tools_are_declared_in() -> Non
 
 def test_manifest_json_has_sorted_keys_and_each_tools_args_schema() -> None:
     data = json.loads(manifest_json(manifest(tool("beta"), tool("alpha", LookupArgs))))
-    assert list(data) == ["description", "id", "manifestVersion", "name", "runtime", "tools", "version"]
+    assert list(data) == sorted(data)
+    assert {"auth", "egress", "triggers", "settingsSchema", "botSettingsSchema"} <= set(data)
     assert [t["name"] for t in data["tools"]] == ["alpha", "beta"]
     alpha = data["tools"][0]
     assert list(alpha) == sorted(alpha)

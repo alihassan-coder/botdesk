@@ -1,8 +1,8 @@
-"""Encrypting secrets at rest (organizations' model provider keys).
+"""Encrypting secrets at rest (organizations' model provider keys, connections' credentials).
 
 Fernet (AES-128-CBC + HMAC-SHA256) from `cryptography`. Its key is derived from SECRET_KEY with
-HKDF, so SECRET_KEY can be any long random string and other features can later derive their own
-keys from it without sharing one.
+HKDF and a *purpose*, so SECRET_KEY can be any long random string and each feature gets its own
+key: a model key's ciphertext can't be copied into a connection row and decrypt there.
 
 Rules, so a misconfigured server fails closed instead of quietly using a weak key:
 
@@ -27,7 +27,9 @@ from src.core.config import Settings
 log = logging.getLogger(__name__)
 
 DEVELOPMENT_SECRET = "botdesk-development-only-secret-do-not-use-in-production"  # noqa: S105
-KEY_PURPOSE = b"botdesk:provider-keys:v1"
+# HKDF purposes. Never change one: everything saved under it would stop decrypting.
+KEY_PURPOSE = b"botdesk:provider-keys:v1"  # model provider keys (the default)
+CONNECTIONS_PURPOSE = b"botdesk:connections:v1"  # connections' credentials (services/credential_vault.py)
 MIN_SECRET_LENGTH = 32
 GENERATE_HINT = 'Generate one with: python -c "import secrets; print(secrets.token_urlsafe(48))"'
 
@@ -36,16 +38,17 @@ class SecretUnreadable(Exception):
     """A saved secret can't be decrypted: SECRET_KEY changed since it was saved, or it was tampered with."""
 
 
-def _fernet(secret: str) -> Fernet:
-    derived = HKDF(algorithm=hashes.SHA256(), length=32, salt=None, info=KEY_PURPOSE).derive(secret.encode())
+def _fernet(secret: str, purpose: bytes) -> Fernet:
+    derived = HKDF(algorithm=hashes.SHA256(), length=32, salt=None, info=purpose).derive(secret.encode())
     return Fernet(base64.urlsafe_b64encode(derived))
 
 
 class SecretBox:
-    """Encrypts with `secret`; decrypts with `secret` or any of `old_secrets` (key rotation)."""
+    """Encrypts with `secret`; decrypts with `secret` or any of `old_secrets` (key rotation).
+    Boxes with different `purpose`s can't read each other's ciphertexts."""
 
-    def __init__(self, secret: str, old_secrets: Sequence[str] = ()) -> None:
-        self._fernet = MultiFernet([_fernet(secret), *(_fernet(old) for old in old_secrets)])
+    def __init__(self, secret: str, old_secrets: Sequence[str] = (), *, purpose: bytes = KEY_PURPOSE) -> None:
+        self._fernet = MultiFernet([_fernet(secret, purpose), *(_fernet(old, purpose) for old in old_secrets)])
 
     def __repr__(self) -> str:
         return "SecretBox(<hidden>)"
@@ -65,9 +68,9 @@ def _old_secrets(settings: Settings) -> list[str]:
     return [old.strip() for old in raw.split(",") if old.strip()]
 
 
-def build_secret_box(settings: Settings) -> SecretBox:
-    """The app's SecretBox. Called while the app is created, so a server without a proper
-    SECRET_KEY stops at startup with a message that says what to do."""
+def build_secret_box(settings: Settings, *, purpose: bytes = KEY_PURPOSE) -> SecretBox:
+    """The app's SecretBox for one purpose. Called while the app is created, so a server without
+    a proper SECRET_KEY stops at startup with a message that says what to do."""
     secret = settings.secret_key.get_secret_value() if settings.secret_key else ""
     old = _old_secrets(settings)
     if not settings.relaxed_secrets:
@@ -82,6 +85,7 @@ def build_secret_box(settings: Settings) -> SecretBox:
                 f"characters. {GENERATE_HINT}. To keep saved keys readable, move the current one to SECRET_KEY_OLD."
             )
     if secret:
-        return SecretBox(secret, old)
-    log.warning("SECRET_KEY isn't set: saved API keys use a public development key. Set SECRET_KEY before real use.")
-    return SecretBox(DEVELOPMENT_SECRET, old)
+        return SecretBox(secret, old, purpose=purpose)
+    if purpose == KEY_PURPOSE:  # say it once, not once per purpose
+        log.warning("SECRET_KEY isn't set: saved keys use a public development key. Set SECRET_KEY before real use.")
+    return SecretBox(DEVELOPMENT_SECRET, old, purpose=purpose)

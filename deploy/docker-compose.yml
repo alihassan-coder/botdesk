@@ -17,7 +17,7 @@ x-api-image: &api-image
     dockerfile: apps/api/Dockerfile
   image: botdesk-api:local
 
-# Settings shared by everything that runs the API image (api, migrate, and later the worker).
+# Settings shared by everything that runs the API image (api, migrate, worker).
 x-api-env: &api-env
   env_file: .env
   environment:
@@ -60,7 +60,8 @@ services:
   api:
     <<: [*api-image, *api-env]
     restart: unless-stopped
-    # One API copy: runs happen inside this process for now (ADR 0007), so don't scale it.
+    # With WORKER_MODE=embedded (the default) this process also runs bot runs and timers
+    # (ADR 0013). Rate limits count per process, so keep one copy.
     depends_on:
       migrate:
         condition: service_completed_successfully
@@ -68,18 +69,21 @@ services:
       - "${BIND_ADDRESS:-127.0.0.1}:${API_PORT:-8000}:8000"
     # Health check: built into the image (GET /api/v1/health, which also checks the database).
 
-  # The worker: NOT a service yet. Today runs happen inside the API process (ADR 0007). When the
-  # job queue lands (ADR 0005), it is the same image started another way, roughly:
-  #
-  # worker:
-  #   <<: [*api-image, *api-env]
-  #   command: ["python", "-m", "src.worker"]
-  #   restart: unless-stopped
-  #   environment:
-  #     WORKER_MODE: ...        # decided with the queue; not a setting today
-  #   depends_on:
-  #     migrate:
-  #       condition: service_completed_successfully
+  # Runs bot runs, approval expiry and other jobs in its own process (ADR 0013). Only with
+  # WORKER_MODE=separate in deploy/.env, started with: docker compose --profile worker up -d
+  # (scale with --scale worker=N). With the default WORKER_MODE=embedded the api runs them.
+  worker:
+    <<: [*api-image, *api-env]
+    command: ["python", "-m", "src.worker"]
+    restart: unless-stopped
+    profiles: ["worker"]
+    # SIGTERM stops it cleanly: running jobs get 5 s, then go back in the queue.
+    stop_grace_period: 15s
+    healthcheck:
+      disable: true  # the image's check calls the API on :8000, which a worker doesn't serve
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
 
   web:
     build:

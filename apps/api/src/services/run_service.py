@@ -19,7 +19,7 @@ from src.core.config import Settings
 from src.core.database import utcnow
 from src.core.errors import NotFound
 from src.core.handles import mentioned_handles
-from src.models import Bot, Message, Run, RunEvent, Thread, ThreadParticipant, User
+from src.models import Approval, Bot, Message, Run, RunEvent, Thread, ThreadParticipant, User
 from src.models.run import ACTIVE_STATUSES, PAUSED_STATUSES
 from src.schemas.run import RunOut
 from src.services.mention_routing import BotAuthor, ChatBots, Reply, route
@@ -391,7 +391,8 @@ async def pause_run(db: AsyncSession, run_id: uuid.UUID, *, status: str, error: 
 
 
 async def fail_interrupted_runs(db: AsyncSession) -> list[Run]:
-    """At startup: runs left queued or running by a crash or restart can't continue (yet).
+    """At startup on SQLite (nothing survives a restart there: jobs and checkpoints live in
+    memory): runs left queued or running by a crash or restart can't continue.
     They fail, except a run whose tool call was half done: nobody can tell whether it
     happened, so that run waits for a person (needs_attention, ADR 0004 §2). Returns both
     kinds. Runs waiting for approval are untouched: they resume from their checkpoint."""
@@ -412,6 +413,20 @@ async def fail_interrupted_runs(db: AsyncSession) -> list[Run]:
         .returning(Run)
     )
     return [*attention, *failed]
+
+
+async def runs_to_pick_up(db: AsyncSession) -> list[tuple[uuid.UUID, uuid.UUID]]:
+    """(run id, chat id) of every run that should be moving: queued, running, or waiting for an
+    approval that has been decided (none of its approvals is pending any more). The job queue
+    gives each one without a job a new one (`RunManager.pick_up_stuck_runs`)."""
+    decided = and_(
+        Run.status == "waiting_approval",
+        ~exists().where(Approval.run_id == Run.id, Approval.status == "pending"),
+    )
+    rows = await db.execute(
+        select(Run.id, Run.thread_id).where(or_(Run.status.in_(ACTIVE_STATUSES), decided)).order_by(Run.created_at)
+    )
+    return [(run_id, thread_id) for run_id, thread_id in rows]
 
 
 async def get_run(db: AsyncSession, *, org_id: uuid.UUID, user_id: uuid.UUID, run_id: uuid.UUID) -> Run:

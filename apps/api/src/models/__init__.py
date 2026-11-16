@@ -6,6 +6,7 @@ from src.models.bot import Bot
 from src.models.bot_tool import BotTool
 from src.models.connection import AuditEntry, Connection
 from src.models.invitation import Invitation
+from src.models.oauth_flow import OAuthFlow
 from src.models.organization import Membership, Organization
 from src.models.provider_credential import ProviderCredential
 from src.models.routine import Routine, RoutineRun
@@ -23,6 +24,7 @@ __all__ = [
     "Invitation",
     "Membership",
     "Message",
+    "OAuthFlow",
     "Organization",
     "PasswordResetToken",
     "ProviderCredential",

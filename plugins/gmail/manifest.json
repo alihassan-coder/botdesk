@@ -1,0 +1,35 @@
+{
+  "auth": {
+    "authorizeUrl": "https://accounts.google.com/o/oauth2/v2/auth",
+    "extraAuthorizeParams": {
+      "access_type": "offline",
+      "include_granted_scopes": "true",
+      "prompt": "consent"
+    },
+    "provider": "google",
+    "revokeUrl": "https://oauth2.googleapis.com/revoke",
+    "scopeSets": {
+      "full": [
+        "https://www.googleapis.com/auth/gmail.modify"
+      ],
+      "read": [
+        "https://www.googleapis.com/auth/gmail.readonly"
+      ]
+    },
+    "tokenUrl": "https://oauth2.googleapis.com/token",
+    "type": "oauth2"
+  },
+  "botSettingsSchema": null,
+  "description": "Connect a Gmail account. Tools that read and send its email come in a later release.",
+  "egress": [
+    "gmail.googleapis.com"
+  ],
+  "id": "gmail",
+  "manifestVersion": 2,
+  "name": "Gmail",
+  "runtime": "builtin",
+  "settingsSchema": null,
+  "tools": [],
+  "triggers": [],
+  "version": "0.1.0"
+}

@@ -154,14 +154,14 @@ Write `connection.bound` and `connection.unbound` lines to the audit log.
 ## Backend checklist (deferred from 2026-11-15)
 
 - [ ] Migration covering `bot_tools`, `runs.requester_id` and `oauth_flows`, plus both backfills; apply it to the dev DB.
-- [ ] Settings `GOOGLE_OAUTH_CLIENT_ID`, `GOOGLE_OAUTH_CLIENT_SECRET` (SecretStr); add both to `apps/api/.env.example` and `deploy/.env.example`.
+- [x] Settings `GOOGLE_OAUTH_CLIENT_ID`, `GOOGLE_OAUTH_CLIENT_SECRET` (SecretStr); add both to `apps/api/.env.example` and `deploy/.env.example`.
 - [ ] `runtime/toolset.py` and its wiring into the graph, pipeline and `tool_access`; remove `usable_for_run`. Update `tests/test_connections.py`, whose 5.1 tests assume the automatic choice of connection.
 - [ ] `requester_id` set in `create_runs` and `save_reply` (routines set their own).
 - [ ] Default bindings for new bots.
 - [ ] `GET`/`PUT /bots/{bot}/tools`, with the permission and audit rules above.
 - [ ] Approval 403 for anyone but the owner on member-owned connections.
-- [ ] `services/oauth_flow.py`, the `oauth/start` route, the callback route, and `GET /connectors`.
-- [ ] Refresh with the lease, `needs_reconnect`, and revoke on disconnect.
+- [x] `services/oauth_flow.py`, the `oauth/start` route, the callback route, and `GET /connectors`.
+- [x] Refresh with the lease, `needs_reconnect`, and revoke on disconnect.
 - [ ] Tests, written first:
   - the resolver table;
   - the backfill keeps behaviour;
@@ -177,4 +177,4 @@ Write `connection.bound` and `connection.unbound` lines to the audit log.
   - the `organization_plugins` off switch;
   - refresh after a 401;
   - tool definition hashes in run state;
-  - a `plugins/gmail` manifest stub (slice 6.1).
+  - ~~a `plugins/gmail` manifest stub (slice 6.1)~~: landed with 5.3 (connect only, no tools).

@@ -19,6 +19,7 @@ from src.services import auth_service, organization_service
 from src.services.credential_vault import CredentialVault
 from src.services.email_service import EmailSender
 from src.services.model_catalog import ModelCatalog
+from src.services.oauth_flow import OAuth
 
 Db = Annotated[AsyncSession, Depends(get_session)]
 
@@ -74,6 +75,15 @@ def get_vault(request: Request) -> CredentialVault:
 
 
 Vault = Annotated[CredentialVault, Depends(get_vault)]
+
+
+def get_oauth(request: Request) -> OAuth:
+    """Signing in with OAuth apps, refreshing and revoking their tokens (services/oauth_flow.py)."""
+    oauth: OAuth = request.app.state.oauth
+    return oauth
+
+
+OAuthFlows = Annotated[OAuth, Depends(get_oauth)]
 
 
 def get_model_catalog(request: Request) -> ModelCatalog:

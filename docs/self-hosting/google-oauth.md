@@ -19,7 +19,19 @@ BotDesk has no hosted service, so each server uses its own Google OAuth client (
 
    `API_PUBLIC_URL` must match the redirect URI exactly. Keep the secret out of version control.
 
+6. **Load the plugin:** `PLUGINS` must include `gmail` (for example `PLUGINS=demo,gmail`, as in `.env.example`). Restart the API; Connect apps now offers Gmail with **Read** or **Full** access (Full is the default).
+
 ## Troubleshooting
+
+After Google's page, BotDesk shows a result page (`/apps/callback`). Its error codes:
+
+- **denied:** you cancelled on Google's page.
+- **expired:** the sign-in took more than 10 minutes, was already used, or was started in another account's session. Start again from Connect apps.
+- **not-configured:** the Google client was removed from the server while you were signing in.
+- **signed-out / forbidden:** sign in to BotDesk first; or you lost the role needed for that owner (an organization account needs an owner or admin).
+- **failed:** the code exchange or the account lookup failed. The API log says which (never with a token in it).
+
+Other problems:
 
 - **`redirect_uri_mismatch`** on Google's page: the URI in step 4 and `API_PUBLIC_URL` differ (scheme, host, port or trailing path).
 - **A connection says "Needs reconnect" about a week after connecting:** the consent screen is still in Testing (step 2).

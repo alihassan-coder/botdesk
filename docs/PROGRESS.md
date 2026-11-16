@@ -2,6 +2,15 @@
 
 A short history of BotDesk, newest first. For one checklist of what is done and what is next, see [ROADMAP.md](ROADMAP.md).
 
+## 2026-11-16: OAuth connections, slice 5.3 (backend)
+
+[ADR 0010](adr/0010-connections-and-credentials.md) §5-§6, [contract](architecture/connections-api-contract.md). Details: [backend guide](backend/README.md#oauth-connections).
+
+- **Connect with Google:** `POST /orgs/{id}/connections/oauth/start` → Google's sign-in page (PKCE S256, offline access); `GET /api/v1/oauth/callback` saves the connection and always sends the browser to `/apps/callback` with `connected` or an error code (`denied`, `expired`, `not-configured`, `signed-out`, `forbidden`, `failed`). Each sign-in is an `oauth_flows` row (migration `571864651dea`) used once, by its own member, within 10 minutes. Connecting the same account again updates the same connection.
+- **`GET /orgs/{id}/connectors`** for Connect apps: how each app connects, its access levels, and whether the server has the client it needs (`GOOGLE_OAUTH_CLIENT_ID` / `_SECRET`).
+- **Tokens stay fresh:** a token with under a minute left is refreshed before a tool uses it, one refresh per connection at a time (a lease on the row); a refused refresh marks the connection *needs reconnect*. Disconnecting also revokes the token at Google.
+- **`plugins/gmail`:** provider `google`, Read or Full access, the account is the mailbox address. No tools yet (slice 6.1).
+
 ## 2026-11-15: routines that really run
 
 - API: `routines` and `routine_runs` (migration `e1c4d7a92b30`), CRUD + Run now + recent runs under `/orgs/{org}/routines`. A `fire_routines` job every minute starts due routines as runs in the creator's DM (a "Routine: {name}" notice the run answers), hop 0, acting for the creator, at the strictest of the bot's and the routine's level. Missed slots run once, never as a backlog; a removed bot, a creator who left or a spent budget switches the routine off with a reason; a slot whose last run is still going is skipped.

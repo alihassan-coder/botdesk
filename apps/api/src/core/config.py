@@ -71,7 +71,8 @@ class Settings(BaseSettings):
     bot_hop_limit: int = 3
 
     # Tools. PLUGINS is the allowlist of built-in plugins to load (ADR 0006); "demo" adds fake
-    # tools (notes, a fake outbox) so approvals can be tried with no outside account.
+    # tools (notes, a fake outbox) so approvals can be tried with no outside account; "gmail"
+    # connects Google accounts once the Google client below is set (`.env.example` lists both).
     plugins: str = "demo"
     tool_timeout_seconds: int = 30
     # An approval nobody answers in this time counts as "no" (approvals fail closed).
@@ -89,6 +90,15 @@ class Settings(BaseSettings):
     # The API's own public address. OAuth providers send people back to
     # {API_PUBLIC_URL}/api/v1/oauth/callback (ADR 0010 §5), so it must be reachable from their browser.
     api_public_url: str = "http://localhost:8000"
+
+    # The server's own Google OAuth client (ADR 0011 §6, docs/self-hosting/google-oauth.md). Both
+    # are needed before anyone can connect a Google account (Gmail).
+    google_oauth_client_id: str = ""
+    google_oauth_client_secret: SecretStr = SecretStr("")
+    # Tests only (ignored unless ENVIRONMENT=test): send Google's sign-in, token and revoke calls,
+    # and Gmail API calls, to a fake server instead ("http://127.0.0.1:9100").
+    google_oauth_base_url: str = ""
+    gmail_api_base_url: str = ""
 
     session_cookie_name: str = "botdesk_session"
     session_days: int = 30

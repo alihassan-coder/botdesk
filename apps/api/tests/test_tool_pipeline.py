@@ -60,7 +60,7 @@ def test_a_plugin_cannot_be_registered_twice_and_unknown_plugins_are_refused() -
     with pytest.raises(ValueError, match="already registered"):
         registry.register(demo_plugin())
     with pytest.raises(ValueError, match="no such plugin"):
-        build_registry(["gmail"])
+        build_registry(["no-such-plugin"])
 
 
 def test_the_stand_in_reads_a_tool_command() -> None:

@@ -48,3 +48,17 @@ class ConnectionOut(ApiModel):
     created_at: datetime
     last_used_at: datetime | None
     created_by: uuid.UUID | None
+
+
+class OAuthStartIn(ApiModel):
+    """Start signing in with an OAuth app. `access` is one of the connector's access levels
+    (`accessLevels` on /connectors); empty: its default. Reconnect is the same call again."""
+
+    connector_id: str = Field(min_length=1, max_length=80)
+    owner_kind: OwnerKindIn = "member"
+    bot_id: uuid.UUID | None = None
+    access: str | None = Field(default=None, max_length=40)
+
+
+class OAuthStartOut(ApiModel):
+    authorize_url: str  # the provider's sign-in page; the browser goes there next

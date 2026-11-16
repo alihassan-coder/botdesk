@@ -2,6 +2,7 @@
 
     vault.save(connection, api_key_secret("lin_api_…", ApiKeyAuth()))  # encrypt into the row
     credential = vault.open(connection)                                # only inside a tool call
+    vault.save(connection, oauth_secret(access, refresh))              # OAuth: tokens (services/oauth_flow.py)
     vault.revoke(connection, reason="Disconnected by Ali")             # null it, for good
 
 It works on `Connection` rows and never touches the database itself: the caller commits.
@@ -19,6 +20,7 @@ from collections.abc import Mapping
 from typing import Any
 
 from botdesk_plugin_sdk import ApiKeyAuth
+from pydantic import SecretStr
 
 from src.core.config import Settings
 from src.core.secrets import CONNECTIONS_PURPOSE, SecretBox, SecretUnreadable, build_secret_box
@@ -57,6 +59,15 @@ def api_key_secret(api_key: str, auth: ApiKeyAuth) -> dict[str, str]:
     return {"kind": "api_key", "api_key": api_key, "header": auth.header, "prefix": auth.prefix}
 
 
+def oauth_secret(access_token: str, refresh_token: str | None, token_type: str = "Bearer") -> dict[str, str]:  # noqa: S107
+    """The bundle an OAuth connection saves: its tokens. No refresh token: the access token only
+    lasts until it expires (then the connection needs reconnecting)."""
+    bundle = {"kind": "oauth2", "access_token": access_token, "token_type": token_type or "Bearer"}
+    if refresh_token:
+        bundle["refresh_token"] = refresh_token
+    return bundle
+
+
 class CredentialVault:
     def __init__(self, box: SecretBox) -> None:
         self._box = box
@@ -86,12 +97,47 @@ class CredentialVault:
                 "Reconnect it in Connect apps."
             ) from error
 
+    def refresh_token(self, connection: Connection) -> SecretStr | None:
+        """An OAuth connection's refresh token, for the token endpoint (the OAuth module only).
+        None when it has none or it can't be read."""
+        return _token(self._bundle(connection), "refresh_token")
+
+    def revocation_token(self, connection: Connection) -> SecretStr | None:
+        """What to revoke at the provider on disconnect: the refresh token (which takes its access
+        tokens with it), else the access token. None for API keys, which have nothing to revoke."""
+        bundle = self._bundle(connection)
+        if bundle.get("kind") != "oauth2":
+            return None
+        return _token(bundle, "refresh_token") or _token(bundle, "access_token")
+
+    def seal(self, value: str) -> str:
+        """Encrypt a short-lived secret that isn't a credential (an OAuth flow's PKCE verifier)."""
+        return self._box.encrypt(value)
+
+    def unseal(self, sealed: str) -> str:
+        """`seal`, undone. Raises `SecretUnreadable` if SECRET_KEY changed in between."""
+        return self._box.decrypt(sealed)
+
+    def _bundle(self, connection: Connection) -> dict[str, Any]:
+        if not connection.encrypted_secret:
+            return {}
+        try:
+            bundle = json.loads(self._box.decrypt(connection.encrypted_secret))
+        except (SecretUnreadable, ValueError):
+            return {}
+        return bundle if isinstance(bundle, dict) else {}
+
     def revoke(self, connection: Connection, *, reason: str) -> None:
         """Forget the credential for good. The row stays, `revoked`, for the audit trail."""
         connection.encrypted_secret = None
         connection.status = "revoked"
         connection.status_reason = reason
         connection.refresh_lease_until = None
+
+
+def _token(bundle: Mapping[str, Any], key: str) -> SecretStr | None:
+    value = bundle.get(key)
+    return SecretStr(value) if isinstance(value, str) and value else None
 
 
 def _unusable(connection: Connection) -> str:

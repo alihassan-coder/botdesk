@@ -2,17 +2,22 @@
 owners and admins (and a bot's creator) connect bot and organization accounts. Responses never
 carry a credential."""
 
+import logging
 import uuid
+from urllib.parse import urlencode
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.api.deps import Access
 from src.core.errors import NotFound
 from src.plugins.registry import ToolRegistry
-from src.schemas.connection import ApiKeyConnectionIn, ConnectionOut
-from src.services import connection_service
+from src.schemas.connection import ApiKeyConnectionIn, ConnectionOut, OAuthStartIn, OAuthStartOut
+from src.services import auth_service, connection_service
 from src.services.connection_service import Actor
 from src.services.credential_vault import CredentialVault
+from src.services.oauth_flow import FlowFailed, OAuth
+
+logger = logging.getLogger(__name__)
 
 
 def _actor(access: Access) -> Actor:
@@ -39,6 +44,51 @@ async def connect_api_key(
     return ConnectionOut.model_validate(connection)
 
 
-async def disconnect(db: AsyncSession, access: Access, connection_id: uuid.UUID, *, vault: CredentialVault) -> None:
-    await connection_service.disconnect(db, _actor(access), connection_id, vault)
+async def start_oauth(
+    db: AsyncSession, access: Access, body: OAuthStartIn, *, registry: ToolRegistry, oauth: OAuth
+) -> OAuthStartOut:
+    connector = registry.plugin(body.connector_id)
+    if connector is None:
+        raise NotFound(connection_service.UNKNOWN_CONNECTOR)
+    url = await oauth.start(db, _actor(access), connector, body)
     await db.commit()
+    return OAuthStartOut(authorize_url=url)
+
+
+async def finish_oauth(
+    db: AsyncSession,
+    session_token: str | None,
+    *,
+    state: str | None,
+    code: str | None,
+    error: str | None,
+    iss: str | None,
+    oauth: OAuth,
+    web_app_url: str,
+) -> str:
+    """Where the browser goes after the provider's sign-in page: the web's callback page with
+    `result=connected&connector=…` or `result=error&code=…`. Never the provider's own words."""
+    user = await auth_service.user_for_token(db, session_token) if session_token else None
+    try:
+        connection = await oauth.finish(db, state=state, code=code, error=error, iss=iss, session_user=user)
+        query = {"result": "connected", "connector": connection.connector_id}
+    except FlowFailed as failed:
+        await db.rollback()
+        if failed.reason:
+            logger.info("OAuth sign-in refused (%s): %s", failed.code, failed.reason)
+        query = {"result": "error", "code": failed.code}
+    except Exception as unexpected:  # the browser always gets a page it can show
+        await db.rollback()
+        logger.warning("OAuth sign-in failed (%s).", type(unexpected).__name__)
+        query = {"result": "error", "code": "failed"}
+    return f"{web_app_url.rstrip('/')}/apps/callback?{urlencode(query)}"
+
+
+async def disconnect(
+    db: AsyncSession, access: Access, connection_id: uuid.UUID, *, vault: CredentialVault, oauth: OAuth
+) -> None:
+    connection, token = await connection_service.disconnect(db, _actor(access), connection_id, vault)
+    connector_id = connection.connector_id
+    await db.commit()
+    if token is not None:  # an OAuth token: tell the provider too, now that nothing waits on it
+        await oauth.revoke(oauth.registry.plugin(connector_id), token)

@@ -81,17 +81,17 @@ When you finish something, tick it here in the same pull request.
 
 ### Connections (before Gmail and MCP; [build plan](architecture/connections-gmail-mcp.md), [ADR 0010](adr/0010-connections-and-credentials.md))
 - [x] 5.1 Connection platform (backend): `connections` table, credential vault, API-key connections (`/orgs/{id}/connections`), `ctx.http` (declared hosts only, no redirects, no private addresses, size and time caps, credential added by BotDesk), SDK manifest v2, demo `call_api` tool
-- [ ] 5.2 Bindings: each bot's Tools tab, the run's requester, member connections only in their member's DMs
+- [x] 5.2 Bindings: each bot's Tools tab, the run's requester, member connections only in their member's DMs; changing a shared account needs the right to it
 - [x] 5.3 OAuth connections and Connect apps on the API (token refresh with a lease, reconnect, revoke); `plugins/gmail` connects a Google account (no tools yet)
 
 ### Gmail (step 5)
 - [ ] Connect with your own Google client; read, label, draft, and send only after approval
-  - [x] 6.1 Read: `gmail.search`, `gmail.read_thread`, `gmail.list_labels` (plain text, capped, header filter, `<email>` blocks; results taint the run)
+  - [x] 6.1 Read: `gmail.search`, `gmail.read_thread`, `gmail.list_labels` (plain text, capped, header filter, `<email>` blocks; mail results taint the run, the label list doesn't)
 
 ### Multi-bot (from the 2026-11-14 test)
 - [x] Speaker names in group history, so a bot knows who said what
 - [x] Bot-to-bot @mentions start runs, with a hop limit (ADR 0009); guests in DMs
-- [ ] Handoffs and Chief delegation: a handoff tool and tasks; the parent waits and gets the results back ([ADR 0014](adr/0014-handoffs-and-tasks.md), [contract and build slices](architecture/handoffs-contract.md))
+- [x] Handoffs and Chief delegation: a handoff tool and tasks; the parent waits and gets the results back ([ADR 0014](adr/0014-handoffs-and-tasks.md), [contract and build slices](architecture/handoffs-contract.md))
 - [x] A default responder when no bot is mentioned in a group: the group's lead
 
 ### Memory and routines (steps 6–7)

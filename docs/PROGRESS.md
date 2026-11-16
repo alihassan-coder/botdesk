@@ -2,6 +2,18 @@
 
 A short history of BotDesk, newest first. For one checklist of what is done and what is next, see [ROADMAP.md](ROADMAP.md).
 
+## 2026-11-16: bots hand off work, each bot's Tools, Gmail read, and reviews
+
+Built in parallel waves; every piece was independently reviewed and its findings fixed with tests before merging.
+
+- **Handoffs** ([ADR 0014](adr/0014-handoffs-and-tasks.md), [contract](architecture/handoffs-contract.md)): `team.handoff` gives a task to any bot in the organization. The parent pauses as `waiting_handoff` (freeing the chat), each child works in the same chat with a live handoff card, and the parent resumes exactly once with every result in `<task-results>`. Taint goes down and back up; a child is never looser than its parent; Stop cascades; tasks time out after 60 minutes; removing a bot mid-wait fails or cancels its tasks. Web: handoff cards, a "waiting for @sales and @inbox" notice, and a Chief demo in guest mode.
+- **Bindings, slice 5.2:** each bot's Tools (`GET/PUT /bots/{id}/tools`), the toolset resolver, `runs.requester_id`; a member's own account serves only their DMs with that bot, and only they approve calls through it. Replacing or clearing an account someone else chose needs the right to that account.
+- **Routines review fixes:** only the creator edits or runs a routine; a run keeps the security level it started at; a failing routine no longer blocks the rest; a budget stop skips a slot instead of switching the routine off; schedules that never come, use random fields or run under 5 minutes apart are refused; old routine runs are pruned.
+- **OAuth review fixes:** revoke and refresh survive guard errors, the token call is bounded inside its lease, a failed refresh backs off, a late refresh can't revive a disconnected row, Google callbacks require `iss`, and the callback's query is kept out of access logs.
+- **Gmail read, slice 6.1:** `gmail.search`, `gmail.read_thread`, `gmail.list_labels`; mail is plain text in `<email>` blocks, capped, and taints the run. SDK `OAuth2Auth.implied_scopes` (full access includes read).
+- **MCP client, slice 7.1:** `mcp` 2.3 over the SSRF guard (one origin, https, no private addresses, size and time caps).
+- **Smaller:** real app logos on Connect apps (simple-icons, bundled); hiring from the marketplace on the API uses the instance's default model.
+
 ## 2026-11-16: OAuth connections, slice 5.3 (backend)
 
 [ADR 0010](adr/0010-connections-and-credentials.md) §5-§6, [contract](architecture/connections-api-contract.md). Details: [backend guide](backend/README.md#oauth-connections).

@@ -5,6 +5,7 @@ from fastapi import APIRouter, BackgroundTasks, status
 from src.api.deps import AppSettings, Db, OrgAccess, Runs
 from src.controllers import bot_controller
 from src.schemas.bot import BotIn, BotOut, BotUpdate
+from src.schemas.bot_tool import BotToolsIn, BotToolsOut
 
 router = APIRouter(prefix="/orgs/{org_id}/bots", tags=["bots"])
 
@@ -25,8 +26,9 @@ async def create_bot(
     body: BotIn, access: OrgAccess, db: Db, settings: AppSettings, runs: Runs, background: BackgroundTasks
 ) -> BotOut:
     """Hire a bot. Its @handle comes from its name. A `modelId` must name a connected provider.
-    Only owners and admins may set a budget other than the default."""
-    bot = await bot_controller.create_bot(db, access, body, settings)
+    Only owners and admins may set a budget other than the default. It gets the loaded plugins
+    that don't sign in with OAuth as its Tools."""
+    bot = await bot_controller.create_bot(db, access, body, settings, runs.registry)
     _warm_price(background, runs, access, bot)
     return bot
 
@@ -57,3 +59,17 @@ async def update_bot(
 async def delete_bot(bot_id: uuid.UUID, access: OrgAccess, db: Db) -> None:
     """Remove a bot. Owners and admins only."""
     await bot_controller.delete_bot(db, access, bot_id)
+
+
+@router.get("/{bot_id}/tools")
+async def get_tools(bot_id: uuid.UUID, access: OrgAccess, db: Db, runs: Runs) -> BotToolsOut:
+    """The bot's Tools: one entry per loaded plugin, with whether the bot may use it and through
+    which connection. A plugin the bot has no binding for is off."""
+    return await bot_controller.get_tools(db, access, bot_id, runs.registry)
+
+
+@router.put("/{bot_id}/tools")
+async def set_tools(bot_id: uuid.UUID, body: BotToolsIn, access: OrgAccess, db: Db, runs: Runs) -> BotToolsOut:
+    """Switch plugins on or off and choose their connections. Only the plugins sent change.
+    Any member may switch a plugin; choosing a connection takes someone who may use it."""
+    return await bot_controller.set_tools(db, access, bot_id, body, runs.registry)

@@ -1,7 +1,9 @@
 """Bots in an organization: hire (create), list, edit, remove."""
 
 import uuid
+from collections.abc import Iterable
 
+from botdesk_plugin_sdk import PluginManifest
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -9,6 +11,7 @@ from src.core.errors import NotFound
 from src.core.handles import handle_prefix, make_handle
 from src.models import Bot, Organization, Routine
 from src.schemas.bot import BotIn, BotUpdate
+from src.services import binding_service
 
 # What a routine whose bot was removed says (it stays, switched off).
 BOT_REMOVED = "Its bot was removed."
@@ -35,12 +38,17 @@ async def _taken_handles(
     return set(await db.scalars(query))
 
 
-async def create_bot(db: AsyncSession, *, org: Organization, created_by: uuid.UUID, data: BotIn) -> Bot:
-    """A bot hired without a security level gets the organization's default for new bots."""
+async def create_bot(
+    db: AsyncSession, *, org: Organization, created_by: uuid.UUID, data: BotIn, plugins: Iterable[PluginManifest]
+) -> Bot:
+    """A bot hired without a security level gets the organization's default for new bots. It
+    gets a binding for each of `plugins` (the loaded ones) that doesn't sign in with OAuth."""
     handle = make_handle(data.name, await _taken_handles(db, org.id, data.name))
     fields = data.model_dump() | {"security_level": data.security_level or org.default_security_level}
     bot = Bot(**fields, org_id=org.id, handle=handle, created_by=created_by)
     db.add(bot)
+    await db.flush()
+    binding_service.add_defaults(db, bot, plugins)
     await db.flush()
     return bot
 

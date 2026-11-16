@@ -45,7 +45,7 @@ from src.core.database import utcnow
 from src.models.bot import Bot, SecurityLevel
 from src.models.run import Run
 from src.plugins.registry import ToolRegistry
-from src.runtime import tool_pipeline
+from src.runtime import tool_pipeline, toolset
 from src.runtime.chat_model import (
     ModelPrice,
     ModelUnavailable,
@@ -141,7 +141,7 @@ class RunDeps:
     # Work that must finish even if the run is stopped or the API shuts down (usage records):
     # it runs as its own tracked task, and the run waits for it without being able to cancel it.
     unstoppable: Callable[[Coroutine[Any, Any, None]], Awaitable[None]]
-    registry: ToolRegistry
+    registry: ToolRegistry  # every loaded tool; a run gets only its toolset's (`_toolset`)
     tool_timeout_seconds: float
     approval_expiry: timedelta
     settings: Settings  # the hop limit and run limits for runs a reply's @mentions start
@@ -153,6 +153,13 @@ class RunDeps:
     @property
     def run_ref(self) -> RunRef:
         return RunRef(run_id=self.run_id, org_id=self.org_id, thread_id=self.thread_id, bot_id=self.bot_id)
+
+
+async def _toolset(deps: RunDeps) -> toolset.Toolset:
+    """The tools this run may use now, from the bot's bindings. Read fresh in every node that
+    uses tools, so a tool unbound (or an account disconnected) mid-run is refused on resume."""
+    async with deps.sessionmaker() as db:
+        return await toolset.load(db, deps.registry, deps.run_id)
 
 
 def _memory_scope(state: RunState, deps: RunDeps) -> MemoryScope:
@@ -274,7 +281,7 @@ async def call_model(state: RunState, runtime: Runtime[RunDeps]) -> RunState:
         raise RunError(str(error)) from error
     # Each call may pass the budget by at most this many output tokens (budgets are soft, §4.2).
     cap = output_cap(remaining_usd, price.pricing, prompt_chars)
-    model = cap_output(_with_tools(chat_model, deps.registry), chat_model, cap)
+    model = cap_output(_with_tools(chat_model, await _toolset(deps)), chat_model, cap)
     streamed = Streamed()
     try:
         answer = await _stream_reply(
@@ -375,9 +382,9 @@ async def _record_usage(deps: RunDeps, price: ModelPrice, tokens: TokensUsed) ->
         logger.exception("Couldn't record usage for run %s", deps.run_id)
 
 
-def _with_tools(model: BaseChatModel, registry: ToolRegistry) -> Runnable[Any, Any]:
+def _with_tools(model: BaseChatModel, tools_of_run: toolset.Toolset) -> Runnable[Any, Any]:
     """The model, told about the tools it may call. Models that can't call tools answer without them."""
-    tools = [tool.for_model() for tool in registry.tools()]
+    tools = [tool.for_model() for tool in tools_of_run.tools()]
     if not tools:
         return model
     try:
@@ -432,7 +439,10 @@ async def prepare_call(state: RunState, runtime: Runtime[RunDeps]) -> RunState:
     first, *rest = state["pending_calls"]
     tainted = state.get("tainted", False)
     request = ToolCallRequest(id=first["id"], name=first["name"], args=dict(first.get("args") or {}))
-    prepared = tool_pipeline.prepare(deps.registry, request, level=_security_level(state), tainted=tainted)
+    tools = await _toolset(deps)
+    prepared = tool_pipeline.prepare(
+        tools, request, level=_security_level(state), tainted=tainted, connections=tools.connections
+    )
     async with deps.sessionmaker() as db:
         recorded = await tool_pipeline.record(
             db, deps.run_ref, prepared, tainted=tainted, approval_expiry=deps.approval_expiry
@@ -481,14 +491,16 @@ async def execute_tool(state: RunState, runtime: Runtime[RunDeps]) -> RunState:
     """Run the tool, at most once (the `tool_executions` record makes sure)."""
     deps = runtime.context
     call = state["call"]
+    tools = await _toolset(deps)
     outcome = await tool_pipeline.execute(
         tool_pipeline.ExecuteDeps(
             sessionmaker=deps.sessionmaker,
-            registry=deps.registry,
+            tools=tools,
             reporter=deps.reporter,
             run=deps.run_ref,
             timeout_seconds=deps.tool_timeout_seconds,
             access=deps.tool_access,
+            connection_ids=tools.connection_ids,
         ),
         uuid.UUID(call["executionId"]),
     )

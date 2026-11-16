@@ -17,7 +17,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.core.errors import BadRequest, Conflict, Forbidden, NotFound
-from src.models import AuditEntry, Bot, Connection, ToolExecution
+from src.models import AuditEntry, Bot, BotTool, Connection
 from src.schemas.connection import ApiKeyConnectionIn
 from src.services.credential_vault import CredentialVault, api_key_secret
 
@@ -161,6 +161,8 @@ async def disconnect(db: AsyncSession, actor: Actor, connection_id: uuid.UUID, v
     if connection.status == "revoked":
         return
     vault.revoke(connection, reason="Disconnected")
+    # Its bindings keep their plugin on, with no account: tools that need one say "connect it first".
+    await db.execute(update(BotTool).where(BotTool.connection_id == connection.id).values(connection_id=None))
     await db.flush()
     audit(
         db, actor.org_id, actor.user_id, "connection.disconnected", connection, {"connector": connection.connector_id}
@@ -176,13 +178,25 @@ def audit(
     details: dict[str, Any],
 ) -> None:
     """Append one line to the audit log, in the caller's transaction. Never pass a secret."""
+    audit_line(db, org_id, actor_user_id, action, connection.id, details)
+
+
+def audit_line(
+    db: AsyncSession,
+    org_id: uuid.UUID,
+    actor_user_id: uuid.UUID | None,
+    action: str,
+    connection_id: uuid.UUID,
+    details: dict[str, Any],
+) -> None:
+    """`audit`, by the connection's id."""
     db.add(
         AuditEntry(
             org_id=org_id,
             actor_user_id=actor_user_id,
             action=action,
             target_kind="connection",
-            target_id=connection.id,
+            target_id=connection_id,
             details=details,
         )
     )
@@ -191,37 +205,14 @@ def audit(
 # Runs
 
 
-async def usable_for_run(
-    db: AsyncSession, org_id: uuid.UUID, bot_id: uuid.UUID, connector_id: str
-) -> Connection | None:
-    """The connection a run of this bot uses for a connector, until bindings arrive (slice 5.2):
-    an active connection owned by this bot, else an active one owned by the organization (oldest
-    first). Member-owned connections are never used yet: they need the run's requester and a DM
-    with that member (ADR 0010 §3), which come with bindings."""
-    query = (
-        select(Connection)
-        .where(
-            Connection.org_id == org_id,
-            Connection.connector_id == connector_id,
-            Connection.status == "active",
-            or_(
-                (Connection.owner_kind == "bot") & (Connection.owner_bot_id == bot_id),
-                Connection.owner_kind == "org",
-            ),
-        )
-        .order_by((Connection.owner_kind == "org").asc(), Connection.created_at, Connection.id)
-    )
-    connection: Connection | None = (await db.scalars(query.limit(1))).first()
-    return connection
+async def for_tool_call(db: AsyncSession, org_id: uuid.UUID, connection_id: uuid.UUID) -> Connection | None:
+    """The connection a tool call was given by the run's toolset (`runtime.toolset`), which has
+    already decided that the run may use it. None if it's gone or in another organization."""
+    connection = await db.get(Connection, connection_id, populate_existing=True)
+    return connection if connection is not None and connection.org_id == org_id else None
 
 
-async def record_use(
-    db: AsyncSession, connection_id: uuid.UUID, *, run_id: uuid.UUID, tool_call_id: str, when: datetime
-) -> None:
-    """A tool call went through this connection: note when, and put it on the call's record."""
+async def record_use(db: AsyncSession, connection_id: uuid.UUID, *, when: datetime) -> None:
+    """A tool call went through this connection: note when. (The call's own record already
+    names the connection: `tool_pipeline.record` saves it.)"""
     await db.execute(update(Connection).where(Connection.id == connection_id).values(last_used_at=when))
-    await db.execute(
-        update(ToolExecution)
-        .where(ToolExecution.run_id == run_id, ToolExecution.tool_call_id == tool_call_id)
-        .values(connection_id=connection_id)
-    )

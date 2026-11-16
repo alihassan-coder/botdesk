@@ -1,7 +1,8 @@
 """Approvals: seeing them, and deciding them exactly once (ADR 0004 §3).
 
 Who may see and decide: members of the organization who are in the approval's chat, the same
-people who can see the run (a DM stays private to its member). Deciding is one conditional
+people who can see the run (a DM stays private to its member). A call through a member's own
+connection is decided only by that member (slice 5.2): anyone else gets 403. Deciding is one conditional
 UPDATE on `status = 'pending'`; whoever doesn't win gets 409. Callers own the transaction.
 """
 
@@ -14,8 +15,8 @@ from sqlalchemy import Select, exists, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.core.database import as_utc, utcnow
-from src.core.errors import BadRequest, Conflict, NotFound
-from src.models import Approval, ThreadParticipant, ToolExecution, User
+from src.core.errors import BadRequest, Conflict, Forbidden, NotFound
+from src.models import Approval, Connection, ThreadParticipant, ToolExecution, User
 from src.models.approval import ApprovalStatus
 from src.plugins.registry import RegisteredTool, ToolRegistry
 from src.schemas.approval import ApprovalOut, Decider, PreviewLine
@@ -25,6 +26,7 @@ LIST_LIMIT = 100
 ALREADY_DECIDED = "This approval was already decided."
 EXPIRED = "This approval expired, so the bot didn't do it."
 NOT_FOUND = "This approval doesn't exist."
+NOT_YOUR_ACCOUNT = "Only the member whose account this uses can decide it."
 # What the paused run is told when it carries on (the model reads these).
 DENIED_MESSAGE = "A person denied this action, so it wasn't done. Don't try it again without asking."
 EXPIRED_MESSAGE = "Nobody approved this action in time, so it wasn't done."
@@ -137,6 +139,7 @@ async def decide(
     """Approve (maybe with edited arguments) or deny. Only a pending approval can be decided,
     and only once, even when two people click at the same moment."""
     approval = (await get_approval(db, org_id=org_id, user_id=user.id, approval_id=approval_id)).approval
+    await _require_may_decide(db, approval, user.id)
     if approval.status != "pending":
         raise Conflict(ALREADY_DECIDED)
 
@@ -162,6 +165,19 @@ async def decide(
     if not settled:
         raise Conflict(ALREADY_DECIDED)
     return Decided(view=await view_by_id(db, approval.id), expired=False)
+
+
+async def _require_may_decide(db: AsyncSession, approval: Approval, user_id: uuid.UUID) -> None:
+    """A call through a member-owned connection acts as that member: only they decide it. Calls
+    through a bot's or the organization's connection keep the chat's rule (its members)."""
+    if approval.connection_id is None:
+        return
+    owner = await db.execute(
+        select(Connection.owner_kind, Connection.owner_user_id).where(Connection.id == approval.connection_id)
+    )
+    row = owner.first()
+    if row is not None and row.owner_kind == "member" and row.owner_user_id != user_id:
+        raise Forbidden(NOT_YOUR_ACCOUNT)
 
 
 async def _settle(

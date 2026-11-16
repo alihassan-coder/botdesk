@@ -196,6 +196,9 @@ async def test_run_now_starts_a_run_in_the_creators_dm_for_the_creator(team: Tea
     run_id = response.json()["runId"]
     run = (await team.client.get(f"{ORGS}/{team.org_id}/runs/{run_id}")).json()
     assert run["status"] == "queued" and run["hop"] == 0 and run["botId"] == team.bot
+    async with team.app.state.sessionmaker() as db:
+        requester = await db.scalar(select(Run.requester_id).where(Run.id == uuid.UUID(run_id)))
+    assert str(requester) == team.sara  # the routine acts for the member who set it up (Sara)
     dm = (await team.client.post(f"{ORGS}/{team.org_id}/threads/dm", json={"botId": team.bot})).json()
     assert run["threadId"] == dm["id"]
     messages = (await team.client.get(f"{ORGS}/{team.org_id}/threads/{dm['id']}/messages")).json()

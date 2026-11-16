@@ -7,7 +7,9 @@ Safe to run more than once. Refuses to run in production.
 """
 
 import asyncio
+from collections.abc import Sequence
 
+from botdesk_plugin_sdk import PluginManifest
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -15,6 +17,8 @@ from src.core import security
 from src.core.config import get_settings
 from src.core.database import create_engine, create_sessionmaker
 from src.models import Bot, Membership, Organization, User
+from src.plugins.registry import build_registry
+from src.services import binding_service
 
 DEMO_PASSWORD = "botdesk123"  # noqa: S105  (a published demo password, local only)
 ORG = {"name": "Acme Labs", "slug": "acme-labs"}
@@ -30,8 +34,9 @@ PEOPLE = [
 ]
 
 
-async def seed(db: AsyncSession) -> list[str]:
-    """Add whatever is missing. Returns a line per thing created."""
+async def seed(db: AsyncSession, plugins: Sequence[PluginManifest] = ()) -> list[str]:
+    """Add whatever is missing. New bots get the default Tools of `plugins` (the loaded ones).
+    Returns a line per thing created."""
     created = []
     org = await db.scalar(select(Organization).where(Organization.slug == ORG["slug"]))
     if org is None:
@@ -55,17 +60,18 @@ async def seed(db: AsyncSession) -> list[str]:
     for name, handle, bot_role, description, color in BOTS:
         exists = await db.scalar(select(Bot.id).where(Bot.org_id == org.id, Bot.handle == handle))
         if exists is None:
-            db.add(
-                Bot(
-                    org_id=org.id,
-                    name=name,
-                    handle=handle,
-                    role=bot_role,
-                    description=description,
-                    avatar_color=color,
-                    created_by=owner.id if owner else None,
-                )
+            bot = Bot(
+                org_id=org.id,
+                name=name,
+                handle=handle,
+                role=bot_role,
+                description=description,
+                avatar_color=color,
+                created_by=owner.id if owner else None,
             )
+            db.add(bot)
+            await db.flush()
+            binding_service.add_defaults(db, bot, plugins)
             created.append(f"bot {name}")
     await db.commit()
     return created
@@ -77,7 +83,7 @@ async def main() -> None:
         raise SystemExit("Refusing to seed demo accounts in production.")
     engine = create_engine(settings.sqlalchemy_url)
     async with create_sessionmaker(engine)() as db:
-        created = await seed(db)
+        created = await seed(db, build_registry(settings.plugin_ids).plugins())
     await engine.dispose()
     print("\n".join(f"+ {line}" for line in created) or "Demo data already there.")
     print(f"Sign in with ali@acme.dev / {DEMO_PASSWORD}")

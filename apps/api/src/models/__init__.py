@@ -3,6 +3,7 @@
 
 from src.models.approval import Approval
 from src.models.bot import Bot
+from src.models.bot_tool import BotTool
 from src.models.connection import AuditEntry, Connection
 from src.models.invitation import Invitation
 from src.models.organization import Membership, Organization
@@ -17,6 +18,7 @@ __all__ = [
     "Approval",
     "AuditEntry",
     "Bot",
+    "BotTool",
     "Connection",
     "Invitation",
     "Membership",

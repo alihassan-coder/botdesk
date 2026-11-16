@@ -72,11 +72,12 @@ def queued_run(
     bot_id: uuid.UUID,
     trigger: Message,
     settings: Settings,
+    requester_id: uuid.UUID | None,
     hop: int = 0,
     parent: uuid.UUID | None = None,
 ) -> Run:
-    """A queued run of `bot_id` answering `trigger` in `thread` (a routine's run uses it as is).
-    The caller adds it."""
+    """A queued run of `bot_id` answering `trigger` in `thread` (a routine's run uses it as is),
+    acting for `requester_id` (the requester). The caller adds it."""
     return Run(
         org_id=thread.org_id,
         bot_id=bot_id,
@@ -84,6 +85,7 @@ def queued_run(
         trigger_message_id=trigger.id,
         parent_run_id=parent,
         hop=hop,
+        requester_id=requester_id,
         status="queued",
         max_steps=settings.run_max_steps,
         max_seconds=settings.run_max_seconds,
@@ -91,8 +93,24 @@ def queued_run(
     )
 
 
-def _queued_run(thread: Thread, reply: Reply, *, trigger: Message, settings: Settings, parent: uuid.UUID | None) -> Run:
-    return queued_run(thread, bot_id=reply.bot_id, trigger=trigger, settings=settings, hop=reply.hop, parent=parent)
+def _queued_run(
+    thread: Thread,
+    reply: Reply,
+    *,
+    trigger: Message,
+    settings: Settings,
+    parent: uuid.UUID | None,
+    requester_id: uuid.UUID | None,
+) -> Run:
+    return queued_run(
+        thread,
+        bot_id=reply.bot_id,
+        trigger=trigger,
+        settings=settings,
+        requester_id=requester_id,
+        hop=reply.hop,
+        parent=parent,
+    )
 
 
 async def create_runs(
@@ -106,7 +124,12 @@ async def create_runs(
         org_bots=await _org_bots_by_handle(db, org_id=thread.org_id, text=text),
         hop_limit=settings.bot_hop_limit,
     )
-    runs = [_queued_run(thread, reply, trigger=message, settings=settings, parent=None) for reply in routing.replies]
+    # The message's author is the requester of every run its chain starts.
+    requester = message.author_id if message.author_type == "user" else None
+    runs = [
+        _queued_run(thread, reply, trigger=message, settings=settings, parent=None, requester_id=requester)
+        for reply in routing.replies
+    ]
     db.add_all(runs)
     await db.flush()
     return runs
@@ -372,7 +395,10 @@ async def save_reply(
         hop_limit=settings.bot_hop_limit,
         by_bot=BotAuthor(bot_id=run.bot_id, hop=run.hop),
     )
-    runs = [_queued_run(thread, reply, trigger=message, settings=settings, parent=run.id) for reply in routing.replies]
+    runs = [
+        _queued_run(thread, reply, trigger=message, settings=settings, parent=run.id, requester_id=run.requester_id)
+        for reply in routing.replies
+    ]
     db.add_all(runs)
     notice = None
     if routing.chain_stopped:

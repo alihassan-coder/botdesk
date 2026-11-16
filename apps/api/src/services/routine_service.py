@@ -234,7 +234,10 @@ async def _start(db: AsyncSession, routine: Routine, *, now: datetime, settings:
         ],
     )
     await db.flush()
-    run = run_service.queued_run(thread, bot_id=routine.bot_id, trigger=trigger, settings=settings)
+    # The member who set the routine up is its runs' requester (their DM with the bot, too).
+    run = run_service.queued_run(
+        thread, bot_id=routine.bot_id, trigger=trigger, settings=settings, requester_id=routine.created_by
+    )
     db.add(run)
     await db.flush()
     await _saved(db, trigger, thread, run.id)

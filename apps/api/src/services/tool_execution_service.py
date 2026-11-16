@@ -47,6 +47,7 @@ class NewCall:
     decision: str  # auto | ask | deny | invalid
     trace: str
     error: str | None = None
+    connection_id: uuid.UUID | None = None  # the account it works on (and its approval asks about)
 
 
 @dataclass(frozen=True)
@@ -98,6 +99,7 @@ async def record_call(db: AsyncSession, run: RunRef, call: NewCall, approval: Ap
         args=call.args,
         args_hash=args_hash(call.args),
         error=call.error,
+        connection_id=call.connection_id,
         created_at=now,
         finished_at=now if call.decision in ("deny", "invalid") else None,
     )
@@ -119,6 +121,7 @@ async def record_call(db: AsyncSession, run: RunRef, call: NewCall, approval: Ap
             status="pending",
             created_at=now,
             expires_at=approval.expires_at,
+            connection_id=call.connection_id,
         )
     try:
         async with db.begin_nested():

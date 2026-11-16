@@ -1,10 +1,11 @@
-"""Connections (ADR 0010, slice 5.1), on SQLite: the credential vault, who may create, see and
-disconnect which connection (§3), the audit log, and the demo API-key tool
-end to end through the tool pipeline. Requests tools make are answered by httpx.MockTransport."""
+"""Connections (ADR 0010, slices 5.1-5.2), on SQLite: the credential vault, who may create, see and
+disconnect which connection (§3), the audit log, and the demo API-key tool end to end through the
+run's toolset and the tool pipeline. Requests tools make are answered by httpx.MockTransport."""
 
 import logging
 import uuid
 from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from datetime import timedelta
 from typing import Any
@@ -20,7 +21,7 @@ from src.core.secrets import CONNECTIONS_PURPOSE, SecretBox, build_secret_box
 from src.main import create_app
 from src.models import AuditEntry, Connection, RunEvent, ToolExecution
 from src.models.bot import SecurityLevel
-from src.runtime import tool_pipeline
+from src.runtime import tool_pipeline, toolset
 from src.runtime.reporter import RunReporter
 from src.runtime.runner import RunManager
 from src.runtime.tool_pipeline import ExecuteDeps, ToolCallRequest
@@ -126,6 +127,16 @@ class Team:
         data: dict[str, Any] = response.json()
         return data
 
+    async def bind(
+        self, connection_id: str | None, *, plugin: str = "demo", enabled: bool = True, expect: int = 200
+    ) -> dict[str, Any]:
+        """Choose the account Scout's `plugin` works through (PUT /bots/{bot}/tools)."""
+        body = {"plugins": [{"pluginId": plugin, "enabled": enabled, "connectionId": connection_id}]}
+        response = await self.client.put(f"{self.org}/bots/{self.bot_id}/tools", json=body)
+        assert response.status_code == expect, response.text
+        data: dict[str, Any] = response.json()
+        return data
+
     async def labels(self) -> list[str]:
         response = await self.client.get(f"{self.org}/connections")
         assert response.status_code == 200, response.text
@@ -134,6 +145,12 @@ class Team:
 
 @pytest.fixture
 async def team() -> AsyncIterator[Team]:
+    async with acme() as world:
+        yield world
+
+
+@asynccontextmanager
+async def acme() -> AsyncIterator[Team]:
     """Ali owns Acme and made the bot Scout; Sara is a member. Ali is signed in."""
     app = create_app(TEST_SETTINGS)
     async with (
@@ -263,7 +280,8 @@ class FakeDemoApi:
 async def _run_tool(
     team: Team, tool: str, args: dict[str, Any] | None = None, *, level: SecurityLevel = "ask-before-acting"
 ) -> tuple[Any, Any]:
-    """A DM with Scout, a (never started) run, and one call of `tool` through prepare → record → execute."""
+    """The signed-in member's DM with Scout, a (never started) run, and one call of `tool` through
+    the run's toolset and prepare → record → execute, as the graph does."""
     client = team.client
     thread = (await client.post(f"{team.org}/threads/dm", json={"botId": team.bot_id})).json()
     sent = (await client.post(f"{team.org}/threads/{thread['id']}/messages", json={"text": "Hi"})).json()
@@ -274,11 +292,14 @@ async def _run_tool(
         thread_id=uuid.UUID(thread["id"]),
         bot_id=uuid.UUID(team.bot_id),
     )
+    async with runs.sessionmaker() as db:
+        tools = await toolset.load(db, runs.registry, run.run_id)
     call = tool_pipeline.prepare(
-        runs.registry,
+        tools,
         ToolCallRequest(f"call-{uuid.uuid4().hex[:6]}", tool, args or {}),
         level=level,
         tainted=False,
+        connections=tools.connections,
     )
     async with runs.sessionmaker() as db:
         recorded = await tool_pipeline.record(db, run, call, tainted=False, approval_expiry=timedelta(hours=1))
@@ -286,7 +307,15 @@ async def _run_tool(
     if call.decision != "auto":
         return call, None
     reporter = RunReporter(runs.sessionmaker, runs.bus, run.org_id, run.thread_id, run.run_id)
-    deps = ExecuteDeps(runs.sessionmaker, runs.registry, reporter, run, timeout_seconds=5, access=runs.tool_access)
+    deps = ExecuteDeps(
+        runs.sessionmaker,
+        tools,
+        reporter,
+        run,
+        timeout_seconds=5,
+        access=runs.tool_access,
+        connection_ids=tools.connection_ids,
+    )
     return call, await tool_pipeline.execute(deps, recorded.execution.id)
 
 
@@ -297,9 +326,11 @@ async def test_the_demo_tool_calls_its_host_with_the_key_the_tool_never_sees(
     api = FakeDemoApi()
     team.app.state.runs.tool_access.transport = httpx.MockTransport(api.handle)
     shared = await team.connect(ownerKind="org", accountLabel="Acme demo")
+    await team.bind(shared["id"])
 
     call, outcome = await _run_tool(team, "demo__call_api")
     assert call.decision == "auto"  # a read: the policy is unchanged by connections
+    assert call.trace.endswith(" · via=demo:Acme demo (org)")
     assert '"calledHost": "postman-echo.com"' in outcome.text and '"status": 200' in outcome.text
     assert '"account": "Acme demo"' in outcome.text
     (request,) = api.requests
@@ -315,29 +346,56 @@ async def test_the_demo_tool_calls_its_host_with_the_key_the_tool_never_sees(
         assert DEMO_KEY not in text
 
 
-async def test_without_a_usable_connection_the_tool_fails_with_a_reason_and_the_run_goes_on(team: Team) -> None:
+async def test_without_a_connection_the_tool_fails_with_a_reason_and_the_run_goes_on(team: Team) -> None:
     api = FakeDemoApi()
     team.app.state.runs.tool_access.transport = httpx.MockTransport(api.handle)
-    await team.sign_in("sara@acme.dev")
-    await team.connect(accountLabel="Sara's")  # member-owned: not used by runs until bindings (5.2)
-    await team.sign_in("ali@acme.dev")
+    await team.connect(ownerKind="org")  # connected, but not chosen in Scout's Tools: never used
     _, outcome = await _run_tool(team, "demo__call_api")
     assert "Demo isn't connected for this bot" in outcome.text
+    assert api.requests == []
+
+
+async def _demo_binding(team: Team) -> dict[str, Any]:
+    tools = (await team.client.get(f"{team.org}/bots/{team.bot_id}/tools")).json()
+    demo: dict[str, Any] = next(plugin for plugin in tools["plugins"] if plugin["pluginId"] == "demo")
+    return demo
+
+
+async def test_disconnecting_the_bound_account_leaves_the_plugin_on_with_no_account(team: Team) -> None:
+    api = FakeDemoApi()
+    team.app.state.runs.tool_access.transport = httpx.MockTransport(api.handle)
     shared = await team.connect(ownerKind="org")
+    await team.bind(shared["id"])
     assert (await team.client.delete(f"{team.org}/connections/{shared['id']}")).status_code == 204
+    demo = await _demo_binding(team)
+    assert (demo["enabled"], demo["connectionId"]) == (True, None)
     _, outcome = await _run_tool(team, "demo__call_api")
     assert "isn't connected" in outcome.text
     assert api.requests == []
 
 
-async def test_a_bots_own_connection_wins_over_the_organizations(team: Team) -> None:
+async def test_the_bound_connection_is_the_one_used(team: Team) -> None:
     api = FakeDemoApi()
     team.app.state.runs.tool_access.transport = httpx.MockTransport(api.handle)
     await team.connect(ownerKind="org", accountLabel="Shared", apiKey="the-org-key-0000000000000003")
-    await team.connect(ownerKind="bot", botId=team.bot_id, accountLabel="Scout's own")
+    own = await team.connect(ownerKind="bot", botId=team.bot_id, accountLabel="Scout's own")
+    await team.bind(own["id"])
     _, outcome = await _run_tool(team, "demo__call_api")
     assert '"account": "Scout\'s own"' in outcome.text
     assert api.requests[0].headers["x-api-key"] == DEMO_KEY
+
+
+async def test_a_members_connection_works_only_in_their_own_dm(team: Team) -> None:
+    api = FakeDemoApi()
+    team.app.state.runs.tool_access.transport = httpx.MockTransport(api.handle)
+    alis = await team.connect(accountLabel="Ali's")
+    await team.bind(alis["id"])
+    _, outcome = await _run_tool(team, "demo__call_api")  # Ali, in his DM with Scout
+    assert '"account": "Ali\'s"' in outcome.text
+    await team.sign_in("sara@acme.dev")
+    call, outcome = await _run_tool(team, "demo__call_api")  # Sara, in hers: the plugin is dropped
+    assert call.decision == "invalid" and outcome is None
+    assert len(api.requests) == 1
 
 
 async def test_approvals_are_unaffected_risky_demo_tools_still_ask(team: Team) -> None:

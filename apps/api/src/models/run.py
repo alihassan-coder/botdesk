@@ -43,6 +43,9 @@ class Run(IdMixin, CreatedAtMixin, Base):
     # and how far this run is from a person: 0 for a person's message, the parent's hop + 1 after.
     parent_run_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("runs.id", ondelete="SET NULL"), index=True)
     hop: Mapped[int] = mapped_column(Integer, default=0, server_default=text("0"))
+    # The member this run acts for (slice 5.2): who wrote the message that started its chain, or
+    # who set up the routine. A member's own connection serves only that member's runs.
+    requester_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
     status: Mapped[str] = mapped_column(String(20), default="queued")
     # Limits, copied from settings when the run is created, and what has been used so far.
     max_steps: Mapped[int] = mapped_column(Integer)

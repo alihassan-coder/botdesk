@@ -62,9 +62,7 @@ def upgrade() -> None:
         sa.PrimaryKeyConstraint("id", name=op.f("pk_routine_runs")),
         sa.UniqueConstraint("run_id", name=op.f("uq_routine_runs_run_id")),
     )
-    op.create_index(
-        "ix_routine_runs_routine_id_started_at", "routine_runs", ["routine_id", "started_at"], unique=False
-    )
+    op.create_index("ix_routine_runs_routine_id_started_at", "routine_runs", ["routine_id", "started_at"], unique=False)
 
 
 def downgrade() -> None:

@@ -9,8 +9,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src.api.deps import Access
 from src.core.config import Settings
 from src.core.errors import Forbidden
+from src.plugins.registry import ToolRegistry
 from src.schemas.bot import BotIn, BotOut, BotUpdate
-from src.services import bot_service, provider_service
+from src.schemas.bot_tool import BotToolsIn, BotToolsOut
+from src.services import binding_service, bot_service, provider_service
+from src.services.connection_service import Actor
 
 
 async def list_bots(db: AsyncSession, access: Access) -> list[BotOut]:
@@ -29,13 +32,17 @@ def _is_admin(access: Access) -> bool:
     return access.role in ("owner", "admin")
 
 
-async def create_bot(db: AsyncSession, access: Access, body: BotIn, settings: Settings) -> BotOut:
+async def create_bot(
+    db: AsyncSession, access: Access, body: BotIn, settings: Settings, registry: ToolRegistry
+) -> BotOut:
     # Budgets are money. A member hiring a bot may pick a budget up to the default (templates
     # come with smaller ones), but not a bigger one, and not 0 (no limit).
     if not _is_admin(access) and not 0 < body.monthly_budget_usd <= DEFAULT_BOT_BUDGET_USD:
         raise Forbidden(BUDGET_ADMINS_ONLY)
     await provider_service.require_usable_model(db, access.org.id, body.model_id, settings)
-    bot = await bot_service.create_bot(db, org=access.org, created_by=access.user.id, data=body)
+    bot = await bot_service.create_bot(
+        db, org=access.org, created_by=access.user.id, data=body, plugins=registry.plugins()
+    )
     await db.commit()
     return BotOut.model_validate(bot)
 
@@ -58,3 +65,22 @@ async def delete_bot(db: AsyncSession, access: Access, bot_id: uuid.UUID) -> Non
     access.require_admin()
     await bot_service.delete_bot(db, await bot_service.get_bot(db, access.org.id, bot_id))
     await db.commit()
+
+
+# Tools (bindings, slice 5.2). Any member may switch a bot's plugins on and off, like editing it;
+# choosing an account follows who may use it (binding_service).
+
+
+async def get_tools(db: AsyncSession, access: Access, bot_id: uuid.UUID, registry: ToolRegistry) -> BotToolsOut:
+    bot = await bot_service.get_bot(db, access.org.id, bot_id)
+    return binding_service.tools_out(registry, await binding_service.bindings_of(db, bot.id))
+
+
+async def set_tools(
+    db: AsyncSession, access: Access, bot_id: uuid.UUID, body: BotToolsIn, registry: ToolRegistry
+) -> BotToolsOut:
+    bot = await bot_service.get_bot(db, access.org.id, bot_id)
+    actor = Actor(org_id=access.org.id, user_id=access.user.id, role=access.role)
+    bindings = await binding_service.update_bindings(db, actor, bot, registry, body.plugins)
+    await db.commit()
+    return binding_service.tools_out(registry, bindings)

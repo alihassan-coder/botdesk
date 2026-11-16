@@ -1,17 +1,19 @@
 """What a tool call may reach: its `ctx.http` and `ctx.connection` (ADR 0010 §7-§8).
 
-    async with tool_access.open(run, tool, call_id, timeout_seconds=30) as access:
+    connection_id = toolset.connection_ids.get(tool.plugin_id)  # the run's toolset
+    async with tool_access.open(run, tool, call_id, connection_id=connection_id, timeout_seconds=30) as access:
         ctx = ToolContext(..., http=access.http, connection=access.connection)
 
 - A plugin with no `egress` gets an `http` that refuses every request.
 - A plugin with `egress` but no `auth` gets an `AuthorisedHttp` with no credential.
-- A plugin with `auth` gets the connection this run uses for it (until bindings, slice 5.2: the
-  bot's own, else the organization's; see `connection_service.usable_for_run`) and an
-  `AuthorisedHttp` that adds its credential. No usable connection: an `http` that refuses with
-  "connect it first", so the tool fails with that and the run goes on.
+- A plugin with `auth` gets the connection the run's toolset chose for it (`connection_id`, from
+  the bot's binding; `runtime.toolset` already checked the run may use it) and an
+  `AuthorisedHttp` that adds its credential. No connection, or one that is no longer active: an
+  `http` that refuses with "connect it first" (or "needs reconnecting"), so the tool fails with
+  that and the run goes on.
 
 The credential is decrypted only when the tool makes its first request. After the call, the
-connection's `last_used_at` and the call's `tool_executions.connection_id` are saved.
+connection's `last_used_at` is saved (the call's record already names the connection).
 """
 
 import uuid
@@ -62,18 +64,27 @@ class ToolAccessProvider:
 
     @asynccontextmanager
     async def open(
-        self, run: RunRef, tool: RegisteredTool, tool_call_id: str, *, timeout_seconds: float
+        self,
+        run: RunRef,
+        tool: RegisteredTool,
+        tool_call_id: str,
+        *,
+        connection_id: uuid.UUID | None,
+        timeout_seconds: float,
     ) -> AsyncIterator[ToolAccess]:
+        """`connection_id`: the connection the run's toolset gives this tool's plugin (None: the
+        binding has no account)."""
         plugin = self.registry.plugin(tool.plugin_id)
         if plugin is None or not plugin.egress:
             yield NO_ACCESS
             return
         connection = None
         if plugin.auth is not None:
-            async with self.sessionmaker() as db:
-                connection = await connection_service.usable_for_run(db, run.org_id, run.bot_id, plugin.id)
-            if connection is None:
-                yield ToolAccess(http=NoHttp(_not_connected(plugin)))
+            if connection_id is not None:
+                async with self.sessionmaker() as db:
+                    connection = await connection_service.for_tool_call(db, run.org_id, connection_id)
+            if connection is None or connection.status != "active":
+                yield ToolAccess(http=NoHttp(_unavailable(plugin, connection)))
                 return
 
         async with guarded_client(timeout_seconds, self.transport) as client:
@@ -86,13 +97,11 @@ class ToolAccessProvider:
                 yield ToolAccess(http=http, connection=_info(connection) if connection else None)
             finally:
                 if connection is not None and http.used:
-                    await self._record_use(connection.id, run.run_id, tool_call_id)
+                    await self._record_use(connection.id)
 
-    async def _record_use(self, connection_id: uuid.UUID, run_id: uuid.UUID, tool_call_id: str) -> None:
+    async def _record_use(self, connection_id: uuid.UUID) -> None:
         async with self.sessionmaker() as db:
-            await connection_service.record_use(
-                db, connection_id, run_id=run_id, tool_call_id=tool_call_id, when=utcnow()
-            )
+            await connection_service.record_use(db, connection_id, when=utcnow())
             await db.commit()
 
 
@@ -106,5 +115,10 @@ def _info(connection: Connection) -> ConnectionInfo:
     )
 
 
-def _not_connected(plugin: PluginManifest) -> str:
-    return f"{plugin.name} isn't connected for this bot. Connect it in Connect apps, then try again."
+def _unavailable(plugin: PluginManifest, connection: Connection | None) -> str:
+    if connection is not None and connection.status == "needs_reconnect":
+        return f"{connection.account_label} needs reconnecting (Connect apps)."
+    return (
+        f"{plugin.name} isn't connected for this bot. Connect it in Connect apps and choose the "
+        "account in the bot's Tools, then try again."
+    )

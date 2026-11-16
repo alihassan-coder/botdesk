@@ -3,8 +3,11 @@
 - `run_bot` (deferred): move one run forward (`RunManager.take_turn`).
 - `expire_approvals` (every minute): approvals nobody answered in `APPROVAL_EXPIRY_HOURS`
   expire, and their runs carry on told "no" (approvals fail closed, ADR 0004).
-- `recover_runs` (every minute, Postgres): runs that should be moving but lost their job (a
+- `recover_runs` (every minute): tasks whose child already ended are closed and their parents
+  resume (`task_service.reconcile`); on Postgres, runs that should be moving but lost their job (a
   crashed worker) get one again.
+- `expire_tasks` (every minute): handed-off tasks past their deadline fail as timed out, their
+  children are stopped, and parents whose last task that was resume (ADR 0014).
 - `fire_routines` (every minute): each routine that is due starts a run in its creator's DM
   (`routine_service`).
 - `prune_routine_runs` (daily): routine runs older than 90 days, or beyond each routine's
@@ -22,9 +25,9 @@ from datetime import UTC, datetime, timedelta
 
 from src.core.database import utcnow
 from src.jobs.queue import JobEnv, JobRegistry
-from src.models import Run
+from src.models import Run, Task
 from src.runtime.runner import RUN_BOT, run_job
-from src.services import approval_service, routine_service, run_event_service
+from src.services import approval_service, routine_service, run_event_service, task_service
 
 JOBS = JobRegistry()
 log = logging.getLogger(__name__)
@@ -70,8 +73,29 @@ async def expire_approvals(env: JobEnv, timestamp: int) -> None:
 
 @JOBS.task("recover_runs", cron="* * * * *")
 async def recover_runs(env: JobEnv, timestamp: int) -> None:
-    if env.settings.uses_postgres:  # on SQLite nothing is lost while the process runs
+    await env.runs.reconcile_tasks()
+    if env.settings.uses_postgres:  # on SQLite no job is lost while the process runs
         await env.runs.pick_up_stuck_runs()
+
+
+@JOBS.task("expire_tasks", cron="* * * * *")
+async def expire_tasks(env: JobEnv, timestamp: int) -> None:
+    """Each overdue task in its own short transaction: failed as timed out (card and event), and
+    its parent's job when that was its last open task. Then its child is stopped; the child's own
+    end finds the task already ended and changes nothing."""
+    async with env.sessionmaker() as db:
+        overdue = await task_service.overdue(db)
+    for task_id in overdue:
+        async with env.sessionmaker() as db:
+            aftermath = await task_service.expire_overdue(db, task_id)
+            task = await db.get(Task, task_id)
+            for parent in aftermath.resume:
+                await env.runs.resume(db, parent)
+            await db.commit()
+        if task is not None:
+            env.runs.bus.announce(task.thread_id)
+        for child_id in aftermath.stop:
+            await env.runs.stop(child_id)
 
 
 @JOBS.task("fire_routines", cron="* * * * *")

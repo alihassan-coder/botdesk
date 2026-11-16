@@ -1,6 +1,6 @@
 # Handoffs contract (tasks, `team.handoff`, `waiting_handoff`)
 
-Status: **not built yet.** Build exactly this. Background and reasons: [ADR 0014](../adr/0014-handoffs-and-tasks.md). Related: [ADR 0009](../adr/0009-bots-working-together.md) (hops, guests), [ADR 0013](../adr/0013-the-job-queue-lands.md) (jobs, chat lock), [ADR 0004](../adr/0004-agent-runtime-and-safety.md) (policy, taint), [connections contract](connections-api-contract.md) (requester, usable connections). Terms: [GLOSSARY.md](../../GLOSSARY.md).
+Status: **API built (slices H1–H3, migration `4a7e2c9d1b03`); web W1 built.** Changes made while building the API are marked *Built:*. Background and reasons: [ADR 0014](../adr/0014-handoffs-and-tasks.md). Related: [ADR 0009](../adr/0009-bots-working-together.md) (hops, guests), [ADR 0013](../adr/0013-the-job-queue-lands.md) (jobs, chat lock), [ADR 0004](../adr/0004-agent-runtime-and-safety.md) (policy, taint), [connections contract](connections-api-contract.md) (requester, usable connections). Terms: [GLOSSARY.md](../../GLOSSARY.md).
 
 JSON is camelCase. Every route is under `/api/v1`. Errors are `{"detail": "<sentence people can read>"}`.
 
@@ -54,7 +54,7 @@ Constraints and indexes:
 ### `runs`
 
 - `status` gains **`waiting_handoff`**. Add it to `RunStatus` and to `PAUSED_STATUSES` (so Stop, `cancel_if_not_running`, `LIVE_STATUSES` and the active-runs list all include it). There's no DB enum, since `status` is a `String(20)`.
-- New column **`level_cap`**, String(30), nullable: the parent's effective security level, for child runs of a handoff. Null for every other run.
+- ~~New column `level_cap`~~ *Built:* no new column. The cap reuses **`runs.security_level`** (added for routines in `c3d81f2a6b57`): a child run's `security_level` is the parent's effective level, the same way a routine's run keeps the strictest of its bot's and its routine's. A child is never a routine's run, so the two never meet on one run, and the effective level stays `strictest(bot level, runs.security_level or bot level)`.
 - A child run uses the existing columns this way: `parent_run_id` = the parent, `hop` = parent's hop + 1, `trigger_message_id` = the task's `message_id`, `requester_id` = the parent's, and `tainted` = the parent's (see Safety).
 
 ### Bindings
@@ -64,7 +64,7 @@ Constraints and indexes:
 
 ### Downgrade
 
-Drop `tasks` and `runs.level_cap`, delete the `team` bindings, and set every run that is `waiting_handoff` to `cancelled`.
+Drop `tasks`, delete the `team` bindings, and set every run that is `waiting_handoff` to `cancelled`.
 
 ## Task state machine
 
@@ -119,7 +119,7 @@ class HandoffArgs(BaseModel):
 How it's registered:
 - `build_registry` registers the Team manifest **always**, before the allowlisted plugins.
 - `team` is a reserved id. A `PLUGINS` entry or an entry point named `team` stops startup with "The plugin id 'team' is reserved."
-- `CORE_PLUGIN_IDS = {"team"}` are **left out of** `GET /plugins` and `GET /connectors` (they're not apps you connect). They **are** listed by `GET /bots/{bot}/tools`, where the Tools tab shows "Team · Hand off" with its on/off switch.
+- `CORE_PLUGIN_IDS = {"team"}` are **left out of** `GET /plugins` (they're not apps you connect; *Built:* there is no `GET /connectors` route, so `/plugins` is the only list). They **are** listed by `GET /bots/{bot}/tools`, where the Tools tab shows "Team · Hand off" with its on/off switch.
 
 The toolset rule is unchanged: with no connection, the plugin is kept while its binding is on. With the binding off, the model isn't offered the tool, and a call to it gets "There is no tool called team__handoff."
 
@@ -192,7 +192,7 @@ It does everything in one transaction:
 4. Create the task, its child run and the child run's job:
    - **The handoff message** has id `state.reply_message_id`. Create it if it doesn't exist yet, as a message from the parent's bot (`author_type = "bot"`, `status = "complete"`), and set `thread.last_message_at`. Then (re)write its parts with `segment_parts` (below).
    - **The task:** `status = queued` and `deadline_at` = now + timeout.
-   - **The child run:** `queued_run(thread, bot_id=target, trigger=message, requester_id=parent.requester_id, hop=parent.hop + 1, parent=parent.id)` plus `tainted = parent.tainted or state.tainted` and `level_cap = state.security_level`. Then set `task.child_run_id`.
+   - **The child run:** `queued_run(thread, bot_id=target, trigger=message, requester_id=parent.requester_id, hop=parent.hop + 1, parent=parent.id)` plus `tainted = parent.tainted or state.tainted` and `security_level = state.security_level` (*Built:* the level cap, see `runs`). Then set `task.child_run_id`.
    - **The job:** `deps.start_runs(db, [child])`, in this transaction.
    - **Events:** `message_saved` (the handoff message) and `task_updated` (the task).
 5. Mark the execution `succeeded` with the result JSON above.
@@ -293,16 +293,16 @@ class Aftermath:
     resume: list[Run]          # parents to resume (defer their run_bot job in this transaction)
     stop: list[uuid.UUID]      # child runs to stop after commit
 
-async def hand_off(db, *, parent: Run, tool_call_id: str, args: HandoffArgs, message_id: uuid.UUID,
+async def hand_off(db, *, parent_run_id: UUID, tool_call_id: str, args: HandoffArgs, message_id: uuid.UUID,  # Built: locks and loads the parent itself
                    reply_text: str, exclude_execution_ids: list[str], level: SecurityLevel,
                    tainted: bool, settings: Settings) -> HandoffResult   # Ok(task, child_run) | Refused(message)
 async def save_segment(db, *, run_id, message_id, reply_text, exclude_execution_ids) -> Message
 async def child_started(db, run_id) -> None
 async def run_ended(db, run_id, *, status: str, error: str | None, code: str | None) -> Aftermath
 async def resume_if_ready(db, parent_run_id) -> Run | None
-async def resume_answer(db, parent_run_id) -> dict | None
-async def expire_overdue(db, task_id) -> Aftermath        # one task, past its deadline
-async def overdue(db, *, limit=100) -> list[uuid.UUID]
+async def resume_answer(db, parent_run_id, task_ids=None) -> dict | None   # Built: task_ids = the interrupt's taskIds
+async def expire_overdue(db, task_id, *, now=None) -> Aftermath   # one task, past its deadline
+async def overdue(db, *, limit=100, now=None) -> list[uuid.UUID]
 async def reconcile(db) -> Aftermath                      # recovery
 def task_json(task, from_bot, to_bot) -> dict             # TaskOut
 def handoff_part(task) -> dict                            # the message part
@@ -351,7 +351,7 @@ Time limits: the parent's `max_seconds` counts working time only, so waiting doe
 - **Taint up:** `run_ended` marks the parent tainted in the database, and `wait_for_tasks` sets the state's `tainted` from the answer.
 - **Taint through history:** in `run_service.run_context`, `written_by_tainted_run` also counts a message that is the `message_id` of a task whose parent run is tainted. Handoff messages then carry taint to later runs, as replies do.
 - **Level:**
-  - `run_context` computes `security_level = strictest_level(bot.security_level, routine_level or bot level, run.level_cap or bot level)`.
+  - `run_context` computes `security_level = strictest_level(bot.security_level, run.security_level or bot level)`, where `run.security_level` is a routine's snapshot or a child's cap (*Built:* one column for both).
   - The child's level is never looser than its parent's effective level.
   - The child's approvals are its own: cards in the chat, decided under today's rules.
 - **Requester and connections:**
@@ -456,6 +456,7 @@ Context: {context}          ← only when context is set
 ### API (no new routes)
 
 - `RunOut.status` and the web's `ApiRunStatus` gain `waiting_handoff`. `GET /threads/{id}/runs?active=true` includes such runs, and they don't move `replayFrom` (they're paused).
+- *Built:* `RunOut` gains **`taskIds: string[]`**. In `GET /threads/{id}/runs`, a `waiting_handoff` run lists the open tasks it waits for (oldest first), so a chat opened mid-wait can name them; it's `[]` for every other run and in `GET /runs/{id}`.
 - `POST …/runs/{id}/stop` works on a `waiting_handoff` run and on a child, as above.
 - Messages (`GET /threads/{id}/messages`) carry the handoff parts as stored.
 - Nothing lists tasks on its own: there's no Tasks page and no bot-pane list for now (ADR 0014 §10).
@@ -519,7 +520,7 @@ Context: {context}          ← only when context is set
 - `@Sales` and `sales` both work;
 - **idempotent:** run `hand_off` twice for the same call (simulate a crash after commit). One task, one child run, one job;
 - the binding switched off → the tool isn't offered, and a call to it is unknown;
-- `team` isn't in `/plugins` or `/connectors`, and is on `/bots/{bot}/tools`; a plugin named `team` stops startup.
+- `team` isn't in `/plugins`, and is on `/bots/{bot}/tools`; a plugin named `team` stops startup.
 
 **Runs end to end (fake model, `LocalQueue` and Postgres):**
 - Chief hands off to two bots in one step → both children run **one after another in the same chat, after the parent paused** (their `started_at` is after the parent's pause). The parent resumes once, reads both results in the results message, and writes a new final message. Assert the message order: handoff message, R1, R2, final;
@@ -548,7 +549,7 @@ Context: {context}          ← only when context is set
 
 | # | Slice | Size | Depends on | Parallel with |
 |---|---|---|---|---|
-| H1 | **Data and the task service:** migration (`tasks`, `runs.level_cap`, `waiting_handoff`, `team` binding backfill), models, `task_service` with its tests (state machine, lock order, cards, `run_ended`, `resume_if_ready`, `resume_answer`, `reconcile`), settings | M | — | W1 |
+| H1 | **Data and the task service:** migration (`tasks`, `waiting_handoff`, `team` binding backfill), models, `task_service` with its tests (state machine, lock order, cards, `run_ended`, `resume_if_ready`, `resume_answer`, `reconcile`), settings | M | — | W1 |
 | H2 | **The tool and the pause:** Team plugin and registry rules, the `hand_off` / `save_progress` / `wait_for_tasks` nodes and routing, the runner's `waiting_handoff` paths, events, prompts (roster, child task line, trigger line), mention skips, taint and level cap in `run_context`. End-to-end tests with a fake model. | M | H1 | W1 |
 | H3 | **Stop, timeouts and recovery:** `RunManager.stop` (move `cancel_run` logic), the cascade, `expire_tasks`, `reconcile` in `recover_runs` / `recover_after_restart`, `runs_to_pick_up`. Their tests. | S | H2 | W1 |
 | W1 | **Web:** types, map, reducer events, `HandoffPart` card, the paused-run line, mock data, vitest. Built against this contract. | S | — | H1–H3 |
@@ -556,10 +557,10 @@ Context: {context}          ← only when context is set
 
 ## Backend checklist
 
-- [ ] Migration and models (`tasks`, `runs.level_cap`, the `waiting_handoff` status, bindings backfill); apply it to the dev DB.
+- [ ] Migration and models (`tasks`, the `waiting_handoff` status, bindings backfill): built; applying it to the dev DB is left for H4.
 - [ ] Settings and `.env.example` (both).
 - [ ] `services/task_service.py`.
-- [ ] `plugins/team.py`, the registry reservation, the `/plugins` and `/connectors` exclusion.
+- [x] `plugins/team.py`, the registry reservation, the `/plugins` exclusion.
 - [ ] Graph nodes and routing; `RunState` keys; `reply_cards` exclusions.
 - [ ] Runner: `waiting_handoff` pause and resume, `run_ended` in `_finish`, `child_started`, `RunManager.stop`.
 - [ ] `run_context`: task brief, teammates, level cap, taint through handoff messages; prompt changes.

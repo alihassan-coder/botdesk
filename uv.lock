@@ -11,6 +11,7 @@ resolution-markers = [
 members = [
     "botdesk-api",
     "botdesk-plugin-demo",
+    "botdesk-plugin-gmail",
     "botdesk-plugin-sdk",
 ]
 
@@ -242,6 +243,7 @@ dependencies = [
     { name = "alembic" },
     { name = "argon2-cffi" },
     { name = "botdesk-plugin-demo" },
+    { name = "botdesk-plugin-gmail" },
     { name = "botdesk-plugin-sdk" },
     { name = "cryptography" },
     { name = "email-validator" },
@@ -278,6 +280,7 @@ requires-dist = [
     { name = "alembic", specifier = ">=1.20.1" },
     { name = "argon2-cffi", specifier = ">=25.1.0" },
     { name = "botdesk-plugin-demo", editable = "plugins/demo" },
+    { name = "botdesk-plugin-gmail", editable = "plugins/gmail" },
     { name = "botdesk-plugin-sdk", editable = "packages/plugin-sdk" },
     { name = "cryptography", specifier = ">=50.0.2" },
     { name = "email-validator", specifier = ">=2.3.0" },
@@ -330,6 +333,33 @@ requires-dist = [
     { name = "botdesk-plugin-sdk", editable = "packages/plugin-sdk" },
     { name = "pydantic", extras = ["email"], specifier = ">=2.11" },
 ]
+
+[package.metadata.requires-dev]
+dev = [
+    { name = "mypy", specifier = ">=2.4.1" },
+    { name = "pytest", specifier = ">=9.2.0" },
+    { name = "pytest-asyncio", specifier = ">=1.4.1.post1" },
+    { name = "ruff", specifier = ">=0.17.4" },
+]
+
+[[package]]
+name = "botdesk-plugin-gmail"
+version = "0.1.0"
+source = { editable = "plugins/gmail" }
+dependencies = [
+    { name = "botdesk-plugin-sdk" },
+]
+
+[package.dev-dependencies]
+dev = [
+    { name = "mypy" },
+    { name = "pytest" },
+    { name = "pytest-asyncio" },
+    { name = "ruff" },
+]
+
+[package.metadata]
+requires-dist = [{ name = "botdesk-plugin-sdk", editable = "packages/plugin-sdk" }]
 
 [package.metadata.requires-dev]
 dev = [

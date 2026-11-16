@@ -54,6 +54,7 @@ from src.runtime.tool_pipeline import NeedsAttention
 from src.services import approval_service, run_service
 from src.services.credential_vault import CredentialVault
 from src.services.model_catalog import ModelCatalog
+from src.services.oauth_flow import OAuth
 
 logger = logging.getLogger(__name__)
 
@@ -109,7 +110,11 @@ class RunManager:
         self.registry = registry or build_registry(settings.plugin_ids)
         # What tools may reach: their plugin's hosts, with its connection's credential (ADR 0010).
         # Tests set `tool_access.transport` to answer tools' requests without a network.
-        self.tool_access = ToolAccessProvider(sessionmaker, self.registry, CredentialVault.from_settings(settings))
+        vault = CredentialVault.from_settings(settings)
+        # OAuth tokens are refreshed just before a tool uses them (services/oauth_flow.py).
+        self.tool_access = ToolAccessProvider(
+            sessionmaker, self.registry, vault, oauth=OAuth(settings, vault, self.registry)
+        )
         resolver = ModelResolver(settings, sessionmaker, secrets, catalog)
         # (org id, model id) → the chat model, with the org's keys. Tests swap in a fake model here.
         self.model_for: Callable[[uuid.UUID, str], Awaitable[BaseChatModel]] = resolver

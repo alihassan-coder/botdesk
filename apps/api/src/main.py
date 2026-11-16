@@ -22,6 +22,7 @@ from src.runtime.memory import build_memory
 from src.services.credential_vault import CredentialVault
 from src.services.email_service import build_email_sender
 from src.services.model_catalog import ModelCatalog
+from src.services.oauth_flow import OAuth
 
 # Calls to outside services (email, model lists) give up quickly; model lists set shorter timeouts.
 OUTBOUND_TIMEOUT = httpx.Timeout(10.0, connect=5.0)
@@ -69,6 +70,8 @@ def create_app(settings: Settings | None = None, *, outbound: httpx.AsyncBaseTra
                 settings, app.state.sessionmaker, build_memory(settings), secrets, app.state.models
             ) as jobs:
                 app.state.runs = jobs.runs
+                # Signing in with OAuth apps (ADR 0010 §5): the same plugins and vault as the runs.
+                app.state.oauth = OAuth(settings, app.state.vault, jobs.runs.registry, transport=outbound)
                 yield
         await engine.dispose()
 

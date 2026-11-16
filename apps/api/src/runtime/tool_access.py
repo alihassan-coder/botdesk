@@ -12,6 +12,7 @@
   `http` that refuses with "connect it first" (or "needs reconnecting"), so the tool fails with
   that and the run goes on.
 
+An OAuth connection whose token has under a minute left is refreshed first (`oauth_flow.refresh`).
 The credential is decrypted only when the tool makes its first request. After the call, the
 connection's `last_used_at` is saved (the call's record already names the connection).
 """
@@ -22,7 +23,7 @@ from contextlib import asynccontextmanager
 from dataclasses import dataclass
 
 import httpx
-from botdesk_plugin_sdk import ConnectionInfo, HttpClient, NoHttp, PluginManifest
+from botdesk_plugin_sdk import ConnectionInfo, HttpClient, NoHttp, OAuth2Auth, PluginManifest
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from src.core.database import utcnow
@@ -31,6 +32,7 @@ from src.plugins.authorised_http import DEFAULT_MAX_BYTES, AuthorisedHttp, guard
 from src.plugins.registry import RegisteredTool, ToolRegistry
 from src.services import connection_service
 from src.services.credential_vault import CredentialVault
+from src.services.oauth_flow import OAuth
 from src.services.tool_execution_service import RunRef
 
 
@@ -55,11 +57,13 @@ class ToolAccessProvider:
         *,
         transport: httpx.AsyncBaseTransport | None = None,
         max_response_bytes: int = DEFAULT_MAX_BYTES,
+        oauth: OAuth | None = None,
     ) -> None:
         self.sessionmaker = sessionmaker
         self.registry = registry
         self.vault = vault
         self.transport = transport
+        self.oauth = oauth
         self.max_response_bytes = max_response_bytes
 
     @asynccontextmanager
@@ -83,6 +87,10 @@ class ToolAccessProvider:
             if connection_id is not None:
                 async with self.sessionmaker() as db:
                     connection = await connection_service.for_tool_call(db, run.org_id, connection_id)
+            if connection is not None and isinstance(plugin.auth, OAuth2Auth) and self.oauth is not None:
+                # A token with under a minute left is refreshed first (one refresh per connection
+                # at a time; `invalid_grant` comes back as needs_reconnect).
+                connection = await self.oauth.refresh(self.sessionmaker, connection, plugin, transport=self.transport)
             if connection is None or connection.status != "active":
                 yield ToolAccess(http=NoHttp(_unavailable(plugin, connection)))
                 return

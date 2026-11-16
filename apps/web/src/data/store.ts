@@ -1545,13 +1545,14 @@ export const actions = {
     }
   },
 
-  /** Hire a ready-made bot from the marketplace, with safe defaults. */
+  /** Hire a ready-made bot from the marketplace, with safe defaults. On the API it uses the
+   * instance's default model (an empty modelId); "m_claude" is the demo's own model id. */
   async createBotFromTemplate(templateId: string): Promise<ActionResult & { threadId?: string }> {
     const t = state.templates.find((x) => x.id === templateId);
     if (!t) return { ok: false, error: "That bot isn't in the marketplace any more." };
     return actions.createBot({
       name: t.name, role: t.role, description: t.description, avatarColor: t.avatarColor,
-      modelId: "m_claude", securityLevel: state.org.defaultSecurityLevel, computerMode: "own",
+      modelId: isDemoMode() ? "m_claude" : "", securityLevel: state.org.defaultSecurityLevel, computerMode: "own",
       instructions: "", monthlyBudgetUsd: 20,
     });
   },

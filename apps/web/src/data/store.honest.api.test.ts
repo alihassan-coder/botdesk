@@ -40,6 +40,18 @@ describe("the default security level for new bots, on the API", () => {
     const hire = api.sent.find((r) => r.key === "POST /api/v1/orgs/o1/bots");
     expect(hire?.body).toMatchObject({ securityLevel: "read-only" });
   });
+
+  it("a bot hired from the marketplace uses the instance's default model, not a demo model id", async () => {
+    await signInOnApi();
+    const [template] = state().templates;
+    await actions.createBotFromTemplate(template.id);
+    const hire = api.sent.find((r) => r.key === "POST /api/v1/orgs/o1/bots");
+    // Model ids on the API are "provider:model", or empty for the instance default; "m_claude" gets a 422.
+    expect(hire?.body).toEqual({
+      name: template.name, role: template.role, description: template.description, avatarColor: template.avatarColor,
+      modelId: "", securityLevel: "ask-before-acting", instructions: "", monthlyBudgetUsd: 20,
+    });
+  });
 });
 
 describe("question cards, on the API", () => {

@@ -126,6 +126,8 @@ def _info(connection: Connection) -> ConnectionInfo:
 def _unavailable(plugin: PluginManifest, connection: Connection | None) -> str:
     if connection is not None and connection.status == "needs_reconnect":
         return f"{connection.account_label} needs reconnecting (Connect apps)."
+    if connection is not None and connection.status == "revoked":  # e.g. disconnected mid-refresh
+        return f"{connection.account_label} was disconnected. Connect it again in Connect apps."
     return (
         f"{plugin.name} isn't connected for this bot. Connect it in Connect apps and choose the "
         "account in the bot's Tools, then try again."

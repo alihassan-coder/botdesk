@@ -14,8 +14,10 @@
   (an upsert by account: connecting again is a reconnect) in one short transaction.
 - **Refresh**: whoever wins the lease (`refresh_lease_until`) calls the token endpoint, again
   with no transaction open; the others wait for its result. `invalid_grant` sets
-  `needs_reconnect` and writes an audit line.
-- **Revoke** is best effort, after the disconnect is committed.
+  `needs_reconnect` and writes an audit line. Any other failure backs off for a few seconds
+  (callers go on with the token they have); a crash gives the lease back. The new token is saved
+  only into the row as it was read: a disconnect (or reconnect) meanwhile wins.
+- **Revoke** is best effort, after the disconnect is committed: nothing it meets is raised.
 
 Nothing here logs, returns or redirects with a token, a code, a verifier or the client secret,
 and the provider's own error text never reaches the browser. `FlowFailed.code` is one of the
@@ -61,11 +63,22 @@ CALLBACK_PATH = "/api/v1/oauth/callback"
 FLOW_LIFETIME = timedelta(minutes=10)
 REFRESH_MARGIN = timedelta(seconds=60)  # refresh a token with less than this left
 LEASE = timedelta(seconds=15)  # one refresh at a time per connection; the others wait this long at most
+# The whole token call (connect, send, read) gives up after this, so the lease always outlives it.
+TOKEN_CALL_BUDGET = timedelta(seconds=10)
+# After a refresh that may work next time (network, 5xx, the guard), no one tries again for this
+# long: the lease is kept this short while. A lease with at most this left is never waited for.
+BACKOFF = timedelta(seconds=4)
 LEASE_POLL_SECONDS = 0.2
+# A token answer whose `expires_in` is missing or unreadable: assume Google's usual hour.
+DEFAULT_TOKEN_LIFETIME = 3600
+MAX_TOKEN_LIFETIME = 366 * 24 * 3600
 HTTP_TIMEOUT = httpx.Timeout(15.0, connect=5.0)
 
 GOOGLE = "google"
 GOOGLE_ISSUER = "https://accounts.google.com"  # the `iss` Google adds to the callback (RFC 9207)
+# Providers that advertise `authorization_response_iss_parameter_supported` (RFC 9207 §3): their
+# callback must carry this `iss`, and one without it is refused. Google's discovery document does.
+ISSUERS = {GOOGLE: GOOGLE_ISSUER}
 GMAIL_API_HOST = "gmail.googleapis.com"
 
 FlowCode = Literal["denied", "expired", "not-configured", "signed-out", "forbidden", "failed"]
@@ -153,7 +166,7 @@ class _Tokens:
     access_token: str
     refresh_token: str | None
     token_type: str
-    expires_in: int | None
+    expires_in: int  # seconds; DEFAULT_TOKEN_LIFETIME when the answer had none we could read
     scope: str | None
 
 
@@ -290,8 +303,8 @@ class OAuth:
         if not code:
             raise FlowFailed("failed", "no code in the callback")
         issuer = self._issuer(auth)
-        if iss is not None and issuer is not None and iss != issuer:
-            raise FlowFailed("failed", "the callback came from another issuer")
+        if issuer is not None and iss != issuer:  # RFC 9207: a mix-up attack, or a missing `iss`
+            raise FlowFailed("failed", "the callback's issuer is missing or another one")
         actor, owner = await self._still_allowed(db, flow, session_user)
         await db.rollback()  # end the read before the network
 
@@ -391,7 +404,7 @@ class OAuth:
             refresh = kept.get_secret_value() if kept else None
         self.vault.save(connection, oauth_secret(tokens.access_token, refresh, tokens.token_type))
         now = utcnow()
-        connection.access_expires_at = now + timedelta(seconds=tokens.expires_in) if tokens.expires_in else None
+        connection.access_expires_at = now + timedelta(seconds=tokens.expires_in)
         connection.last_refreshed_at = now
         connection.refresh_lease_until = None
 
@@ -406,10 +419,16 @@ class OAuth:
         transport: httpx.AsyncBaseTransport | None = None,
     ) -> Connection:
         """The connection with a token good for at least a minute more, refreshed if needed.
-        Returned `needs_reconnect` when the provider refused the refresh token (`invalid_grant`).
+        Returned `needs_reconnect` when the provider refused the refresh token (`invalid_grant`),
+        and `revoked` when it was disconnected while the token was on its way.
 
         Two calls at once make one token request: the one that wins the lease refreshes, the
-        others re-read the row until it's done (at most `LEASE`)."""
+        others re-read the row until it's done (at most `LEASE`). The lease after the winner:
+        - success or `invalid_grant`: cleared;
+        - a failure that may pass (network, timeout, 5xx, the SSRF guard, an answer with no
+          token): kept for `BACKOFF`, so concurrent calls don't all hit the token endpoint again;
+          every caller goes on with the token it has (still valid for up to a minute);
+        - anything else (a bug, the database, a cancellation): cleared at once, then re-raised."""
         auth = connector.auth
         if not isinstance(auth, OAuth2Auth) or connection.status != "active" or not needs_refresh(connection):
             return connection
@@ -433,10 +452,22 @@ class OAuth:
             await db.commit()
         if won.rowcount != 1:
             return await self._wait_for_refresh(sessionmaker, connection.id, connection)
-        if current is None or current.status != "active" or not needs_refresh(current):
-            return await self._release(sessionmaker, connection.id, current or connection)
-        connection = current
+        try:
+            return await self._refresh_holding_lease(sessionmaker, current or connection, connector, auth, transport)
+        except BaseException:
+            await self._release_after_crash(sessionmaker, connection.id)
+            raise
 
+    async def _refresh_holding_lease(
+        self,
+        sessionmaker: async_sessionmaker[AsyncSession],
+        connection: Connection,
+        connector: PluginManifest,
+        auth: OAuth2Auth,
+        transport: httpx.AsyncBaseTransport | None,
+    ) -> Connection:
+        if connection.status != "active" or not needs_refresh(connection):
+            return await self._release(sessionmaker, connection.id, connection)
         client = client_for(self.settings, auth.provider)
         refresh_token = self.vault.refresh_token(connection)
         if refresh_token is None:
@@ -451,51 +482,104 @@ class OAuth:
             "client_secret": client.client_secret.get_secret_value(),
         }
         try:
-            tokens = await self._token_call(auth, form, transport=transport)
+            async with asyncio.timeout(TOKEN_CALL_BUDGET.total_seconds()):
+                tokens = await self._token_call(auth, form, transport=transport)
         except _TokenRefused as refused:
             if refused.error == "invalid_grant":
                 return await self._needs_reconnect(sessionmaker, connection, connector, "invalid_grant")
             logger.warning("Refreshing a %s token failed (%s).", connector.id, _describe(refused))
-            return await self._release(sessionmaker, connection.id, connection)
-        except (httpx.HTTPError, ValueError) as failed:
+            return await self._back_off(sessionmaker, connection)
+        except (httpx.HTTPError, AppError, ValueError, TimeoutError) as failed:
             logger.warning("Refreshing a %s token failed (%s).", connector.id, _describe(failed))
-            return await self._release(sessionmaker, connection.id, connection)
+            return await self._back_off(sessionmaker, connection)
+        return await self._save_refreshed(sessionmaker, connection, tokens)
 
+    async def _save_refreshed(
+        self, sessionmaker: async_sessionmaker[AsyncSession], connection: Connection, tokens: _Tokens
+    ) -> Connection:
+        """Save the new token only if the row is still the active one it was refreshed from, in
+        one guarded UPDATE: a disconnect (or a reconnect) that committed meanwhile wins, and the
+        token is thrown away. No lock is held, so this is the same on Postgres and SQLite."""
+        draft = Connection(encrypted_secret=connection.encrypted_secret)  # never added to a session
+        self._save_tokens(draft, tokens)
         async with sessionmaker() as db:
-            row = await db.get(Connection, connection.id, populate_existing=True)
-            if row is None:
-                return connection
-            if row.status == "active":  # not disconnected while we were away
-                self._save_tokens(row, tokens)
+            saved = cast(
+                CursorResult[Any],
+                await db.execute(
+                    update(Connection)
+                    .where(
+                        Connection.id == connection.id,
+                        Connection.status == "active",
+                        Connection.encrypted_secret == connection.encrypted_secret,
+                    )
+                    .values(
+                        encrypted_secret=draft.encrypted_secret,
+                        access_expires_at=draft.access_expires_at,
+                        last_refreshed_at=draft.last_refreshed_at,
+                        refresh_lease_until=None,
+                    )
+                ),
+            )
             await db.commit()
-            return row
+            row = await db.get(Connection, connection.id, populate_existing=True)
+        if saved.rowcount != 1:
+            logger.info("A new %s token was thrown away: the connection changed meanwhile.", connection.connector_id)
+        return row or connection
 
     async def _wait_for_refresh(
         self, sessionmaker: async_sessionmaker[AsyncSession], connection_id: uuid.UUID, fallback: Connection
     ) -> Connection:
+        """Re-read the row until the winner is done. A lease with at most `BACKOFF` left is a
+        backoff after a failed refresh (a call in flight always has more: `TOKEN_CALL_BUDGET`):
+        go on with the token there is."""
         deadline = utcnow() + LEASE
         latest = fallback
-        while utcnow() < deadline:
-            await asyncio.sleep(LEASE_POLL_SECONDS)
+        while True:
             async with sessionmaker() as db:
                 row = await db.get(Connection, connection_id, populate_existing=True)
             if row is None:
                 return latest
             latest = row
             lease = row.refresh_lease_until
-            if row.status != "active" or not needs_refresh(row) or lease is None or as_utc(lease) <= utcnow():
+            now = utcnow()
+            if row.status != "active" or not needs_refresh(row) or lease is None or as_utc(lease) <= now + BACKOFF:
                 return row
-        return latest
+            if now >= deadline:
+                return row
+            await asyncio.sleep(LEASE_POLL_SECONDS)
 
     async def _release(
         self, sessionmaker: async_sessionmaker[AsyncSession], connection_id: uuid.UUID, fallback: Connection
     ) -> Connection:
-        """Give the lease back after a refresh that may work next time (network, 5xx)."""
+        """Give the lease back: nothing to refresh, or nothing to refresh with."""
         async with sessionmaker() as db:
             await db.execute(update(Connection).where(Connection.id == connection_id).values(refresh_lease_until=None))
             await db.commit()
             row = await db.get(Connection, connection_id, populate_existing=True)
         return row or fallback
+
+    async def _back_off(self, sessionmaker: async_sessionmaker[AsyncSession], connection: Connection) -> Connection:
+        """A refresh that may work next time: keep the lease for `BACKOFF` only."""
+        async with sessionmaker() as db:
+            await db.execute(
+                update(Connection).where(Connection.id == connection.id).values(refresh_lease_until=utcnow() + BACKOFF)
+            )
+            await db.commit()
+            row = await db.get(Connection, connection.id, populate_existing=True)
+        return row or connection
+
+    async def _release_after_crash(
+        self, sessionmaker: async_sessionmaker[AsyncSession], connection_id: uuid.UUID
+    ) -> None:
+        """The winner raised: free the lease now rather than make everyone wait out `LEASE`."""
+        try:
+            async with sessionmaker() as db:
+                await db.execute(
+                    update(Connection).where(Connection.id == connection_id).values(refresh_lease_until=None)
+                )
+                await db.commit()
+        except Exception as failed:  # the original error is the one worth raising
+            logger.warning("Couldn't give a refresh lease back (%s).", type(failed).__name__)
 
     async def _needs_reconnect(
         self,
@@ -542,7 +626,7 @@ class OAuth:
                 response = await client.post(
                     self._endpoint(auth, auth.revoke_url), data={"token": token.get_secret_value()}
                 )
-        except httpx.HTTPError as failed:
+        except (httpx.HTTPError, AppError) as failed:  # AppError: the SSRF guard (`UnsafeUrl`)
             logger.warning("Revoking a %s token failed (%s).", auth.provider, _describe(failed))
             return False
         if response.status_code != 200:
@@ -575,7 +659,7 @@ class OAuth:
             access_token=body["access_token"],
             refresh_token=refresh if isinstance(refresh, str) and refresh else None,
             token_type=str(body.get("token_type") or "Bearer"),
-            expires_in=int(expires) if isinstance(expires, (int, float, str)) and str(expires).isdigit() else None,
+            expires_in=_lifetime(expires),
             scope=scope if isinstance(scope, str) and scope.strip() else None,
         )
 
@@ -603,9 +687,24 @@ class OAuth:
         return base + urlsplit(url).path if base else url
 
     def _issuer(self, auth: OAuth2Auth) -> str | None:
-        if auth.provider != GOOGLE:
+        """The `iss` this provider's callback must carry, or None for one that sends none."""
+        issuer = ISSUERS.get(auth.provider)
+        if issuer is None:
             return None
-        return self._test_setting(self.settings.google_oauth_base_url) or GOOGLE_ISSUER
+        fake = self._test_setting(self.settings.google_oauth_base_url) if auth.provider == GOOGLE else ""
+        return fake or issuer
+
+
+def _lifetime(expires: object) -> int:
+    """`expires_in` in seconds: 3599, 3599.0 and "3599" all count. Missing, unreadable or not
+    positive: `DEFAULT_TOKEN_LIFETIME`, so the token is still refreshed in time."""
+    if isinstance(expires, bool) or not isinstance(expires, (int, float, str)):
+        return DEFAULT_TOKEN_LIFETIME
+    try:
+        seconds = int(float(expires))
+    except (ValueError, OverflowError):
+        return DEFAULT_TOKEN_LIFETIME
+    return min(seconds, MAX_TOKEN_LIFETIME) if seconds > 0 else DEFAULT_TOKEN_LIFETIME
 
 
 def _describe(error: Exception) -> str:

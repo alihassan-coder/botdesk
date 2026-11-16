@@ -11,6 +11,7 @@ from fastapi.responses import JSONResponse
 from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
 
 from src.api.v1.router import api_router
+from src.core.access_log import redact_access_log
 from src.core.config import Settings, get_settings
 from src.core.database import Base, create_engine, create_sessionmaker, is_in_memory
 from src.core.errors import AppError, TooManyRequests
@@ -42,6 +43,7 @@ def create_app(settings: Settings | None = None, *, outbound: httpx.AsyncBaseTra
     """`outbound` replaces the network for calls to other services (tests pass an httpx.MockTransport)."""
     settings = settings or get_settings()
     _show_app_logs()
+    redact_access_log()  # no OAuth code or state in uvicorn's access log
     secrets = build_secret_box(settings)  # production stops here without SECRET_KEY
 
     @asynccontextmanager

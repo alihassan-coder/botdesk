@@ -12,13 +12,15 @@
   `http` that refuses with "connect it first" (or "needs reconnecting"), so the tool fails with
   that and the run goes on.
 
+In tests (ENVIRONMENT=test), `rebase` sends a plugin's host to a fake server (GMAIL_API_BASE_URL).
+
 An OAuth connection whose token has under a minute left is refreshed first (`oauth_flow.refresh`).
 The credential is decrypted only when the tool makes its first request. After the call, the
 connection's `last_used_at` is saved (the call's record already names the connection).
 """
 
 import uuid
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Mapping
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 
@@ -58,6 +60,7 @@ class ToolAccessProvider:
         transport: httpx.AsyncBaseTransport | None = None,
         max_response_bytes: int = DEFAULT_MAX_BYTES,
         oauth: OAuth | None = None,
+        rebase: Mapping[str, str] | None = None,
     ) -> None:
         self.sessionmaker = sessionmaker
         self.registry = registry
@@ -65,6 +68,8 @@ class ToolAccessProvider:
         self.transport = transport
         self.oauth = oauth
         self.max_response_bytes = max_response_bytes
+        # Tests only: {host: fake server} (GMAIL_API_BASE_URL with ENVIRONMENT=test).
+        self.rebase = dict(rebase or {})
 
     @asynccontextmanager
     async def open(
@@ -95,7 +100,7 @@ class ToolAccessProvider:
                 yield ToolAccess(http=NoHttp(_unavailable(plugin, connection)))
                 return
 
-        async with guarded_client(timeout_seconds, self.transport) as client:
+        async with guarded_client(timeout_seconds, self.transport, rebase=self.rebase) as client:
             # Bound now, while `connection` is the row read above: decrypted on first use only.
             opener = (lambda row=connection: self.vault.open(row)) if connection is not None else None
             http = AuthorisedHttp(

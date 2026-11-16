@@ -86,6 +86,7 @@ When you finish something, tick it here in the same pull request.
 
 ### Gmail (step 5)
 - [ ] Connect with your own Google client; read, label, draft, and send only after approval
+  - [x] 6.1 Read: `gmail.search`, `gmail.read_thread`, `gmail.list_labels` (plain text, capped, header filter, `<email>` blocks; results taint the run)
 
 ### Multi-bot (from the 2026-11-14 test)
 - [x] Speaker names in group history, so a bot knows who said what

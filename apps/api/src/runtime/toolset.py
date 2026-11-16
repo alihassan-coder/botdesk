@@ -11,7 +11,8 @@ plugin is loaded:
 
 - no connection: keep the plugin. Its tools that need an account fail with "connect it first".
 - a connection that isn't usable in this run: drop the whole plugin.
-- a usable connection: keep the tools whose `scopes` were all granted to it.
+- a usable connection: keep the tools whose `scopes` were all granted to it (a granted scope also
+  gives the ones the plugin's `OAuth2Auth.implied_scopes` say it implies).
 
 A connection is usable when it is active and its owner fits the run:
 
@@ -28,6 +29,7 @@ import uuid
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
 
+from botdesk_plugin_sdk import Auth, OAuth2Auth
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.models import Connection
@@ -122,7 +124,7 @@ def resolve(registry: ToolRegistry, bindings: Iterable[BindingRow], scope: RunSc
             if connection.connector_id != plugin.id or not usable(connection, scope):
                 continue
             connections[plugin.id] = connection
-        granted = set(connection.scopes) if connection is not None else None
+        granted = _effective_scopes(plugin.auth, connection.scopes) if connection is not None else None
         for spec in plugin.tools:
             if granted is not None and not granted.issuperset(spec.scopes):
                 continue
@@ -130,6 +132,10 @@ def resolve(registry: ToolRegistry, bindings: Iterable[BindingRow], scope: RunSc
             if tool is not None:
                 tools[tool.name] = tool
     return Toolset(_tools=tools, _registry=registry, connections=connections)
+
+
+def _effective_scopes(auth: Auth | None, granted: Iterable[str]) -> frozenset[str]:
+    return auth.effective_scopes(granted) if isinstance(auth, OAuth2Auth) else frozenset(granted)
 
 
 async def load(db: AsyncSession, registry: ToolRegistry, run_id: uuid.UUID) -> Toolset:

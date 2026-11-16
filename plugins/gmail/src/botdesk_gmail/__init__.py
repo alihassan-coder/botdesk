@@ -1,23 +1,25 @@
 """GMAIL PLUGIN (`botdesk-plugin-gmail`, plugin id `gmail`), ADR 0011.
 
-Slice 5.3: it connects a Google account and shows which mailbox it is. No tools yet (slice 6.1).
-
 - `OAuth2Auth` with provider `google`: BotDesk's one OAuth flow signs people in with the server's
   own Google client (`GOOGLE_OAUTH_CLIENT_ID` / `GOOGLE_OAUTH_CLIENT_SECRET`).
 - Two access levels: `read` (`gmail.readonly`) and `full` (`gmail.modify`, the default). Never
-  `https://mail.google.com/` or the settings scopes.
+  `https://mail.google.com/` or the settings scopes. `gmail.modify` implies `gmail.readonly`,
+  so a full-access connection gets the read tools too.
 - `access_type=offline` and `prompt=consent`, so Google sends a refresh token on every sign-in,
   reconnects included.
 - The account is the mailbox's address from `users.getProfile`, compared in lower case.
+- Slice 6.1: the read tools `search`, `read_thread` and `list_labels` (`tools.py`). Their results
+  taint the run; email text is plain, capped and inside `<email>` blocks (`text.py`).
 """
 
 from botdesk_plugin_sdk import AccountIdentity, HttpClient, OAuth2Auth, PluginManifest
 
-GMAIL_HOST = "gmail.googleapis.com"
-GMAIL_API = f"https://{GMAIL_HOST}"
+from botdesk_gmail.api import GMAIL_API, GMAIL_HOST, GmailError
+from botdesk_gmail.tools import READ_SCOPE, TOOLS
 
-READ_SCOPE = "https://www.googleapis.com/auth/gmail.readonly"
 MODIFY_SCOPE = "https://www.googleapis.com/auth/gmail.modify"
+
+__all__ = ["GMAIL_API", "GMAIL_HOST", "GOOGLE", "MODIFY_SCOPE", "READ_SCOPE", "GmailError", "gmail_plugin"]
 
 
 async def gmail_account(http: HttpClient) -> AccountIdentity:
@@ -37,6 +39,9 @@ GOOGLE = OAuth2Auth(
     scope_sets={"read": (READ_SCOPE,), "full": (MODIFY_SCOPE,)},
     extra_authorize_params={"access_type": "offline", "prompt": "consent", "include_granted_scopes": "true"},
     account=gmail_account,
+    # Google: gmail.modify allows "all read/write operations except immediate, permanent
+    # deletion", so it covers everything gmail.readonly does.
+    implied_scopes={MODIFY_SCOPE: (READ_SCOPE,)},
 )
 
 
@@ -46,8 +51,8 @@ def gmail_plugin() -> PluginManifest:
         id="gmail",
         name="Gmail",
         version="0.1.0",
-        description="Connect a Gmail account. Tools that read and send its email come in a later release.",
-        tools=(),
+        description="Search and read a connected Gmail account's email. Sending and organising come later.",
+        tools=TOOLS,
         auth=GOOGLE,
         egress=(GMAIL_HOST,),
     )

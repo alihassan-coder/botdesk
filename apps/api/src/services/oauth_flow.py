@@ -50,7 +50,7 @@ from src.core.secrets import SecretUnreadable
 from src.core.url_guard import GuardedTransport
 from src.models import Connection, User
 from src.models import OAuthFlow as FlowRow
-from src.plugins.authorised_http import AuthorisedHttp
+from src.plugins.authorised_http import AuthorisedHttp, RebaseHosts
 from src.plugins.registry import ToolRegistry
 from src.schemas.connection import OAuthStartIn
 from src.services import connection_service, organization_service
@@ -176,24 +176,6 @@ class _TokenRefused(Exception):
     def __init__(self, status: int, error: str) -> None:
         super().__init__(f"{status} {error}".strip())
         self.error = error
-
-
-class _Rebase(httpx.AsyncBaseTransport):
-    """Tests only: sends requests for some hosts to a fake server (GMAIL_API_BASE_URL)."""
-
-    def __init__(self, inner: httpx.AsyncBaseTransport, hosts: dict[str, str]) -> None:
-        self._inner = inner
-        self._hosts = {host: httpx.URL(base) for host, base in hosts.items()}
-
-    async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
-        if base := self._hosts.get(request.url.host):
-            request.url = request.url.copy_with(
-                scheme=base.scheme, host=base.host, port=base.port, path=base.path.rstrip("/") + request.url.path
-            )
-        return await self._inner.handle_async_request(request)
-
-    async def aclose(self) -> None:
-        await self._inner.aclose()
 
 
 class OAuth:
@@ -665,13 +647,19 @@ class OAuth:
 
     def _client(self, transport: httpx.AsyncBaseTransport | None = None) -> httpx.AsyncClient:
         inner = transport or self.transport or GuardedTransport(allow_private=bool(self._fake_base()))
-        gmail = self._test_setting(self.settings.gmail_api_base_url)
+        hosts = self.test_hosts()
         return httpx.AsyncClient(
-            transport=_Rebase(inner, {GMAIL_API_HOST: gmail}) if gmail else inner,
+            transport=RebaseHosts(inner, hosts) if hosts else inner,
             follow_redirects=False,
             trust_env=False,
             timeout=HTTP_TIMEOUT,
         )
+
+    def test_hosts(self) -> dict[str, str]:
+        """{host: fake base URL} for the API hosts a test points at a fake server
+        (GMAIL_API_BASE_URL); empty outside ENVIRONMENT=test. Tool calls use it too."""
+        gmail = self._test_setting(self.settings.gmail_api_base_url)
+        return {GMAIL_API_HOST: gmail} if gmail else {}
 
     def _test_setting(self, value: str) -> str:
         """A fake server's address: honoured only when ENVIRONMENT=test."""

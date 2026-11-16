@@ -1,0 +1,21 @@
+{
+  "labels": [
+    {
+      "id": "INBOX",
+      "name": "INBOX",
+      "type": "system",
+      "labelListVisibility": "labelShow"
+    },
+    {
+      "id": "UNREAD",
+      "name": "UNREAD",
+      "type": "system"
+    },
+    {
+      "id": "Label_12",
+      "name": "Invoices",
+      "type": "user",
+      "labelListVisibility": "labelShow"
+    }
+  ]
+}

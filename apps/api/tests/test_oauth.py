@@ -77,6 +77,10 @@ class FakeGoogle:
     on_token: Callable[[], Awaitable[None]] | None = None  # runs while /token is answering
     requests: list[httpx.Request] = field(default_factory=list)
     issued: int = 0
+    # Gmail API answers by path ("/gmail/v1/users/me/labels"), besides the profile.
+    gmail: dict[str, Any] = field(default_factory=dict)
+    # Hosts that answer as Gmail: the real one, and a fake base (GMAIL_API_BASE_URL) in tests.
+    gmail_hosts: tuple[str, ...] = ("gmail.googleapis.com",)
 
     def to(self, path: str) -> list[httpx.Request]:
         return [request for request in self.requests if request.url.path == path]
@@ -110,10 +114,12 @@ class FakeGoogle:
             return httpx.Response(200, json=body)
         if host == "oauth2.googleapis.com" and path == "/revoke":
             return httpx.Response(self.revoke_status, json={})
-        if host == "gmail.googleapis.com" and path == "/gmail/v1/users/me/profile":
+        if host in self.gmail_hosts and path == "/gmail/v1/users/me/profile":
             if self.profile_status != 200:
                 return httpx.Response(self.profile_status, json={"error": {"message": "nope"}})
             return httpx.Response(200, json={"emailAddress": self.email, "messagesTotal": 12})
+        if host in self.gmail_hosts and path in self.gmail:
+            return httpx.Response(200, json=self.gmail[path])
         raise httpx.ConnectError("no such fake", request=request)
 
 
@@ -209,7 +215,12 @@ async def test_connectors_say_how_each_app_connects_and_whether_it_is_set_up(tea
     gmail, demo = by_id["gmail"], by_id["demo"]
     assert gmail["authType"] == "oauth2" and gmail["setup"] == "ready"
     assert gmail["accessLevels"] == ["read", "full"] and gmail["defaultAccess"] == "full"
-    assert gmail["tools"] == [] and gmail["name"] == "Gmail" and gmail["version"] == "0.1.0"
+    assert [(tool["name"], tool["risk"]) for tool in gmail["tools"]] == [
+        ("gmail.search", "read"),
+        ("gmail.read_thread", "read"),
+        ("gmail.list_labels", "read"),
+    ]
+    assert gmail["name"] == "Gmail" and gmail["version"] == "0.1.0"
     assert demo["authType"] == "api_key" and demo["setup"] == "ready"
     assert demo["accessLevels"] == [] and demo["defaultAccess"] is None
     assert {"name": "demo.send_email", "risk": "external-send"}.items() <= next(

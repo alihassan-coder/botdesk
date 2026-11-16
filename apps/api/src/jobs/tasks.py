@@ -7,6 +7,8 @@
   crashed worker) get one again.
 - `fire_routines` (every minute): each routine that is due starts a run in its creator's DM
   (`routine_service`).
+- `prune_routine_runs` (daily): routine runs older than 90 days, or beyond each routine's
+  newest 200, are forgotten.
 
 To add a job (routines, Gmail polling…), declare it on `JOBS` in a module this one imports, then
 defer it with `queue.defer(Job("name", {...}))`, or give it a `cron` to run on a schedule. See the
@@ -93,3 +95,11 @@ async def fire_routines(env: JobEnv, timestamp: int) -> None:
             continue
         if fired.thread_id is not None:
             env.runs.bus.announce(fired.thread_id)
+
+
+@JOBS.task("prune_routine_runs", cron="17 3 * * *")
+async def prune_routine_runs(env: JobEnv, timestamp: int) -> None:
+    """Once a day: keep each routine's history short (`routine_service.prune_runs`)."""
+    async with env.sessionmaker() as db:
+        await routine_service.prune_runs(db, datetime.fromtimestamp(timestamp, UTC))
+        await db.commit()

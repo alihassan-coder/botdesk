@@ -16,6 +16,7 @@ from sqlalchemy import select, update
 from src.jobs.queue import JobEnv
 from src.jobs.tasks import fire_routines
 from src.models import Bot, Message, Routine, Run, Thread
+from src.models.routine import RoutineRun
 from src.runtime.runner import RunManager
 from src.services import run_service, usage_service
 from tests.conftest import PASSWORD, TEST_SETTINGS, FakeProviders, api_client, sign_up
@@ -532,3 +533,45 @@ async def test_a_due_routines_run_waits_until_now(team: Team) -> None:
     await team.make_due(routine["id"], utc(2026, 11, 15, 4, 0) + timedelta(seconds=30))
     await team.fire(utc(2026, 11, 15, 4, 0))
     assert await team.routine_runs() == []
+
+
+# Keeping the history short
+
+
+async def test_each_routine_shows_its_own_latest_result(team: Team) -> None:
+    first, second = await team.create(name="First"), await team.create(name="Second")
+    async with team.runs.sessionmaker() as db:
+        for routine_id, status, minute in (
+            (first["id"], "started", 0), (first["id"], "skipped", 5), (second["id"], "skipped", 0),
+            (second["id"], "started", 5),
+        ):  # fmt: skip
+            row = RoutineRun(routine_id=uuid.UUID(routine_id), started_at=utc(2026, 11, 15, 4, minute), status=status)
+            db.add(row)
+        await db.commit()
+    assert (await team.get(first["id"]))["lastResult"] == "skipped"
+    assert (await team.get(second["id"]))["lastResult"] == "started"
+
+
+async def test_routine_runs_older_than_90_days_or_beyond_the_newest_200_are_pruned(team: Team) -> None:
+    from src.jobs.tasks import JOBS, prune_routine_runs
+
+    busy, quiet = await team.create(name="Busy"), await team.create(name="Quiet")
+    now = utc(2026, 11, 15, 3, 0)
+    async with team.runs.sessionmaker() as db:
+        for n in range(205):  # every 10 minutes, newest first
+            started = now - timedelta(minutes=10 * n)
+            db.add(RoutineRun(routine_id=uuid.UUID(busy["id"]), started_at=started, status="skipped"))
+        for days in (89, 91):
+            started = now - timedelta(days=days)
+            db.add(RoutineRun(routine_id=uuid.UUID(quiet["id"]), started_at=started, status="skipped"))
+        await db.commit()
+    runs = team.runs
+    await prune_routine_runs(JobEnv(runs, runs.queue, runs.sessionmaker, runs.settings), int(now.timestamp()))
+    async with team.runs.sessionmaker() as db:
+        kept = list(await db.execute(select(RoutineRun.routine_id, RoutineRun.started_at)))
+    busy_kept = sorted(started for routine_id, started in kept if str(routine_id) == busy["id"])
+    quiet_kept = [started for routine_id, started in kept if str(routine_id) == quiet["id"]]
+    assert len(busy_kept) == 200
+    assert busy_kept[0].replace(tzinfo=UTC) == now - timedelta(minutes=10 * 199)  # the oldest 5 went
+    assert [s.replace(tzinfo=UTC) for s in quiet_kept] == [now - timedelta(days=89)]
+    assert JOBS.tasks["prune_routine_runs"].cron is not None

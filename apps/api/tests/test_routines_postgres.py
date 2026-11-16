@@ -1,6 +1,7 @@
 """Routines end to end on real Postgres: the every-minute job fires a due routine, the job queue
 runs it, and the bot's reply lands in the creator's DM, at the routine's security level."""
 
+import asyncio
 import uuid
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -10,7 +11,9 @@ from sqlalchemy import select, update
 from src.jobs.queue import JobEnv
 from src.jobs.tasks import fire_routines
 from src.models import Routine, Run, ToolExecution
+from src.models.routine import RoutineRun
 from src.runtime.chat_model import StandInModel
+from src.services import routine_service
 from tests.conftest import Postgres, sign_up
 from tests.test_runs_postgres import use_model
 
@@ -69,3 +72,25 @@ async def test_a_read_only_routine_cannot_send_even_if_its_bot_would_ask(pg: Pos
     assert call.tool_name == "demo.send_email"
     assert call.decision == "deny"  # the bot alone ("Ask before acting") would have asked
     assert run.status == "succeeded"
+
+
+async def test_two_workers_firing_the_same_routine_at_once_start_exactly_one_run(pg: Postgres) -> None:
+    """The routine's row lock: the second worker waits, then finds it already moved on."""
+    _, routine = await _routine(pg, "Sum up yesterday's chats.")
+    routine_id = uuid.UUID(routine["id"])
+    now = datetime.now(UTC)
+    async with pg.runs.sessionmaker() as db:
+        await db.execute(update(Routine).where(Routine.id == routine_id).values(next_run_at=now - timedelta(minutes=1)))
+        await db.commit()
+
+    async def fire() -> routine_service.Fired:
+        async with pg.runs.sessionmaker() as db:
+            fired = await routine_service.fire_on_schedule(db, routine_id, now=now, settings=pg.runs.settings)
+            await db.commit()
+            return fired
+
+    results = await asyncio.gather(fire(), fire())
+    assert sum(fired.run is not None for fired in results) == 1
+    async with pg.runs.sessionmaker() as db:
+        assert len(list(await db.scalars(select(Run)))) == 1
+        assert len(list(await db.scalars(select(RoutineRun)))) == 1

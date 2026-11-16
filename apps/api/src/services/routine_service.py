@@ -21,10 +21,10 @@ past), then the schedule carries on from now: never a backlog.
 
 import uuid
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any, cast
 
-from sqlalchemy import func, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.core.config import Settings
@@ -46,21 +46,31 @@ STILL_GOING = "This routine's last run is still going."
 BOT_REMOVED = bot_service.BOT_REMOVED
 CREATOR_LEFT = "Its creator left the organization."
 RECENT_RUNS = 20
+# History kept per routine: the newest `KEEP_RUNS`, none older than `KEEP_FOR`.
+KEEP_RUNS = 200
+KEEP_FOR = timedelta(days=90)
 # Reading
 
 
 async def _last_results(db: AsyncSession, routine_ids: list[uuid.UUID]) -> dict[uuid.UUID, str]:
-    """Each routine's latest result: its run's status, or "skipped"."""
+    """Each routine's latest result: its run's status, or "skipped". One query that reads only the
+    newest row per routine (a correlated LIMIT 1 over the (routine_id, started_at) index)."""
     if not routine_ids:
         return {}
-    newest = func.row_number().over(partition_by=RoutineRun.routine_id, order_by=RoutineRun.started_at.desc())
-    ranked = (
-        select(RoutineRun.routine_id, RoutineRun.status, Run.status.label("run_status"), newest.label("n"))
-        .outerjoin(Run, Run.id == RoutineRun.run_id)
-        .where(RoutineRun.routine_id.in_(routine_ids))
-        .subquery()
+    newest = (
+        select(RoutineRun.id)
+        .where(RoutineRun.routine_id == Routine.id)
+        .order_by(RoutineRun.started_at.desc(), RoutineRun.id.desc())
+        .limit(1)
+        .correlate(Routine)
+        .scalar_subquery()
     )
-    rows = await db.execute(select(ranked.c.routine_id, ranked.c.status, ranked.c.run_status).where(ranked.c.n == 1))
+    rows = await db.execute(
+        select(Routine.id, RoutineRun.status, Run.status)
+        .join(RoutineRun, RoutineRun.id == newest)
+        .outerjoin(Run, Run.id == RoutineRun.run_id)
+        .where(Routine.id.in_(routine_ids))
+    )
     return {routine_id: run_status or status for routine_id, status, run_status in rows}
 
 
@@ -223,6 +233,18 @@ async def announce_created(db: AsyncSession, routine: Routine) -> Thread:
     message = _system_message(db, thread, [part])
     await _saved(db, message, thread, None)
     return thread
+
+
+async def prune_runs(db: AsyncSession, now: datetime) -> None:
+    """Forget routine runs older than `KEEP_FOR`, and all but each routine's newest `KEEP_RUNS`.
+    The runs themselves (and their chats) stay. The caller commits."""
+    await db.execute(delete(RoutineRun).where(RoutineRun.started_at < now - KEEP_FOR))
+    rank = func.row_number().over(
+        partition_by=RoutineRun.routine_id, order_by=(RoutineRun.started_at.desc(), RoutineRun.id.desc())
+    )
+    ranked = select(RoutineRun.id, rank.label("n")).subquery()
+    beyond = select(ranked.c.id).where(ranked.c.n > KEEP_RUNS)
+    await db.execute(delete(RoutineRun).where(RoutineRun.id.in_(beyond)))
 
 
 # Firing

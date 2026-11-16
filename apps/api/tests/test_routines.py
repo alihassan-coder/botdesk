@@ -129,6 +129,9 @@ async def test_a_switched_off_routine_has_no_next_run(team: Team) -> None:
     [
         ({"cron": "every day"}, 400),
         ({"cron": "0 9 * *"}, 400),
+        ({"cron": "0 0 30 2 *"}, 400),  # valid, but never comes
+        ({"cron": "R 9 * * *"}, 400),
+        ({"cron": "* * * * *"}, 400),  # under 5 minutes apart
         ({"timezone": "Mars/Olympus"}, 400),
         ({"name": ""}, 422),
         ({"instructions": ""}, 422),
@@ -139,6 +142,24 @@ async def test_a_switched_off_routine_has_no_next_run(team: Team) -> None:
 async def test_bad_routines_are_refused(team: Team, change: dict[str, Any], status: int) -> None:
     body = {"botId": team.bot, "name": "Digest", "instructions": "Sum up.", **DAILY} | change
     assert (await team.client.post(team.url, json=body)).status_code == status
+
+
+@pytest.mark.parametrize(
+    ("cron", "detail"),
+    [
+        ("0 0 30 2 *", "“0 0 30 2 *” never comes: no date matches it."),
+        ("H 9 * * *", "Use fixed times in the schedule: random or hashed fields (R, H) aren't supported."),
+        ("*/2 * * * *", "Routines run at most every 5 minutes: space the times at least 5 minutes apart."),
+    ],
+)
+async def test_editing_to_a_schedule_that_never_comes_or_comes_too_often_is_refused(
+    team: Team, cron: str, detail: str
+) -> None:
+    routine = await team.create()
+    response = await team.client.patch(f"{team.url}/{routine['id']}", json={"cron": cron})
+    assert response.status_code == 400
+    assert response.json()["detail"] == detail
+    assert (await team.get(routine["id"]))["cron"] == DAILY["cron"]
 
 
 async def test_switching_off_and_on_and_editing_the_schedule(team: Team) -> None:

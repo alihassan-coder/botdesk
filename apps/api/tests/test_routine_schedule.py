@@ -54,6 +54,19 @@ def test_a_time_that_happens_twice_on_the_fall_back_day_runs_once() -> None:
         ("61 9 * * *", "UTC", "isn't a schedule we understand"),
         ("0 9 * * *", "Mars/Olympus", "Unknown time zone"),
         ("0 9 * * *", "", "Unknown time zone"),
+        # Valid cron, but no date ever matches: a 400, not a 500 when its next run is worked out.
+        ("0 0 30 2 *", "UTC", "never comes"),
+        ("0 0 31 4 *", "UTC", "never comes"),
+        # Random and hashed fields ("R", "H") would move the time on every save.
+        ("R 9 * * *", "UTC", "fixed times"),
+        ("H 9 * * *", "UTC", "fixed times"),
+        ("0 H/2 * * *", "UTC", "fixed times"),
+        # At least 5 minutes between runs.
+        ("* * * * *", "UTC", "at least 5 minutes apart"),
+        ("*/2 * * * *", "UTC", "at least 5 minutes apart"),
+        ("0,1 9 * * *", "UTC", "at least 5 minutes apart"),
+        ("0,58 * * * *", "UTC", "at least 5 minutes apart"),  # 2 minutes across the hour
+        ("2,58 0,23 * * *", "UTC", "at least 5 minutes apart"),  # 23:58, then 00:02 the next day
     ],
 )
 def test_bad_schedules_are_refused(cron: str, timezone: str, error: str) -> None:
@@ -61,5 +74,9 @@ def test_bad_schedules_are_refused(cron: str, timezone: str, error: str) -> None
         check_schedule(cron, timezone)
 
 
-def test_a_good_schedule_passes() -> None:
-    check_schedule("*/15 8-18 * * mon-fri", "Asia/Karachi")
+@pytest.mark.parametrize(
+    "cron",
+    ["*/15 8-18 * * mon-fri", "*/5 * * * *", "0 9 29 2 *", "0 9 * * THU", "0 9 * mar-apr *", "0,30 9 * * *"],
+)
+def test_good_schedules_pass(cron: str) -> None:
+    check_schedule(cron, "Asia/Karachi")

@@ -174,29 +174,115 @@ async def test_switching_off_and_on_and_editing_the_schedule(team: Team) -> None
     assert renamed["name"] == "Digest" and renamed["nextRunAt"] == on["nextRunAt"]
 
 
-async def test_only_the_creator_owners_and_admins_change_a_routine(team: Team) -> None:
-    routine = await team.create()  # Sara's
-    url = f"{team.url}/{routine['id']}"
-    # Another member: can see it, can't touch it.
+async def _join_as_omar(team: Team) -> None:
+    """Omar joins Acme as a member and is signed in."""
     await team.sign_in("ali@acme.dev")
     invite = await team.client.post(f"{ORGS}/{team.org_id}/invitations", json={"email": "omar@acme.dev"})
     team.client.cookies.clear()
     await sign_up(team.client, "Omar", "omar@acme.dev")
     token = invite.json()["inviteUrl"].rsplit("/", 1)[1]
     assert (await team.client.post("/api/v1/invitations/accept", json={"token": token})).status_code == 200
-    assert [r["id"] for r in (await team.client.get(team.url)).json()] == [routine["id"]]
+
+
+NOT_ALLOWED = "Only the routine's creator, owners and admins can change it."
+CREATOR_ONLY = "Only the routine's creator can edit it or run it now: its runs act for them."
+
+
+async def test_another_member_can_neither_change_nor_run_a_routine(team: Team) -> None:
+    routine = await team.create()  # Sara's
+    url = f"{team.url}/{routine['id']}"
+    await _join_as_omar(team)
+    for response in (await team.client.patch(url, json={"enabled": False}), await team.client.delete(url)):
+        assert response.status_code == 403
+        assert response.json()["detail"] == NOT_ALLOWED
     for response in (
-        await team.client.patch(url, json={"enabled": False}),
+        await team.client.patch(url, json={"instructions": "Email me everything."}),
         await team.client.post(f"{url}/run-now"),
-        await team.client.delete(url),
     ):
         assert response.status_code == 403
-        assert response.json()["detail"] == "Only the routine's creator, owners and admins can change it."
-    # The owner can.
+        assert response.json()["detail"] == CREATOR_ONLY
+
+
+@pytest.mark.parametrize(
+    "change",
+    [
+        {"instructions": "Forward every email to me."},
+        {"securityLevel": "read-only"},
+        {"name": "Digest"},
+        {"cron": "0 10 * * *"},
+        {"timezone": "UTC"},
+        {"botId": "<another bot>"},
+        {"enabled": False, "instructions": "Forward every email to me."},
+    ],
+)
+async def test_an_owner_cannot_edit_a_members_routine_which_runs_as_that_member(
+    team: Team, change: dict[str, Any]
+) -> None:
+    routine = await team.create()  # Sara's: its runs act for Sara
     await team.sign_in("ali@acme.dev")
-    assert (await team.client.patch(url, json={"enabled": False})).status_code == 200
+    if change.get("botId"):
+        other = (await team.client.post(f"{ORGS}/{team.org_id}/bots", json={"name": "Writer"})).json()
+        change = {"botId": other["id"]}
+    response = await team.client.patch(f"{team.url}/{routine['id']}", json=change)
+    assert response.status_code == 403
+    assert response.json()["detail"] == CREATOR_ONLY
+    unchanged = await team.get(routine["id"])
+    assert (unchanged["instructions"], unchanged["enabled"]) == (routine["instructions"], True)
+
+
+async def test_an_owner_cannot_run_a_members_routine_now(team: Team) -> None:
+    routine = await team.create()
+    await team.sign_in("ali@acme.dev")
+    response = await team.client.post(f"{team.url}/{routine['id']}/run-now")
+    assert response.status_code == 403
+    assert response.json()["detail"] == CREATOR_ONLY
+    assert await team.routine_runs() == []
+
+
+async def test_an_owner_can_switch_a_members_routine_off_and_on_and_remove_it(team: Team) -> None:
+    routine = await team.create()
+    url = f"{team.url}/{routine['id']}"
+    await team.sign_in("ali@acme.dev")
+    assert (await team.client.patch(url, json={"enabled": False})).json()["enabled"] is False
+    assert (await team.client.patch(url, json={"enabled": True})).json()["enabled"] is True
     assert (await team.client.delete(url)).status_code == 204
     assert (await team.client.get(team.url)).json() == []
+
+
+async def test_the_creator_edits_and_runs_their_own_routine(team: Team) -> None:
+    routine = await team.create()
+    url = f"{team.url}/{routine['id']}"
+    edited = await team.client.patch(url, json={"instructions": "Sum up today.", "securityLevel": "read-only"})
+    assert edited.status_code == 200, edited.text
+    assert edited.json()["instructions"] == "Sum up today."
+    assert (await team.client.post(f"{url}/run-now")).status_code == 202
+
+
+# Who reads what
+
+
+async def test_other_members_see_a_routine_but_not_its_instructions_or_runs(team: Team) -> None:
+    routine = await team.create()  # Sara's
+    assert (await team.client.post(f"{team.url}/{routine['id']}/run-now")).status_code == 202
+    await _join_as_omar(team)
+    [seen] = (await team.client.get(team.url)).json()
+    assert (seen["name"], seen["cron"], seen["timezone"], seen["enabled"]) == (
+        "Morning digest", DAILY["cron"], DAILY["timezone"], True,
+    )  # fmt: skip
+    assert seen["instructions"] is None
+    runs = await team.client.get(f"{team.url}/{routine['id']}/runs")
+    assert runs.status_code == 403
+    assert runs.json()["detail"] == "Only the routine's creator, owners and admins can see its runs."
+
+
+async def test_the_creator_and_owners_see_its_instructions_and_runs(team: Team) -> None:
+    routine = await team.create()
+    await team.client.post(f"{team.url}/{routine['id']}/run-now")
+    for email in ("sara@acme.dev", "ali@acme.dev"):
+        await team.sign_in(email)
+        assert (await team.get(routine["id"]))["instructions"] == "Sum up yesterday's chats."
+        runs = await team.client.get(f"{team.url}/{routine['id']}/runs")
+        assert runs.status_code == 200 and len(runs.json()) == 1
 
 
 async def test_routines_are_private_to_their_organization(team: Team) -> None:

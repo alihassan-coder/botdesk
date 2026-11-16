@@ -1,5 +1,7 @@
-"""Handles routine requests. Any member can create a routine for a bot of the organization; the
-routine's creator, owners and admins can change, run or remove it. Runs go to the creator's DM."""
+"""Handles routine requests. Any member can create a routine for a bot of the organization and
+sees every routine's name and schedule. Only its creator edits it or runs it now (its runs act
+for them, in their DM); its creator, owners and admins read its instructions and runs, switch it
+on or off and remove it."""
 
 import uuid
 
@@ -13,13 +15,17 @@ from src.schemas.routine import RoutineIn, RoutineOut, RoutineRunOut, RoutineUpd
 from src.services import routine_service
 
 
+def _viewer(access: Access) -> routine_service.Viewer:
+    return routine_service.Viewer(user_id=access.user.id, role=access.role)
+
+
 async def list_routines(db: AsyncSession, access: Access, bot_id: uuid.UUID | None) -> list[RoutineOut]:
     routines = await routine_service.list_routines(db, access.org.id, bot_id=bot_id)
-    return await routine_service.routine_outs(db, routines)
+    return await routine_service.routine_outs(db, routines, _viewer(access))
 
 
-async def _one(db: AsyncSession, routine: Routine) -> RoutineOut:
-    [out] = await routine_service.routine_outs(db, [routine])
+async def _one(db: AsyncSession, access: Access, routine: Routine) -> RoutineOut:
+    [out] = await routine_service.routine_outs(db, [routine], _viewer(access))
     return out
 
 
@@ -30,30 +36,25 @@ async def create_routine(db: AsyncSession, access: Access, runs: RunManager, bod
     thread = await routine_service.announce_created(db, routine)
     await db.commit()
     runs.bus.announce(thread.id)
-    return await _one(db, routine)
-
-
-async def _changeable(db: AsyncSession, access: Access, routine_id: uuid.UUID) -> Routine:
-    routine = await routine_service.get_routine(db, access.org.id, routine_id)
-    routine_service.require_can_change(routine, user_id=access.user.id, role=access.role)
-    return routine
+    return await _one(db, access, routine)
 
 
 async def update_routine(db: AsyncSession, access: Access, routine_id: uuid.UUID, body: RoutineUpdate) -> RoutineOut:
-    routine = await _changeable(db, access, routine_id)
-    await routine_service.update_routine(db, routine, body, now=utcnow())
+    routine = await routine_service.get_routine(db, access.org.id, routine_id)
+    await routine_service.update_routine(db, routine, body, viewer=_viewer(access), now=utcnow())
     await db.commit()
-    return await _one(db, routine)
+    return await _one(db, access, routine)
 
 
 async def delete_routine(db: AsyncSession, access: Access, routine_id: uuid.UUID) -> None:
-    await routine_service.delete_routine(db, await _changeable(db, access, routine_id))
+    routine = await routine_service.get_routine(db, access.org.id, routine_id)
+    await routine_service.delete_routine(db, routine, _viewer(access))
     await db.commit()
 
 
 async def run_now(db: AsyncSession, access: Access, runs: RunManager, routine_id: uuid.UUID) -> RunNowOut:
-    routine = await _changeable(db, access, routine_id)
-    run = await routine_service.run_now(db, routine, now=utcnow(), settings=runs.settings)
+    routine = await routine_service.get_routine(db, access.org.id, routine_id)
+    run = await routine_service.run_now(db, routine, viewer=_viewer(access), now=utcnow(), settings=runs.settings)
     await runs.start(db, [run])
     await db.commit()
     runs.bus.announce(run.thread_id)
@@ -62,4 +63,4 @@ async def run_now(db: AsyncSession, access: Access, runs: RunManager, routine_id
 
 async def recent_runs(db: AsyncSession, access: Access, routine_id: uuid.UUID) -> list[RoutineRunOut]:
     routine = await routine_service.get_routine(db, access.org.id, routine_id)
-    return await routine_service.recent_runs(db, routine)
+    return await routine_service.recent_runs(db, routine, _viewer(access))

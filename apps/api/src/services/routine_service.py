@@ -35,6 +35,8 @@ from src.services.run_event_service import add_event
 
 NOT_FOUND = "This routine doesn't exist."
 NOT_ALLOWED = "Only the routine's creator, owners and admins can change it."
+CREATOR_ONLY = "Only the routine's creator can edit it or run it now: its runs act for them."
+RUNS_HIDDEN = "Only the routine's creator, owners and admins can see its runs."
 STILL_GOING = "This routine's last run is still going."
 BOT_REMOVED = bot_service.BOT_REMOVED
 CREATOR_LEFT = "Its creator left the organization."
@@ -57,13 +59,27 @@ async def _last_results(db: AsyncSession, routine_ids: list[uuid.UUID]) -> dict[
     return {routine_id: run_status or status for routine_id, status, run_status in rows}
 
 
-def _out(routine: Routine, last_result: str | None) -> RoutineOut:
-    return RoutineOut.model_validate(routine).model_copy(update={"last_result": last_result})
+@dataclass(frozen=True)
+class Viewer:
+    user_id: uuid.UUID
+    role: str  # owner | admin | member
+
+    def manages(self, routine: Routine) -> bool:
+        """The routine's creator, owners and admins: they read its instructions and runs, and can
+        switch it on or off or remove it."""
+        return routine.created_by == self.user_id or self.role in ("owner", "admin")
 
 
-async def routine_outs(db: AsyncSession, routines: list[Routine]) -> list[RoutineOut]:
+def _out(routine: Routine, last_result: str | None, viewer: Viewer) -> RoutineOut:
+    out = RoutineOut.model_validate(routine)
+    # Everyone sees what runs when; only those who manage it read what it does.
+    instructions = out.instructions if viewer.manages(routine) else None
+    return out.model_copy(update={"last_result": last_result, "instructions": instructions})
+
+
+async def routine_outs(db: AsyncSession, routines: list[Routine], viewer: Viewer) -> list[RoutineOut]:
     results = await _last_results(db, [r.id for r in routines])
-    return [_out(r, results.get(r.id)) for r in routines]
+    return [_out(r, results.get(r.id), viewer) for r in routines]
 
 
 async def list_routines(db: AsyncSession, org_id: uuid.UUID, *, bot_id: uuid.UUID | None = None) -> list[Routine]:
@@ -80,7 +96,9 @@ async def get_routine(db: AsyncSession, org_id: uuid.UUID, routine_id: uuid.UUID
     return routine
 
 
-async def recent_runs(db: AsyncSession, routine: Routine) -> list[RoutineRunOut]:
+async def recent_runs(db: AsyncSession, routine: Routine, viewer: Viewer) -> list[RoutineRunOut]:
+    if not viewer.manages(routine):
+        raise Forbidden(RUNS_HIDDEN)
     rows = await db.execute(
         select(RoutineRun, Run.thread_id, Run.status, Run.error)
         .outerjoin(Run, Run.id == RoutineRun.run_id)
@@ -104,9 +122,26 @@ async def recent_runs(db: AsyncSession, routine: Routine) -> list[RoutineRunOut]
 # Saving
 
 
-def require_can_change(routine: Routine, *, user_id: uuid.UUID, role: str) -> None:
-    if routine.created_by != user_id and role not in ("owner", "admin"):
+def require_can_manage(routine: Routine, viewer: Viewer) -> None:
+    """Switching it on or off, and removing it: its creator, owners and admins."""
+    if not viewer.manages(routine):
         raise Forbidden(NOT_ALLOWED)
+
+
+def require_creator(routine: Routine, viewer: Viewer) -> None:
+    """Editing it and Run now: only its creator, since its runs act for them (their DM, their
+    connections). An admin who could change its instructions would act as that member."""
+    if routine.created_by != viewer.user_id:
+        raise Forbidden(CREATOR_ONLY)
+
+
+def _changes(routine: Routine, changes: RoutineUpdate) -> dict[str, Any]:
+    """The fields `changes` really changes (null means "unchanged" for the required ones)."""
+    fields = changes.model_dump(exclude_unset=True)
+    for required in ("bot_id", "name", "instructions", "cron", "timezone", "enabled"):
+        if fields.get(required, ...) is None:
+            fields.pop(required)
+    return {field: value for field, value in fields.items() if getattr(routine, field) != value}
 
 
 def _reschedule(routine: Routine, now: datetime) -> None:
@@ -125,11 +160,16 @@ async def create_routine(
     return routine
 
 
-async def update_routine(db: AsyncSession, routine: Routine, changes: RoutineUpdate, *, now: datetime) -> Routine:
-    fields = changes.model_dump(exclude_unset=True)
-    for required in ("bot_id", "name", "instructions", "cron", "timezone", "enabled"):
-        if fields.get(required, ...) is None:
-            fields.pop(required)  # null means "unchanged" for these
+async def update_routine(
+    db: AsyncSession, routine: Routine, changes: RoutineUpdate, *, viewer: Viewer, now: datetime
+) -> Routine:
+    """Only the fields that change are checked: owners and admins may switch a member's routine
+    on or off, but anything else is its creator's alone."""
+    fields = _changes(routine, changes)
+    if fields.keys() - {"enabled"}:
+        require_creator(routine, viewer)
+    else:
+        require_can_manage(routine, viewer)
     if "bot_id" in fields:
         await bot_service.get_bot(db, routine.org_id, fields["bot_id"])
     check_schedule(fields.get("cron", routine.cron), fields.get("timezone", routine.timezone))
@@ -144,7 +184,8 @@ async def update_routine(db: AsyncSession, routine: Routine, changes: RoutineUpd
     return routine
 
 
-async def delete_routine(db: AsyncSession, routine: Routine) -> None:
+async def delete_routine(db: AsyncSession, routine: Routine, viewer: Viewer) -> None:
+    require_can_manage(routine, viewer)
     await db.delete(routine)
 
 
@@ -264,8 +305,10 @@ async def fire_on_schedule(db: AsyncSession, routine_id: uuid.UUID, *, now: date
     return Fired(run=run, thread_id=run.thread_id)
 
 
-async def run_now(db: AsyncSession, routine: Routine, *, now: datetime, settings: Settings) -> Run:
-    """Run now: the same run as on schedule, without moving the schedule. The caller commits."""
+async def run_now(db: AsyncSession, routine: Routine, *, viewer: Viewer, now: datetime, settings: Settings) -> Run:
+    """Run now (its creator only): the same run as on schedule, without moving the schedule.
+    The caller commits."""
+    require_creator(routine, viewer)
     if problem := await _problem(db, routine, now):
         raise Conflict(problem)
     if await _still_going(db, routine):

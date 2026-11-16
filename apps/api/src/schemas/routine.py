@@ -45,7 +45,8 @@ class RoutineOut(ApiModel):
     bot_id: uuid.UUID | None  # empty once its bot was removed
     created_by: uuid.UUID | None
     name: str
-    instructions: str
+    # Only for its creator, owners and admins; null for other members.
+    instructions: str | None
     cron: str
     timezone: str
     enabled: bool

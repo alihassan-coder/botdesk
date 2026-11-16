@@ -21,6 +21,8 @@ import uvicorn
 from mcp.server.mcpserver import MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
 from mcp.server.transport_security import TransportSecuritySettings
+from mcp.shared.exceptions import MCPError
+from mcp_types import REQUEST_TIMEOUT
 from starlette.applications import Starlette
 from starlette.requests import Request
 from starlette.responses import PlainTextResponse, RedirectResponse
@@ -35,6 +37,7 @@ from src.mcp.client import (
     McpServerConfig,
     McpTimeout,
     McpUnsafeUrl,
+    _translate,
     call_tool,
     list_tools,
 )
@@ -228,6 +231,17 @@ async def test_a_slow_tool_times_out(live_server: LiveServer) -> None:
         await call_tool(config(live_server, call_timeout=0.5), "slow", {"seconds": 5}, network=TEST_NETWORK)
 
     assert time.monotonic() - started < 3
+
+
+def test_the_sdks_own_request_timeout_counts_as_a_timeout() -> None:
+    """A slow tool races two clocks: httpx2's read timeout and the SDK's request timeout.
+    Whichever fires first, the caller sees a timeout, not a protocol error."""
+    error = MCPError(code=REQUEST_TIMEOUT, message="Request 'tools/call' timed out")
+
+    translated = _translate(error, "mcp.test")
+
+    assert isinstance(translated, McpTimeout)
+    assert "took too long" in str(translated)
 
 
 async def test_huge_output_is_cut_with_a_note(live_server: LiveServer) -> None:

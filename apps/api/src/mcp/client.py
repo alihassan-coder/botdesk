@@ -243,7 +243,9 @@ def _translate(error: Exception, host: str) -> McpClientError:
         if isinstance(leaf, ResponseTooLarge):
             return McpResponseTooLarge(str(leaf))
     for leaf in leaves:
-        if isinstance(leaf, TimeoutError | httpx2.TimeoutException):
+        # The SDK's own request timeout races httpx2's read timeout; either one is a timeout.
+        timed_out = isinstance(leaf, MCPError) and leaf.error.code == mcp_types.REQUEST_TIMEOUT
+        if timed_out or isinstance(leaf, TimeoutError | httpx2.TimeoutException):
             return McpTimeout(f"{host} took too long to answer.")
         if isinstance(leaf, MCPError):
             return McpProtocolError(f"{host} answered with an error: {leaf.error.message}")

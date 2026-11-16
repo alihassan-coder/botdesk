@@ -194,7 +194,8 @@ export interface ApiTask {
   /** The message holding the Task's handoff card. */
   messageId: string | null;
   fromBotId: string | null;
-  toBotId: string;
+  /** Null once the bot is removed (the Task stays). */
+  toBotId: string | null;
   task: string;
   status: "queued" | "working" | "done" | "failed" | "cancelled";
   resultMessageId: string | null;

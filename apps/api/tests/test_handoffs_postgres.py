@@ -4,10 +4,12 @@ checkpoints. Skipped without TEST_DATABASE_URL (the SQLite cases are in `test_ha
 
 import asyncio
 import uuid
+from datetime import timedelta
 
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from src.core.database import utcnow
 from src.models import Message, Run, RunEvent, Task
 from src.plugins.team import HandoffArgs
 from src.services import run_service, task_service
@@ -179,3 +181,205 @@ async def test_a_restart_while_the_parent_waits_still_resumes_it_from_its_checkp
         run = await db.get(Run, parent)
     assert run is not None and run.status == "succeeded"
     assert "<task-results>" in model.prompts["Chief"][-1][-1].text
+
+
+async def _waiting_parents(pg: Postgres, count: int) -> list[tuple[uuid.UUID, list[Task]]]:
+    """`count` waiting parents, each Chief's run in a group of its own, with a working task for
+    Sales and one for Research (made by hand: no model, runs never start)."""
+    pg.runs.enabled = False
+    path, bots, _thread = await _org(pg)
+    parents = []
+    for number in range(count):
+        parent = await _chief_run_in_a_group(pg, path, bots, number)
+        async with _sessions(pg)() as db:
+            await db.execute(update(Run).where(Run.id == parent).values(status="running"))
+            message_id = uuid.uuid4()
+            for handle in ("sales", "research"):
+                handed = await task_service.hand_off(
+                    db,
+                    parent_run_id=parent,
+                    tool_call_id=f"call_{handle}",
+                    args=HandoffArgs(bot=handle, task=f"Task for {handle}"),
+                    message_id=message_id,
+                    reply_text="",
+                    exclude_execution_ids=[],
+                    level="autonomous",
+                    tainted=False,
+                    settings=pg.runs.settings,
+                )
+                assert isinstance(handed, task_service.HandedOff), handed
+            await db.execute(update(Run).where(Run.id == parent).values(status="waiting_handoff"))
+            await db.execute(update(Task).where(Task.parent_run_id == parent).values(status="working"))
+            await db.commit()
+        async with _sessions(pg)() as db:
+            tasks = list(await db.scalars(select(Task).where(Task.parent_run_id == parent).order_by(Task.created_at)))
+        parents.append((parent, tasks))
+    return parents
+
+
+async def _chief_run_in_a_group(pg: Postgres, path: str, bots: dict[str, uuid.UUID], number: int) -> uuid.UUID:
+    body = {"title": f"Chat {number}", "botIds": [str(b) for b in bots.values()], "leadBotId": str(bots["chief"])}
+    group = (await pg.client.post(f"{path}/threads/groups", json=body)).json()
+    sent = await pg.client.post(f"{path}/threads/{group['id']}/messages", json={"text": "Go"})
+    return uuid.UUID(sent.json()["runIds"][0])
+
+
+async def _reconcile_pass(pg: Postgres) -> list[uuid.UUID]:
+    """One recovery pass as `RunManager.reconcile_tasks` makes it, without swallowing errors."""
+    async with _sessions(pg)() as db:
+        parent_ids = await task_service.to_reconcile(db)
+    resumed: list[uuid.UUID] = []
+    for parent_id in parent_ids:
+        async with _sessions(pg)() as db:
+            aftermath = await task_service.reconcile(db, parent_id)
+            await db.commit()
+        resumed += [run.id for run in aftermath.resume]
+    return resumed
+
+
+async def _task_statuses(pg: Postgres, parent: uuid.UUID) -> list[str]:
+    async with _sessions(pg)() as db:
+        rows = await db.scalars(select(Task.status).where(Task.parent_run_id == parent).order_by(Task.created_at))
+        return list(rows)
+
+
+async def test_two_reconcile_passes_at_once_never_deadlock_and_end_every_task(pg: Postgres) -> None:
+    parents = await _waiting_parents(pg, 3)
+    async with _sessions(pg)() as db:  # every child finished, but nothing ended their tasks
+        for _parent, tasks in parents:
+            for task in tasks:
+                await db.execute(update(Run).where(Run.id == task.child_run_id).values(status="succeeded"))
+        await db.commit()
+
+    first, second = await asyncio.wait_for(asyncio.gather(_reconcile_pass(pg), _reconcile_pass(pg)), timeout=30)
+
+    assert set(first) | set(second) == {parent for parent, _ in parents}
+    for parent, tasks in parents:
+        assert await _task_statuses(pg, parent) == ["done", "done"]
+        async with _sessions(pg)() as db:
+            parts = await db.scalar(select(Message.parts).where(Message.id == tasks[0].message_id))
+        assert parts is not None and [p["status"] for p in parts if p["type"] == "handoff"] == ["done", "done"]
+
+
+async def test_reconcile_alongside_expire_tasks_ends_each_task_once(pg: Postgres) -> None:
+    ((parent, (finished, overdue)),) = await _waiting_parents(pg, 1)
+    async with _sessions(pg)() as db:
+        await db.execute(update(Run).where(Run.id == finished.child_run_id).values(status="succeeded"))
+        await db.execute(update(Task).where(Task.id == overdue.id).values(deadline_at=utcnow() - timedelta(minutes=1)))
+        await db.commit()
+
+    async def expire_pass() -> list[uuid.UUID]:
+        async with _sessions(pg)() as db:
+            due = await task_service.overdue(db)
+        resumed: list[uuid.UUID] = []
+        for task_id in due:
+            async with _sessions(pg)() as db:
+                aftermath = await task_service.expire_overdue(db, task_id)
+                await db.commit()
+            resumed += [run.id for run in aftermath.resume]
+        return resumed
+
+    reconciled, expired = await asyncio.wait_for(asyncio.gather(_reconcile_pass(pg), expire_pass()), timeout=30)
+
+    assert parent in [*reconciled, *expired]
+    assert await _task_statuses(pg, parent) == ["done", "failed"]
+    async with _sessions(pg)() as db:
+        timed_out = await db.get(Task, overdue.id)
+        updates = list(await db.scalars(select(RunEvent).where(RunEvent.kind == "task_updated")))
+    assert timed_out is not None and timed_out.error_code == "timeout"
+    finals = [e.payload["task"]["id"] for e in updates if e.payload["task"]["status"] in ("done", "failed")]
+    assert sorted(finals) == sorted([str(finished.id), str(overdue.id)])  # each ended exactly once
+
+
+async def test_handoffs_from_two_chats_at_once_never_pass_the_organizations_cap(pg: Postgres) -> None:
+    pg.runs.enabled = False
+    path, bots, _thread = await _org(pg)
+    parents = [await _chief_run_in_a_group(pg, path, bots, number) for number in range(2)]
+    async with _sessions(pg)() as db:
+        await db.execute(update(Run).where(Run.id.in_(parents)).values(status="running"))
+        await db.commit()
+    settings = pg.runs.settings.model_copy(update={"handoff_max_open_tasks_per_org": 1})
+
+    async def hand_off(parent: uuid.UUID) -> task_service.HandoffResult:
+        async with _sessions(pg)() as db:
+            result = await task_service.hand_off(
+                db,
+                parent_run_id=parent,
+                tool_call_id="call_1",
+                args=HandoffArgs(bot="sales", task="Draft openers"),
+                message_id=uuid.uuid4(),
+                reply_text="",
+                exclude_execution_ids=[],
+                level="autonomous",
+                tainted=False,
+                settings=settings,
+            )
+            await asyncio.sleep(0.2)  # hold the transaction open while the other handoff counts
+            await db.commit()
+            return result
+
+    results = await asyncio.gather(*(hand_off(parent) for parent in parents))
+
+    assert sorted(type(result).__name__ for result in results) == ["HandedOff", "Refused"]
+    async with _sessions(pg)() as db:
+        assert len(list(await db.scalars(select(Task)))) == 1
+
+
+async def test_a_resume_job_deferred_twice_resumes_the_parent_once(pg: Postgres) -> None:
+    model = TeamModel(plans={"Chief": TWO_TASKS}, replies={"Chief": "Here is the plan."})
+    use_model(pg, model)
+    _path, _bots, thread = await _org(pg)
+    resume = pg.runs.resume
+    held: list[uuid.UUID] = []
+
+    async def hold(_db: AsyncSession, run: Run) -> None:
+        held.append(run.id)
+
+    pg.runs.resume = hold  # type: ignore[method-assign,assignment]
+    sent = await pg.client.post(f"{thread}/messages", json={"text": "Plan tonight's outreach"})
+    parent = uuid.UUID(sent.json()["runIds"][0])
+    await pg.runs.wait_until_idle()
+    pg.runs.resume = resume  # type: ignore[method-assign]
+    assert held == [parent]
+
+    await asyncio.gather(pg.runs.take_turn(parent), pg.runs.take_turn(parent))
+    await pg.runs.wait_until_idle()
+
+    async with _sessions(pg)() as db:
+        run = await db.get(Run, parent)
+        resumed = list(
+            await db.scalars(select(RunEvent).where(RunEvent.run_id == parent, RunEvent.kind == "run_resumed"))
+        )
+    assert run is not None and run.status == "succeeded"
+    assert len(resumed) == 1
+    assert len((await pg.client.get(f"{thread}/messages")).json()) == 5  # one final answer
+
+
+async def test_stop_racing_the_last_task_ending_leaves_one_consistent_outcome(pg: Postgres) -> None:
+    ((parent, (first, last)),) = await _waiting_parents(pg, 1)
+    async with _sessions(pg)() as db:
+        await db.execute(update(Run).where(Run.id == first.child_run_id).values(status="succeeded"))
+        await task_service.run_ended(db, _child(first), status="succeeded", error=None, code=None)
+        await db.commit()
+
+    async def end_last() -> list[uuid.UUID]:
+        async with _sessions(pg)() as db:
+            await db.execute(update(Run).where(Run.id == last.child_run_id).values(status="succeeded"))
+            aftermath = await task_service.run_ended(db, _child(last), status="succeeded", error=None, code=None)
+            await db.commit()
+            return [run.id for run in aftermath.resume]
+
+    _stopped, resumed = await asyncio.gather(pg.runs.stop(parent), end_last())
+
+    async with _sessions(pg)() as db:
+        run = await db.get(Run, parent)
+        task = await db.get(Task, last.id)
+        parts = await db.scalar(select(Message.parts).where(Message.id == last.message_id))
+    assert run is not None and run.status == "cancelled"  # Stop wins either way
+    assert task is not None and task.status in ("done", "cancelled")
+    # Resumed at most once, and only when the task ended first (that job then finds it cancelled).
+    assert resumed in ([], [parent])
+    if task.status == "cancelled":
+        assert resumed == []
+    assert parts is not None
+    assert [p["status"] for p in parts if p["type"] == "handoff"] == ["done", task.status]

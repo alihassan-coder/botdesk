@@ -11,7 +11,7 @@ from typing import Any
 import httpx
 import pytest
 from fastapi import FastAPI
-from sqlalchemy import func, select, update
+from sqlalchemy import delete, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from src.core.config import Settings
@@ -138,10 +138,17 @@ async def team(providers: FakeProviders) -> AsyncIterator[Team]:
         yield t
 
 
-async def _handed(team: Team, *args: Any, **kwargs: Any) -> HandedOff:
+@dataclass(frozen=True)
+class Handed:
+    task: Task
+    child: Run
+    created: bool
+
+
+async def _handed(team: Team, *args: Any, **kwargs: Any) -> Handed:
     result = await team.hand_off(*args, **kwargs)
-    assert isinstance(result, HandedOff), result
-    return result
+    assert isinstance(result, HandedOff) and result.child is not None, result
+    return Handed(result.task, result.child, result.created)
 
 
 # Handing off
@@ -233,6 +240,24 @@ async def test_handing_off_the_same_call_twice_makes_one_task_and_one_child(team
     assert again.created is False
     assert again.task.id == first.task.id and again.child.id == first.child.id
     assert await team.count(Task) == 1
+
+
+async def test_handing_off_again_after_the_child_is_gone_fails_the_task_instead_of_a_second_one(team: Team) -> None:
+    first = await _handed(team, "sales", call="call_1")
+    async with team.db() as db:  # the child's run went (with its bot or its chat)
+        await db.execute(delete(Run).where(Run.id == first.task.child_run_id))
+        await db.commit()
+
+    again = await team.hand_off("sales", call="call_1")
+
+    assert isinstance(again, HandedOff)
+    assert (again.created, again.child, again.task.id) == (False, None, first.task.id)
+    assert (again.task.status, again.task.error) == ("failed", task_service.CHILD_GONE)
+    assert await team.count(Task) == 1
+    card = next(p for p in (await team.message(first.task.message_id)).parts if p["type"] == "handoff")  # type: ignore[arg-type]
+    assert card["status"] == "failed"
+    async with team.db() as db:
+        assert await task_service.resume_if_ready(db, team.parent) is None  # still running: nothing to wait for
 
 
 @pytest.mark.parametrize("handle", ["@sales", "sales", "@Sales", "SALES"])
@@ -542,6 +567,18 @@ async def test_an_overdue_task_times_out_resumes_its_parent_and_stops_its_child(
     assert (await team.task(handed.task.id)).error_code == "timeout"
 
 
+async def test_a_tainted_child_that_times_out_still_taints_its_parent(team: Team) -> None:
+    handed = await _handed(team, "sales")
+    await team.set_status(team.parent, "waiting_handoff")
+    await team.set_status(handed.child.id, "running", tainted=True)  # it read an email, then got stuck
+
+    async with team.db() as db:
+        await task_service.expire_overdue(db, handed.task.id, now=utcnow() + timedelta(minutes=61))
+        await db.commit()
+
+    assert (await team.run(team.parent)).tainted is True
+
+
 async def test_a_task_not_yet_overdue_is_left_alone(team: Team) -> None:
     handed = await _handed(team, "sales")
 
@@ -551,14 +588,24 @@ async def test_a_task_not_yet_overdue_is_left_alone(team: Team) -> None:
     assert (await team.task(handed.task.id)).status == "queued"
 
 
+async def _reconcile(team: Team, *, limit: int = 100) -> Aftermath:
+    """What recovery does: the parents to look at, then each in its own short transaction."""
+    async with team.db() as db:
+        parents = await task_service.to_reconcile(db, limit=limit)
+    aftermath = Aftermath()
+    for parent_id in parents:
+        async with team.db() as db:
+            aftermath += await task_service.reconcile(db, parent_id)
+            await db.commit()
+    return aftermath
+
+
 async def test_reconcile_ends_a_task_whose_child_already_finished_and_resumes_the_parent(team: Team) -> None:
     handed = await _handed(team, "sales")
     await team.set_status(team.parent, "waiting_handoff")
     await team.set_status(handed.child.id, "failed", error="Interrupted by a restart. Send your message again.")
 
-    async with team.db() as db:
-        aftermath = await task_service.reconcile(db)
-        await db.commit()
+    aftermath = await _reconcile(team)
 
     assert [run.id for run in aftermath.resume] == [team.parent]
     task = await team.task(handed.task.id)
@@ -569,9 +616,58 @@ async def test_reconcile_cancels_the_open_tasks_of_a_parent_that_already_ended(t
     handed = await _handed(team, "sales")
     await team.set_status(team.parent, "failed")
 
-    async with team.db() as db:
-        aftermath = await task_service.reconcile(db)
-        await db.commit()
+    aftermath = await _reconcile(team)
 
     assert aftermath.stop == [handed.child.id]
     assert (await team.task(handed.task.id)).status == "cancelled"
+
+
+async def test_reconcile_resumes_a_waiting_parent_whose_tasks_have_all_ended(team: Team) -> None:
+    handed = await _handed(team, "sales")
+    await team.end(handed.child.id, "succeeded", reply="Openers.")
+    await team.set_status(team.parent, "waiting_handoff")  # paused, but its resume was lost
+
+    aftermath = await _reconcile(team)
+
+    assert [run.id for run in aftermath.resume] == [team.parent]
+
+
+async def test_reconcile_stops_a_child_still_running_after_its_task_timed_out(team: Team) -> None:
+    handed = await _handed(team, "sales")
+    await team.set_status(team.parent, "waiting_handoff")
+    await team.set_status(handed.child.id, "running")
+    # The timeout was saved, then the process died before it stopped the child.
+    async with team.db() as db:
+        await task_service.expire_overdue(db, handed.task.id, now=utcnow() + timedelta(minutes=61))
+        await db.commit()
+
+    aftermath = await _reconcile(team)
+
+    assert aftermath.stop == [handed.child.id]
+    await team.set_status(handed.child.id, "cancelled")
+    await team.set_status(team.parent, "succeeded")
+    assert await _reconcile(team) == Aftermath()  # nothing left to do
+
+
+async def test_reconcile_looks_at_parents_in_a_stable_order_a_batch_at_a_time(team: Team) -> None:
+    sales = await _handed(team, "sales")
+    await team.set_status(team.parent, "waiting_approval")  # paused, but not for its tasks
+    await team.set_status(sales.child.id, "running")
+    research = await _handed(team, "research", run=sales.child.id)  # Sales hands off in turn
+    await team.set_status(research.child.id, "failed", error="No data.")
+    await team.set_status(sales.child.id, "failed", error="Interrupted.")
+
+    async with team.db() as db:
+        everything = await task_service.to_reconcile(db)
+        first = await task_service.to_reconcile(db, limit=1)
+
+    assert everything == sorted([team.parent, sales.child.id])
+    assert first == everything[:1]
+    await _reconcile(team, limit=1)
+    async with team.db() as db:
+        assert await task_service.to_reconcile(db) == everything[1:]
+    await _reconcile(team)
+    assert ((await team.task(sales.task.id)).status, (await team.task(research.task.id)).status) == (
+        "failed",
+        "failed",
+    )

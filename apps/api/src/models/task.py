@@ -36,14 +36,19 @@ class Task(IdMixin, CreatedAtMixin, Base):
     )
 
     org_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("organizations.id", ondelete="CASCADE"), index=True)
-    thread_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("threads.id", ondelete="CASCADE"))
+    thread_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("threads.id", ondelete="CASCADE"), index=True)
     parent_run_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("runs.id", ondelete="CASCADE"))
     tool_call_id: Mapped[str] = mapped_column(String(120))
-    from_bot_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("bots.id", ondelete="SET NULL"))
-    to_bot_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("bots.id", ondelete="CASCADE"))
+    # The bots stay optional: removing a bot keeps the tasks it was part of (its open ones are
+    # ended first, by `task_service.bot_removed`), and the owner's name and handle are kept here
+    # so the parent (and the history) can still say who it was.
+    from_bot_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("bots.id", ondelete="SET NULL"), index=True)
+    to_bot_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("bots.id", ondelete="SET NULL"), index=True)
+    to_bot_name: Mapped[str] = mapped_column(String(80), server_default="")
+    to_bot_handle: Mapped[str] = mapped_column(String(64), server_default="")
     child_run_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("runs.id", ondelete="SET NULL"), unique=True)
     # The message holding this task's handoff card (the child run's trigger).
-    message_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("messages.id", ondelete="SET NULL"))
+    message_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("messages.id", ondelete="SET NULL"), index=True)
     requester_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
     task: Mapped[str] = mapped_column(Text)
     context: Mapped[str | None] = mapped_column(Text)

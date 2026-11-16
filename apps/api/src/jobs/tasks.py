@@ -3,8 +3,9 @@
 - `run_bot` (deferred): move one run forward (`RunManager.take_turn`).
 - `expire_approvals` (every minute): approvals nobody answered in `APPROVAL_EXPIRY_HOURS`
   expire, and their runs carry on told "no" (approvals fail closed, ADR 0004).
-- `recover_runs` (every minute): tasks whose child already ended are closed and their parents
-  resume (`task_service.reconcile`); on Postgres, runs that should be moving but lost their job (a
+- `recover_runs` (every minute): tasks whose child already ended are closed, children still going
+  after their task ended are stopped, and parents resume (`RunManager.reconcile_tasks`, one short
+  transaction per parent); on Postgres, runs that should be moving but lost their job (a
   crashed worker) get one again.
 - `expire_tasks` (every minute): handed-off tasks past their deadline fail as timed out, their
   children are stopped, and parents whose last task that was resume (ADR 0014).

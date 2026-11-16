@@ -1,6 +1,6 @@
 # Handoffs contract (tasks, `team.handoff`, `waiting_handoff`)
 
-Status: **API built (slices H1–H3, migration `4a7e2c9d1b03`); web W1 built.** Changes made while building the API are marked *Built:*. Background and reasons: [ADR 0014](../adr/0014-handoffs-and-tasks.md). Related: [ADR 0009](../adr/0009-bots-working-together.md) (hops, guests), [ADR 0013](../adr/0013-the-job-queue-lands.md) (jobs, chat lock), [ADR 0004](../adr/0004-agent-runtime-and-safety.md) (policy, taint), [connections contract](connections-api-contract.md) (requester, usable connections). Terms: [GLOSSARY.md](../../GLOSSARY.md).
+Status: **API built (slices H1–H3, migrations `4a7e2c9d1b03` and `b7d2f4a9c615`); web W1 built.** Changes made while building the API are marked *Built:*. Background and reasons: [ADR 0014](../adr/0014-handoffs-and-tasks.md). Related: [ADR 0009](../adr/0009-bots-working-together.md) (hops, guests), [ADR 0013](../adr/0013-the-job-queue-lands.md) (jobs, chat lock), [ADR 0004](../adr/0004-agent-runtime-and-safety.md) (policy, taint), [connections contract](connections-api-contract.md) (requester, usable connections). Terms: [GLOSSARY.md](../../GLOSSARY.md).
 
 JSON is camelCase. Every route is under `/api/v1`. Errors are `{"detail": "<sentence people can read>"}`.
 
@@ -30,7 +30,7 @@ P resumes → the model reads both results → new message R3, the final answer 
 | `parent_run_id` | FK `runs`, cascade | The run that handed off. |
 | `tool_call_id` | String(120) | The `team.handoff` call that made it. |
 | `from_bot_id` | FK `bots`, SET NULL, nullable | The parent run's bot. |
-| `to_bot_id` | FK `bots`, cascade | The task's **owner**, the bot doing it. |
+| `to_bot_id` | FK `bots`, ~~cascade~~ *Built:* SET NULL, nullable | The task's **owner**, the bot doing it. *Built:* removing the bot keeps the task (see Stop table); `to_bot_name` String(80) and `to_bot_handle` String(64) keep who it was (`resume_answer` and the `team.handoff` result read them when the bot is gone). |
 | `child_run_id` | FK `runs`, SET NULL, nullable, **unique** | The owner's run for this task. |
 | `message_id` | FK `messages`, SET NULL, nullable | The message holding the task's handoff card (the children's trigger). |
 | `requester_id` | FK `users`, SET NULL, nullable | Copied from the parent run. |
@@ -49,7 +49,8 @@ Constraints and indexes:
 - unique `child_run_id`;
 - index (`parent_run_id`, `status`): "does the parent still have open tasks?";
 - index (`org_id`, `status`): the org cap;
-- index (`status`, `deadline_at`): the timeout job.
+- index (`status`, `deadline_at`): the timeout job;
+- *Built (`b7d2f4a9c615`):* indexes on `thread_id`, `from_bot_id`, `to_bot_id` and `message_id`, the columns deletes cascade through and cards are found by.
 
 ### `runs`
 
@@ -136,7 +137,7 @@ The handle is normalised first: strip one leading `@`, then lowercase.
 | 5 | Tasks with this `parent_run_id` (any status) `< HANDOFF_MAX_TASKS_PER_RUN` | "You've already handed off {n} tasks in this reply, the most allowed. Work with the results you have." |
 | 6 | Open tasks in the org `< HANDOFF_MAX_OPEN_TASKS_PER_ORG` | "Too many handed-off tasks are open in this organization right now. Do it yourself, or try again later." |
 
-Check 6 is a soft cap: two handoffs at the same instant in different chats can pass it by one, like the per-bot run cap. Argument errors (too long, missing) are caught earlier by `tool_pipeline.prepare` as `invalid`, as for every tool.
+~~Check 6 is a soft cap: two handoffs at the same instant in different chats can pass it by one, like the per-bot run cap.~~ *Built:* on Postgres, check 6 counts and inserts under `pg_advisory_xact_lock(hashtext('tasks:<org id>'))`, held until the handoff's transaction ends, so concurrent handoffs from different chats can't pass the cap. SQLite serialises writers anyway. Argument errors (too long, missing) are caught earlier by `tool_pipeline.prepare` as `invalid`, as for every tool.
 
 A refused handoff marks its `tool_executions` row `failed` with that error. It saves no task and no card, and it sends no events.
 
@@ -187,7 +188,7 @@ It does everything in one transaction:
 1. Read the `tool_executions` row for `call.executionId`.
    - If it's `succeeded`, reuse its result: take `taskId` and go to step 6.
    - If it's `failed`, return its error.
-2. Lock the parent run's row (`FOR UPDATE`). If a task already exists for (`run_id`, `toolCallId`), reuse it and go to 5.
+2. Lock the parent run's row (`FOR UPDATE`). If a task already exists for (`run_id`, `toolCallId`), reuse it and go to 5. *Built:* if that task's child run is gone (its bot or chat was removed), the task fails ("Its run is gone (its bot or chat was removed).") and the model is told so; a second task is never inserted.
 3. Validate (the table above). On a refusal, mark the execution `failed` with the message, commit, and return.
 4. Create the task, its child run and the child run's job:
    - **The handoff message** has id `state.reply_message_id`. Create it if it doesn't exist yet, as a message from the parent's bot (`author_type = "bot"`, `status = "complete"`), and set `thread.last_message_at`. Then (re)write its parts with `segment_parts` (below).
@@ -230,7 +231,7 @@ return {
 }
 ```
 
-`results_text` produces the message below. Escape `</task-result>` and `<task-result` in a result the same way `prompt._bot_message` escapes bot messages.
+`results_text` produces the message below. ~~Escape `</task-result>` and `<task-result` in a result the same way `prompt._bot_message` escapes bot messages.~~ *Built:* every `<` in a result becomes `&lt;` (so it can't close `</task-results>` or open any tag), and attribute text (`task`, `bot`, `error`) has `<`, `>` escaped and `"` turned into `'`.
 
 ```
 <task-results>
@@ -303,7 +304,10 @@ async def resume_if_ready(db, parent_run_id) -> Run | None
 async def resume_answer(db, parent_run_id, task_ids=None) -> dict | None   # Built: task_ids = the interrupt's taskIds
 async def expire_overdue(db, task_id, *, now=None) -> Aftermath   # one task, past its deadline
 async def overdue(db, *, limit=100, now=None) -> list[uuid.UUID]
-async def reconcile(db) -> Aftermath                      # recovery
+async def to_reconcile(db, *, limit=100) -> list[UUID]   # Built: recovery's work list, parent ids in order
+async def reconcile(db, parent_run_id) -> Aftermath      # Built: one parent, under its lock only
+async def parents_with_open_tasks_of(db, bot_id) -> list[UUID]   # Built: removing a bot
+async def bot_removed(db, bot_id, parent_run_id) -> Aftermath
 def task_json(task, from_bot, to_bot) -> dict             # TaskOut
 def handoff_part(task) -> dict                            # the message part
 ```
@@ -337,10 +341,11 @@ It covers the tasks named in the interrupt, in `created_at` order. `tainted` is 
 | A person stops the **parent** while it's running (mid-step, tasks already made) | It ends `cancelled` at its next step or through `stop_now`, and then the same cascade runs. |
 | A person stops a **child** | That task is `failed` / `stopped`. If it was the parent's last open task, the parent resumes and is told it failed. |
 | A child runs out of **budget** | The child fails with code `budget`, and its task is `failed` / `budget` with the run's message. |
+| A bot is **removed** while tasks are open (*Built*) | `DELETE /bots/{id}` first ends its tasks, one parent per short transaction: a task handed **to** it fails ("{name} was removed before it finished.", no code) and its parent resumes if that was the last; a task handed **by** its run is cancelled ("Cancelled: {name} was removed before it finished."). Then the runs that go with it (its own, and every run in its DMs, guests' too) and those tasks' children are stopped (`RunManager.stop`), and only then is the bot deleted. The tasks stay (`to_bot_id` SET NULL). |
 | A child is **stuck** past `deadline_at` | **`expire_tasks`** runs every minute (`JOBS.task("expire_tasks", cron="* * * * *")`). For each id from `overdue`, in its own short transaction, `expire_overdue` marks the task `failed` / `timeout` (card and event), resumes the parent if that was its last open task, and returns the child in `stop`. The job then calls `env.runs.stop(child)`. The child's own end later finds its task already ended and changes nothing. |
 | The child is in `needs_attention` | Its task stays `working` until a person stops the child or the deadline passes. |
 | The worker restarts while the parent waits (Postgres) | The parent is rows and a checkpoint, and has no job. The children's jobs carry on after the restart (ADR 0013), and the last one to end defers the parent's resume. |
-| A safety net for anything missed | `recover_runs` also calls `task_service.reconcile`. It ends every open task whose child run has already finished, the way `run_ended` would, and resumes what that returns. `run_service.runs_to_pick_up` also returns runs that are `waiting_handoff` with no open task. |
+| A safety net for anything missed | `recover_runs` also calls `task_service.reconcile`. It ends every open task whose child run has already finished, the way `run_ended` would, and resumes what that returns. `run_service.runs_to_pick_up` also returns runs that are `waiting_handoff` with no open task. *Built:* `RunManager.reconcile_tasks` takes at most 100 parents from `to_reconcile` (ordered by id) and `reconcile`s each in its own short transaction, holding only that parent's lock, so concurrent passes and `expire_tasks` can't deadlock. It also fails an open task whose child is gone, and stops a child still going after its task ended (the process died between `expire_tasks`' commit and its stop). A tainted child taints its parent's row however its task ended (finished, timed out, reconciled). |
 | SQLite restart | `fail_interrupted_runs` fails the children as today. `recover_after_restart` then calls `reconcile`, which fails their tasks and resumes the parent. The parent's checkpoint is gone, so it fails with `LOST_PAUSE_ERROR`, as approvals do. |
 
 Time limits: the parent's `max_seconds` counts working time only, so waiting doesn't use it. `steps_used` counts model calls, so the step after the resume counts one.
@@ -434,7 +439,7 @@ Context: {context}          ← only when context is set
 
 ```json
 { "id": "uuid", "threadId": "uuid", "parentRunId": "uuid", "childRunId": "uuid" | null,
-  "messageId": "uuid" | null, "fromBotId": "uuid" | null, "toBotId": "uuid",
+  "messageId": "uuid" | null, "fromBotId": "uuid" | null, "toBotId": "uuid" | null,   // Built: null once the bot is removed
   "task": "…", "status": "queued" | "working" | "done" | "failed" | "cancelled",
   "resultMessageId": "uuid" | null, "resultPreview": "…" | null,
   "error": "…" | null, "errorCode": "budget" | "timeout" | "stopped" | null,

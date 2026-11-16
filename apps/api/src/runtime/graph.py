@@ -578,10 +578,9 @@ async def hand_off(state: RunState, runtime: Runtime[RunDeps]) -> RunState:
                 await tool_execution_service.settle(db, execution_id, error=outcome.message)
                 await db.commit()
                 return {"call": {**call, "result": f"The tool failed: {outcome.message}"}}
-            if outcome.created:
+            if outcome.created and outcome.child is not None:
                 await deps.start_runs(db, [outcome.child])
-            target = await db.get(Bot, outcome.task.to_bot_id)
-            result = handoff_result(outcome.task, target)
+            result = handoff_result(outcome.task)
             await tool_execution_service.settle(db, execution_id, result=result)
             await db.commit()
     deps.reporter.announce()
@@ -593,9 +592,11 @@ async def hand_off(state: RunState, runtime: Runtime[RunDeps]) -> RunState:
     }
 
 
-def handoff_result(task: Task, target: Bot | None) -> dict[str, Any]:
-    """What the model reads when a handoff is made."""
-    name, handle = (target.name, target.handle) if target else ("your teammate", "teammate")
+def handoff_result(task: Task) -> dict[str, Any]:
+    """What the model reads when a handoff is made (or, run again, what became of it)."""
+    name, handle = task.to_bot_name or "your teammate", task.to_bot_handle or "teammate"
+    if task.status == "failed":
+        return {"taskId": str(task.id), "bot": f"@{handle}", "status": task.status, "note": task.error or "It failed."}
     return {
         "taskId": str(task.id),
         "bot": f"@{handle}",

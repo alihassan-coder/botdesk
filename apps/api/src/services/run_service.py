@@ -19,7 +19,7 @@ from src.core.config import Settings
 from src.core.database import utcnow
 from src.core.errors import NotFound
 from src.core.handles import mentioned_handles
-from src.models import Approval, Bot, Message, Routine, RoutineRun, Run, RunEvent, Thread, ThreadParticipant, User
+from src.models import Approval, Bot, Message, Run, RunEvent, Thread, ThreadParticipant, User
 from src.models.run import ACTIVE_STATUSES, PAUSED_STATUSES
 from src.runtime.policy import strictest_level
 from src.schemas.run import RunOut
@@ -274,7 +274,7 @@ async def run_context(db: AsyncSession, run_id: uuid.UUID) -> RunContext:
                 Bot.instructions,
                 Bot.model_id,
                 Bot.security_level,
-                Routine.security_level.label("routine_level"),
+                Run.security_level.label("run_level"),
                 Bot.memory_enabled,
                 Thread.kind,
                 Thread.bot_id.label("dm_bot_id"),
@@ -285,8 +285,6 @@ async def run_context(db: AsyncSession, run_id: uuid.UUID) -> RunContext:
             .join(Bot, Bot.id == Run.bot_id)
             .join(Thread, Thread.id == Run.thread_id)
             .outerjoin(trigger, trigger.id == Run.trigger_message_id)
-            .outerjoin(RoutineRun, RoutineRun.run_id == Run.id)
-            .outerjoin(Routine, Routine.id == RoutineRun.routine_id)
             .where(Run.id == run_id)
         )
     ).one()
@@ -335,8 +333,10 @@ async def run_context(db: AsyncSession, run_id: uuid.UUID) -> RunContext:
         bot_name=row.name,
         instructions=row.instructions,
         model_id=row.model_id,
-        # A routine can make its bot stricter, never looser (ADR 0004).
-        security_level=strictest_level(row.security_level, row.routine_level or row.security_level),
+        # A routine can make its bot stricter, never looser (ADR 0004). Its run keeps the level it
+        # started with (`Run.security_level`), even if the routine is loosened or removed; the
+        # bot's own level still applies if it was made stricter since.
+        security_level=strictest_level(row.security_level, row.run_level or row.security_level),
         memory_enabled=row.memory_enabled,
         tainted=tainted,
         group=row.kind == "group",

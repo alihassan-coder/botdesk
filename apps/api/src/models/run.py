@@ -46,6 +46,9 @@ class Run(IdMixin, CreatedAtMixin, Base):
     # The member this run acts for (slice 5.2): who wrote the message that started its chain, or
     # who set up the routine. A member's own connection serves only that member's runs.
     requester_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
+    # The level a routine's run started at: the strictest of its bot's and its routine's. Kept on
+    # the run so removing or loosening the routine mid-run can't loosen it. Empty otherwise.
+    security_level: Mapped[str | None] = mapped_column(String(30))
     status: Mapped[str] = mapped_column(String(20), default="queued")
     # Limits, copied from settings when the run is created, and what has been used so far.
     max_steps: Mapped[int] = mapped_column(Integer)

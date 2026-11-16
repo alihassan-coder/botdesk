@@ -10,7 +10,8 @@ Firing a routine (on its schedule, or Run now) happens in one transaction:
 3. In the creator's DM with the bot (opened if missing), a system message "Routine: {name}"
    carries the routine's instructions in a `routine-run` part; a queued run (hop 0) answers it.
    The run acts for the creator (the requester: their DM) at the strictest of the bot's and the
-   routine's security levels (`run_service.run_context`).
+   routine's security levels, kept on the run (`Run.security_level`) so a routine removed or
+   loosened mid-run can't loosen it.
 
 A slot missed while the server was down runs once when it's back (its `next_run_at` is in the
 past), then the schedule carries on from now: never a backlog.
@@ -19,7 +20,7 @@ past), then the schedule carries on from now: never a backlog.
 import uuid
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Any
+from typing import Any, cast
 
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -27,7 +28,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src.core.config import Settings
 from src.core.errors import Conflict, Forbidden, NotFound
 from src.models import Bot, Membership, Message, Run, Thread
+from src.models.bot import SecurityLevel
 from src.models.routine import Routine, RoutineRun
+from src.runtime.policy import strictest_level
 from src.schemas.routine import RoutineIn, RoutineOut, RoutineRunOut, RoutineUpdate
 from src.services import bot_service, run_service, thread_service, usage_service
 from src.services.routine_schedule import check_schedule, next_run
@@ -260,6 +263,8 @@ async def _still_going(db: AsyncSession, routine: Routine) -> bool:
 
 async def _start(db: AsyncSession, routine: Routine, *, now: datetime, settings: Settings) -> Run:
     assert routine.bot_id and routine.created_by  # checked by _problem
+    bot = await db.get(Bot, routine.bot_id)
+    assert bot is not None  # checked by _problem
     thread = await thread_service.open_dm(db, org_id=routine.org_id, user_id=routine.created_by, bot_id=routine.bot_id)
     trigger = _system_message(
         db,
@@ -279,6 +284,9 @@ async def _start(db: AsyncSession, routine: Routine, *, now: datetime, settings:
     run = run_service.queued_run(
         thread, bot_id=routine.bot_id, trigger=trigger, settings=settings, requester_id=routine.created_by
     )
+    # The strictest of the bot's and the routine's levels, kept on the run (ADR 0004).
+    bot_level = cast("SecurityLevel", bot.security_level)
+    run.security_level = strictest_level(bot_level, cast("SecurityLevel", routine.security_level or bot_level))
     db.add(run)
     await db.flush()
     await _saved(db, trigger, thread, run.id)

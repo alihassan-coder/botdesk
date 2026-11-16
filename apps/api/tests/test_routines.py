@@ -348,6 +348,35 @@ async def test_a_routine_cannot_loosen_its_bots_level(team: Team) -> None:
         assert (await run_service.run_context(db, uuid.UUID(run_id))).security_level == "read-only"
 
 
+async def test_removing_a_routine_while_its_run_waits_for_approval_keeps_the_run_at_its_level(team: Team) -> None:
+    routine = await team.create(securityLevel="read-only")
+    run_id = uuid.UUID((await team.client.post(f"{team.url}/{routine['id']}/run-now")).json()["runId"])
+    async with team.runs.sessionmaker() as db:
+        await db.execute(update(Run).where(Run.id == run_id).values(status="waiting_approval"))
+        await db.commit()
+    assert (await team.client.delete(f"{team.url}/{routine['id']}")).status_code == 204
+    async with team.runs.sessionmaker() as db:
+        context = await run_service.run_context(db, run_id)
+    assert context.security_level == "read-only"  # not the bot's looser "ask-before-acting"
+
+
+async def test_loosening_a_routine_after_its_run_started_does_not_loosen_the_run(team: Team) -> None:
+    routine = await team.create(securityLevel="read-only")
+    run_id = uuid.UUID((await team.client.post(f"{team.url}/{routine['id']}/run-now")).json()["runId"])
+    await team.client.patch(f"{team.url}/{routine['id']}", json={"securityLevel": None})
+    async with team.runs.sessionmaker() as db:
+        assert (await run_service.run_context(db, run_id)).security_level == "read-only"
+
+
+async def test_a_bot_made_stricter_after_its_routine_run_started_is_still_obeyed(team: Team) -> None:
+    routine = await team.create(securityLevel="ask-before-acting")
+    run_id = uuid.UUID((await team.client.post(f"{team.url}/{routine['id']}/run-now")).json()["runId"])
+    await team.sign_in("ali@acme.dev")
+    await team.client.patch(f"{ORGS}/{team.org_id}/bots/{team.bot}", json={"securityLevel": "read-only"})
+    async with team.runs.sessionmaker() as db:
+        assert (await run_service.run_context(db, run_id)).security_level == "read-only"
+
+
 # The every-minute job
 
 

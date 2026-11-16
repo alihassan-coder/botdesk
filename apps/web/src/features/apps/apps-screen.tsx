@@ -54,7 +54,7 @@ export function AppsScreen() {
             <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
               {comingSoon.map((c) => (
                 <article key={c.id} className="flex items-center gap-3 rounded-2xl border border-dashed p-4 text-muted-foreground">
-                  <ConnectorLogo connectorId={c.id} name={c.name} decorative className="opacity-60" />
+                  <ConnectorLogo connectorId={c.id} name={c.name} decorative className="opacity-75 dark:opacity-90" />
                   <div className="min-w-0 flex-1">
                     <p className="font-medium text-foreground/80">{c.name}</p>
                     <p className="truncate text-xs">{c.description}</p>

@@ -146,7 +146,32 @@ async def test_who_may_choose_which_connection(team: Team) -> None:
 
     await team.sign_in("sara@acme.dev")
     await team.bind(scouts["id"], enabled=False)  # unchanged connection, any member may switch
-    await team.bind(None)  # removing an account is switching, too
+    await team.bind(None, expect=403)  # removing Scout's own account needs the right to choose it
+
+
+async def test_replacing_or_removing_an_account_needs_the_right_to_that_account(team: Team) -> None:
+    """A member can't knock out an account someone else chose: putting their own over the
+    organization's would take the app away from everyone else's runs."""
+    shared = await team.connect(ownerKind="org", accountLabel="Shared")
+    await team.bind(shared["id"])
+    await team.sign_in("sara@acme.dev")
+    saras = await team.connect(accountLabel="Sara's")
+
+    await team.bind(saras["id"], expect=403)  # over the organization's account
+    await team.bind(None, expect=403)  # clearing it
+    await team.bind(shared["id"], enabled=False)  # switching the app off is still anyone's call
+    assert (await _tools(team))["demo"]["connectionId"] == shared["id"]
+
+    await team.sign_in("ali@acme.dev")
+    await team.bind(None)  # an owner may clear it
+    await team.sign_in("sara@acme.dev")
+    await team.bind(saras["id"])  # an empty slot is free to fill with her own
+    await team.bind(None)  # and her own she may take back out
+
+    await team.bind(saras["id"])
+    await team.sign_in("ali@acme.dev")
+    await team.bind(shared["id"])  # owners and admins may replace a member's account (offboarding)
+    assert (await _tools(team))["demo"]["connectionId"] == shared["id"]
 
 
 async def test_choosing_an_account_writes_bound_and_unbound_lines(team: Team) -> None:

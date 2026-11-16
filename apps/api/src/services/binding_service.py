@@ -102,14 +102,16 @@ async def update_bindings(
         if registry.plugin(change.plugin_id) is None:
             raise NotFound(UNKNOWN_PLUGIN)
     current = await bindings_of(db, bot.id)
-    new = [
-        change
-        for change in changes
-        if change.connection_id is not None and change.connection_id != _connection_of(current.get(change.plugin_id))
-    ]
-    found = await _connections(db, actor.org_id, {change.connection_id for change in new if change.connection_id})
-    for change in new:
-        _check_can_bind(actor, bot, change.plugin_id, found.get(change.connection_id))  # type: ignore[arg-type]
+    moved = [change for change in changes if change.connection_id != _connection_of(current.get(change.plugin_id))]
+    involved = {_connection_of(current.get(change.plugin_id)) for change in moved}
+    involved |= {change.connection_id for change in moved}
+    found = await _connections(db, actor.org_id, {id_ for id_ in involved if id_ is not None})
+    for change in moved:
+        before = _connection_of(current.get(change.plugin_id))
+        if before is not None:
+            _check_can_unbind(actor, bot, found.get(before))
+        if change.connection_id is not None:
+            _check_can_bind(actor, bot, change.plugin_id, found.get(change.connection_id))
 
     for change in changes:
         binding = current.get(change.plugin_id)
@@ -144,6 +146,19 @@ async def _connections(db: AsyncSession, org_id: uuid.UUID, ids: set[uuid.UUID])
         return {}
     rows = await db.scalars(select(Connection).where(Connection.org_id == org_id, Connection.id.in_(ids)))
     return {row.id: row for row in rows}
+
+
+def _check_can_unbind(actor: Actor, bot: Bot, connection: Connection | None) -> None:
+    """Replacing or clearing the account a bot works through needs the right to that account,
+    so a member can't take an app away from everyone else's runs. Owners and admins always may
+    (offboarding); an account that's gone or disconnected holds nothing and is free to replace."""
+    if connection is None or connection.status == "revoked" or actor.is_admin:
+        return
+    if connection.owner_kind == "member" and connection.owner_user_id == actor.user_id:
+        return
+    if connection.owner_kind == "bot" and bot.created_by == actor.user_id:
+        return
+    raise Forbidden("Only whoever may choose this account (or an owner or admin) can change it.")
 
 
 def _check_can_bind(actor: Actor, bot: Bot, plugin_id: str, connection: Connection | None) -> None:

@@ -16,7 +16,7 @@ class TaskOut(ApiModel):
     child_run_id: uuid.UUID | None
     message_id: uuid.UUID | None
     from_bot_id: uuid.UUID | None
-    to_bot_id: uuid.UUID
+    to_bot_id: uuid.UUID | None  # None once the bot is removed
     task: str
     status: TaskStatus
     result_message_id: uuid.UUID | None

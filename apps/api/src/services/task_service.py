@@ -25,7 +25,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from typing import Any
 
-from sqlalchemy import func, select, update
+from sqlalchemy import and_, func, or_, select, union, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
 
@@ -42,6 +42,8 @@ from src.services.thread_service import message_out, text_of, text_part
 RESULT_LIMIT = 8000  # characters of the owner's reply kept as the task's result
 PREVIEW_LIMIT = 280  # characters of it on the card
 STOPPED = "Stopped before it finished."
+LOST_STOP_WINDOW = timedelta(days=1)  # how far back `to_reconcile` looks for children left going
+CHILD_GONE = "Its run is gone (its bot or chat was removed)."
 
 
 @dataclass(frozen=True)
@@ -60,7 +62,7 @@ class Aftermath:
 @dataclass(frozen=True)
 class HandedOff:
     task: Task
-    child: Run
+    child: Run | None  # None only when `created` is False and the child's run is gone
     created: bool  # False: this call had already made the task (the node ran again)
 
 
@@ -99,9 +101,17 @@ async def hand_off(
         return Refused("This run is gone.")
     existing = await db.scalar(select(Task).where(Task.parent_run_id == parent.id, Task.tool_call_id == tool_call_id))
     if existing is not None:
+        # The node ran again: the same task, never a second one. If its child's run is gone (its
+        # bot or chat was removed), the task can't finish any more: it fails, and says why.
         child = await db.get(Run, existing.child_run_id) if existing.child_run_id else None
-        if child is not None:
-            return HandedOff(existing, child, created=False)
+        if child is None and (
+            gone := await _change(
+                db, existing.id, OPEN_TASK_STATUSES, status="failed", error=CHILD_GONE, finished_at=utcnow()
+            )
+        ):
+            await _show(db, gone)
+            existing = gone
+        return HandedOff(existing, child, created=False)
     handle = normalise_handle(args.bot)
     target = await db.scalar(select(Bot).where(Bot.org_id == parent.org_id, Bot.handle == handle))
     if refusal := await _refusal(db, parent, target, handle, settings):
@@ -135,6 +145,8 @@ async def hand_off(
         tool_call_id=tool_call_id,
         from_bot_id=parent.bot_id,
         to_bot_id=target.id,
+        to_bot_name=target.name,
+        to_bot_handle=target.handle,
         child_run_id=child.id,
         message_id=message.id,
         requester_id=parent.requester_id,
@@ -174,6 +186,10 @@ async def _refusal(db: AsyncSession, parent: Run, target: Bot | None, handle: st
         return (
             f"You've already handed off {handed} tasks in this reply, the most allowed. Work with the results you have."
         )
+    if db.get_bind().dialect.name == "postgresql":
+        # One handoff at a time per organization counts and inserts (until this transaction ends),
+        # so handoffs from different chats can't both pass the cap. SQLite serialises writers anyway.
+        await db.execute(select(func.pg_advisory_xact_lock(func.hashtext(f"tasks:{parent.org_id}"))))
     open_in_org = (
         await db.scalar(
             select(func.count())
@@ -332,10 +348,7 @@ async def _end_for_child(
         )
     if ended is None:
         return Aftermath()  # it had already ended (timed out, or its parent ended first)
-    await _show(db, ended)
-    if child.tainted and not parent.tainted:
-        await db.execute(update(Run).where(Run.id == parent.id).values(tainted=True))
-    return Aftermath(resume=[parent]) if await _ready(db, parent) else Aftermath()
+    return await _task_ended(db, parent, ended, child)
 
 
 async def _cancel_open_tasks(db: AsyncSession, run_id: uuid.UUID) -> Aftermath:
@@ -379,8 +392,13 @@ async def resume_answer(
         return None
     child = aliased(Run)
     query = (
-        select(Task, Bot.name, Bot.handle, child.tainted)
-        .join(Bot, Bot.id == Task.to_bot_id)
+        select(
+            Task,
+            func.coalesce(Bot.name, Task.to_bot_name),
+            func.coalesce(Bot.handle, Task.to_bot_handle),
+            child.tainted,
+        )
+        .outerjoin(Bot, Bot.id == Task.to_bot_id)
         .outerjoin(child, child.id == Task.child_run_id)
         .where(Task.parent_run_id == parent_run_id)
         .order_by(Task.created_at, Task.id)
@@ -403,6 +421,49 @@ async def resume_answer(
         ],
         "tainted": any(bool(tainted) for *_, tainted in rows),
     }
+
+
+def _open_tasks_with(bot_id: uuid.UUID) -> Any:
+    return select(Task).where(
+        Task.status.in_(OPEN_TASK_STATUSES), or_(Task.to_bot_id == bot_id, Task.from_bot_id == bot_id)
+    )
+
+
+async def parents_with_open_tasks_of(db: AsyncSession, bot_id: uuid.UUID) -> list[uuid.UUID]:
+    """The parent runs with an open task handed to this bot or by it, in id order."""
+    query = _open_tasks_with(bot_id).with_only_columns(Task.parent_run_id).distinct().order_by(Task.parent_run_id)
+    return list(await db.scalars(query))
+
+
+async def bot_removed(db: AsyncSession, bot_id: uuid.UUID, parent_run_id: uuid.UUID) -> Aftermath:
+    """A bot is about to be removed (its runs, and its DMs, go with it), so nothing may wait for
+    it: end this parent's open tasks that involve it, under the parent's lock. A task handed
+    **to** it fails ("Sales was removed before it finished.") and the parent may resume; a task
+    handed **by** its run is cancelled. Their children are returned in `stop`.
+
+    The caller does this for each of `parents_with_open_tasks_of(bot)`, one short transaction
+    each (resume, commit), then stops the runs, then deletes the bot."""
+    parent = await _lock_run(db, parent_run_id)
+    if parent is None:
+        return Aftermath()
+    name = await db.scalar(select(Bot.name).where(Bot.id == bot_id)) or "The bot"
+    aftermath = Aftermath()
+    query = _open_tasks_with(bot_id).where(Task.parent_run_id == parent.id).order_by(Task.created_at, Task.id)
+    for task in list(await db.scalars(query)):
+        if task.to_bot_id == bot_id:
+            values = {"status": "failed", "error": f"{name} was removed before it finished."}
+        else:
+            values = {"status": "cancelled", "error": f"Cancelled: {name} was removed before it finished."}
+        ended = await _change(db, task.id, OPEN_TASK_STATUSES, finished_at=utcnow(), **values)
+        if ended is None:
+            continue
+        if ended.status == "failed":
+            aftermath += await _task_ended(db, parent, ended, None)
+        else:
+            await _show(db, ended)
+        if ended.child_run_id is not None:
+            aftermath += Aftermath(stop=[ended.child_run_id])
+    return aftermath
 
 
 # Timeouts and recovery
@@ -438,39 +499,70 @@ async def expire_overdue(db: AsyncSession, task_id: uuid.UUID, *, now: datetime 
     )
     if ended is None or parent is None:
         return Aftermath()
-    await _show(db, ended)
-    resume = [parent] if await _ready(db, parent) else []
-    return Aftermath(resume=resume, stop=[ended.child_run_id] if ended.child_run_id else [])
+    child = await db.get(Run, ended.child_run_id, populate_existing=True) if ended.child_run_id else None
+    aftermath = await _task_ended(db, parent, ended, child)
+    return aftermath + Aftermath(stop=[ended.child_run_id] if ended.child_run_id else [])
 
 
-async def reconcile(db: AsyncSession) -> Aftermath:
-    """The safety net (run by recovery): end every open task whose child run has already
-    finished, the way `run_ended` would; cancel the open tasks of runs that already ended; and
-    resume every parent waiting for tasks that have all ended."""
+async def to_reconcile(db: AsyncSession, *, limit: int = 100) -> list[uuid.UUID]:
+    """The safety net's work list (recovery, every minute): parent runs with something to put
+    right, in id order, at most `limit`. A parent is listed when it has an open task whose child
+    already finished (or is gone), it has ended with tasks still open, a task of it ended while
+    its child is still going (a timeout whose stop was lost), or it waits for tasks that have all
+    ended. `reconcile` each one in its own short transaction."""
+    child, parent = aliased(Run), aliased(Run)
+    is_open = Task.status.in_(OPEN_TASK_STATUSES)
+    tasks = (
+        select(Task.parent_run_id.label("run_id"))
+        .join(parent, parent.id == Task.parent_run_id)
+        .outerjoin(child, child.id == Task.child_run_id)
+        .where(
+            or_(
+                and_(is_open, or_(Task.child_run_id.is_(None), child.status.in_(FINISHED_STATUSES))),
+                and_(is_open, parent.status.in_(FINISHED_STATUSES)),
+                # Recently ended tasks only, so the pass never scans the whole history.
+                and_(~is_open, Task.finished_at >= utcnow() - LOST_STOP_WINDOW, child.status.not_in(FINISHED_STATUSES)),
+            )
+        )
+    )
+    waiting = select(Run.id.label("run_id")).where(Run.status == "waiting_handoff", ~_open_tasks_of(Run.id).exists())
+    both = union(tasks, waiting).subquery()
+    return list(await db.scalars(select(both.c.run_id).order_by(both.c.run_id).limit(limit)))
+
+
+async def reconcile(db: AsyncSession, parent_run_id: uuid.UUID) -> Aftermath:
+    """Put one parent right, under its lock only (so passes never deadlock): end each open task
+    whose child already finished, the way `run_ended` would (or fail it if the child is gone);
+    cancel its open tasks if it has ended; stop the children still going after their task ended;
+    and resume it if it waits for tasks that have all ended. The caller commits."""
+    parent = await _lock_run(db, parent_run_id)
+    if parent is None:
+        return Aftermath()
     aftermath = Aftermath()
     child = aliased(Run)
-    finished_children = (
+    rows = (
         await db.execute(
-            select(Task.id, Task.parent_run_id, child.id, child.status, child.error)
-            .join(child, child.id == Task.child_run_id)
-            .where(Task.status.in_(OPEN_TASK_STATUSES), child.status.in_(FINISHED_STATUSES))
+            select(Task.id, Task.status, Task.child_run_id, child.status, child.error)
+            .outerjoin(child, child.id == Task.child_run_id)
+            .where(Task.parent_run_id == parent.id)
+            .order_by(Task.created_at, Task.id)
         )
     ).all()
-    for task_id, parent_id, child_id, status, error in finished_children:
-        aftermath += await _end_for_child(db, task_id, parent_id, child_id, status, error, None)
-    parent = aliased(Run)
-    ended_parents = await db.scalars(
-        select(Task.parent_run_id)
-        .join(parent, parent.id == Task.parent_run_id)
-        .where(Task.status.in_(OPEN_TASK_STATUSES), parent.status.in_(FINISHED_STATUSES))
-        .distinct()
-    )
-    for parent_id in list(ended_parents):
-        aftermath += await _cancel_open_tasks(db, parent_id)
-    waiting = await db.scalars(select(Run.id).where(Run.status == "waiting_handoff", ~_open_tasks_of(Run.id).exists()))
-    for run_id in list(waiting):
-        if (run := await resume_if_ready(db, run_id)) is not None:
-            aftermath += Aftermath(resume=[run])
+    for task_id, task_status, child_id, child_status, error in rows:
+        if task_status not in OPEN_TASK_STATUSES:
+            if child_id is not None and child_status not in FINISHED_STATUSES:
+                aftermath += Aftermath(stop=[child_id])
+        elif child_id is None:
+            if ended := await _change(
+                db, task_id, OPEN_TASK_STATUSES, status="failed", error=CHILD_GONE, finished_at=utcnow()
+            ):
+                aftermath += await _task_ended(db, parent, ended, None)
+        elif child_status in FINISHED_STATUSES:
+            aftermath += await _end_for_child(db, task_id, parent.id, child_id, child_status, error, None)
+    if parent.status in FINISHED_STATUSES:
+        aftermath += await _cancel_open_tasks(db, parent.id)
+    elif await _ready(db, parent):
+        aftermath += Aftermath(resume=[parent])
     return aftermath
 
 
@@ -490,7 +582,7 @@ def handoff_part(task: Task) -> dict[str, Any]:
         "type": "handoff",
         "taskId": str(task.id),
         "fromBotId": str(task.from_bot_id) if task.from_bot_id else None,
-        "toBotId": str(task.to_bot_id),
+        "toBotId": str(task.to_bot_id) if task.to_bot_id else None,
         "task": task.task,
         "status": task.status,
         "resultMessageId": str(task.result_message_id) if task.result_message_id else None,
@@ -536,7 +628,8 @@ async def handoff_lines(db: AsyncSession, parts: list[dict[str, Any]]) -> list[s
     handles = dict((await db.execute(select(Bot.id, Bot.handle).where(Bot.id.in_(ids)))).tuples().all())
     lines = []
     for card in cards:
-        handle = handles.get(uuid.UUID(str(card["toBotId"])), "a teammate")
+        to_bot = card.get("toBotId")
+        handle = handles.get(uuid.UUID(str(to_bot)), "a teammate") if to_bot else "a teammate"
         task = str(card.get("task", "")).replace('"', "'")
         lines.append(f'(handed @{handle} a task: "{task}", {card.get("status", "queued")})')
     return lines
@@ -567,6 +660,16 @@ async def _has_open_tasks(db: AsyncSession, run_id: uuid.UUID) -> bool:
 async def _ready(db: AsyncSession, parent: Run) -> bool:
     """The parent waits for tasks and none is open any more: it should resume."""
     return parent.status == "waiting_handoff" and not await _has_open_tasks(db, parent.id)
+
+
+async def _task_ended(db: AsyncSession, parent: Run, ended: Task, child: Run | None) -> Aftermath:
+    """A task of this (locked) parent just ended, however it ended: its card and event; a tainted
+    child taints the parent (in its row: the parent's state learns it from `resume_answer`); and
+    the parent resumes if that was its last open task."""
+    await _show(db, ended)
+    if child is not None and child.tainted and not parent.tainted:
+        await db.execute(update(Run).where(Run.id == parent.id).values(tainted=True))
+    return Aftermath(resume=[parent]) if await _ready(db, parent) else Aftermath()
 
 
 async def _change(db: AsyncSession, task_id: uuid.UUID, from_statuses: Sequence[str], **values: Any) -> Task | None:

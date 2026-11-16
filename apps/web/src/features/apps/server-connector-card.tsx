@@ -1,4 +1,4 @@
-import { Puzzle } from "lucide-react";
+import { ConnectorLogo } from "@/components/connector-logo";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import type { AccountConnection, ServerConnector } from "@/data/types";
@@ -27,7 +27,7 @@ export function ServerConnectorCard({
   return (
     <article className="flex flex-col gap-3 rounded-2xl border bg-card p-4" aria-label={c.name}>
       <div className="flex items-center gap-3">
-        <span className="grid size-10 shrink-0 place-items-center rounded-xl border bg-muted/50"><Puzzle className="size-5 text-muted-foreground" /></span>
+        <ConnectorLogo connectorId={c.id} name={c.name} decorative />
         <div className="min-w-0 flex-1">
           <p className="font-medium">{c.name}</p>
           <p className="text-xs text-muted-foreground">Version {c.version}</p>

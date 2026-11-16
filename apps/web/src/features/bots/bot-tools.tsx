@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
+import { ConnectorLogo } from "@/components/connector-logo";
 import { Button } from "@/components/ui/button";
 import { NativeSelect, NativeSelectOption } from "@/components/ui/native-select";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -75,6 +76,7 @@ function PluginCard({
   return (
     <article className="flex flex-col gap-3 rounded-xl border p-3" aria-label={p.name}>
       <div className="flex items-start gap-3">
+        <ConnectorLogo connectorId={p.pluginId} name={p.name} size="sm" decorative />
         <div className="min-w-0 flex-1">
           <p className="text-sm font-medium">{p.name}</p>
           <p className="text-xs text-muted-foreground">{p.description}</p>

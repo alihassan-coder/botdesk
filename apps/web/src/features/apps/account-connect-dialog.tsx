@@ -3,6 +3,7 @@ import { TriangleAlert } from "lucide-react";
 import { toast } from "sonner";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
+import { ConnectorLogo } from "@/components/connector-logo";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Field, FieldDescription, FieldLabel, FieldLegend, FieldSet } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
@@ -60,6 +61,7 @@ function ConnectForm({ connector: c, onClose }: { connector: ServerConnector; on
       className="flex flex-col gap-5"
     >
       <DialogHeader>
+        <ConnectorLogo connectorId={c.id} name={c.name} decorative />
         <DialogTitle>Connect {c.name}</DialogTitle>
         <DialogDescription>
           {isKey ? "The key is kept encrypted on the server and never shown again." : `You'll sign in with ${c.name}'s provider, then come back here.`}

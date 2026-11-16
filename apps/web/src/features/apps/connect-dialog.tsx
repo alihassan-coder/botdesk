@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
+import { ConnectorLogo } from "@/components/connector-logo";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Field, FieldDescription, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
@@ -30,6 +31,7 @@ export function ConnectDialog({ connector, onClose }: { connector: Connector | n
     <Dialog open={connector !== null} onOpenChange={(open) => !open && onClose()}>
       <DialogContent>
         <DialogHeader>
+          {connector && <ConnectorLogo connectorId={connector.id} name={connector.name} decorative />}
           <DialogTitle>Connect {connector?.name}</DialogTitle>
           <DialogDescription>
             {isMcp ? "Its tools become tools your bots can use, each with a risk level you control." : "Your bots will read and draft email. Sending always follows each bot's security level."}

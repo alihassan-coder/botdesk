@@ -11,6 +11,7 @@ import {
   AlertDialogTitle,
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
+import { ConnectorLogo } from "@/components/connector-logo";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { actions, useBots, useCurrentUser } from "@/data/store";
@@ -36,6 +37,7 @@ export function YourConnections({ accounts, connectors }: { accounts: AccountCon
             const broken = account.status === "needs_reconnect";
             return (
               <li key={account.id} className="flex flex-wrap items-center gap-3 rounded-2xl border bg-card p-4">
+                <ConnectorLogo connectorId={account.connectorId} name={name} decorative />
                 <div className="min-w-0 flex-1">
                   <p className="font-medium">{name} <span className="font-normal text-muted-foreground">· {account.accountLabel}</span></p>
                   <p className="truncate text-sm text-muted-foreground">

@@ -1,4 +1,4 @@
-import { Mail } from "lucide-react";
+import { ConnectorLogo } from "@/components/connector-logo";
 import { Button } from "@/components/ui/button";
 import { formatCount } from "@/lib/format";
 import type { Template } from "@/data/types";
@@ -27,7 +27,7 @@ export function TemplateCard({ template, onHire, demo }: { template: Template; o
         {demo && <span>{formatCount(template.installs)} hires</span>}
         {demo && template.connectors.includes("gmail") && (
           <span className="flex items-center gap-1">
-            <Mail className="size-3.5" /> Gmail
+            <ConnectorLogo connectorId="gmail" name="Gmail" size="xs" decorative /> Gmail
           </span>
         )}
         <Button size="sm" className="ml-auto" onClick={onHire} aria-label={`Hire ${template.name}`}>

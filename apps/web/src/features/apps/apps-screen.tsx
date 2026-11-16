@@ -1,12 +1,12 @@
 "use client";
 
 import { useState } from "react";
+import { ConnectorLogo } from "@/components/connector-logo";
 import { Button } from "@/components/ui/button";
 import { actions, useConnections, useConnectors, useIsDemo, useServerConnectors } from "@/data/store";
 import type { Connector } from "@/data/types";
 import { PageHeader } from "@/features/shell/page-header";
 import { ConnectDialog } from "./connect-dialog";
-import { ConnectorIcon } from "./connector-icon";
 import { ServerConnectors } from "./server-connectors";
 import { ToolList } from "./tool-list";
 
@@ -54,7 +54,7 @@ export function AppsScreen() {
             <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
               {comingSoon.map((c) => (
                 <article key={c.id} className="flex items-center gap-3 rounded-2xl border border-dashed p-4 text-muted-foreground">
-                  <ConnectorIcon category={c.category} className="opacity-60" />
+                  <ConnectorLogo connectorId={c.id} name={c.name} decorative className="opacity-60" />
                   <div className="min-w-0 flex-1">
                     <p className="font-medium text-foreground/80">{c.name}</p>
                     <p className="truncate text-xs">{c.description}</p>
@@ -84,7 +84,7 @@ function Connections({ connectors }: { connectors: Connector[] }) {
           if (!connector) return null;
           return (
             <li key={conn.id} className="flex items-center gap-3 rounded-2xl border bg-card p-4">
-              <ConnectorIcon category={connector.category} />
+              <ConnectorLogo connectorId={connector.id} name={connector.name} decorative />
               <div className="min-w-0 flex-1">
                 <p className="font-medium">{connector.name}</p>
                 <p className="truncate text-sm text-muted-foreground">{conn.account}</p>
@@ -103,7 +103,7 @@ function ConnectorCard({ connector: c, onConnect }: { connector: Connector; onCo
   return (
     <article className="flex flex-col gap-3 rounded-2xl border bg-card p-4">
       <div className="flex items-center gap-3">
-        <ConnectorIcon category={c.category} />
+        <ConnectorLogo connectorId={c.id} name={c.name} decorative />
         <div className="min-w-0 flex-1">
           <p className="font-medium">{c.name}</p>
           <p className="text-xs text-muted-foreground">by {c.publisher}</p>

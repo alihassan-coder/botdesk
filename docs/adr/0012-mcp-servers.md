@@ -86,3 +86,14 @@ The official Python SDK `mcp` is at 2.x (MIT). Its client speaks 2026-07-28 and 
 - Tools (annotations untrusted, results, `input_required`, naming): https://modelcontextprotocol.io/specification/2026-07-28/server/tools
 - Python SDK `mcp` 2.3.0, MIT: https://pypi.org/project/mcp/ ; transports (`streamable_http_client(url, http_client=…)`, redirect rules): https://py.sdk.modelcontextprotocol.io/client/transports/ ; OAuth (`OAuthClientProvider`, `TokenStorage`): https://py.sdk.modelcontextprotocol.io/client/oauth-clients/ ; protocol versions: https://py.sdk.modelcontextprotocol.io/protocol-versions/
 - `httpx2` (BSD-3): https://pypi.org/project/httpx2/
+
+## Spike result (2026-11-16)
+
+Slice 7.1 checked §7 against the real packages; the assumption **held**, no change of decision.
+
+- `mcp` **2.3.0** (MIT) is current on PyPI. It depends on `httpx2` 2.16.0 / `httpcore2` (BSD-3), `mcp-types` (MIT), `sse-starlette` (BSD-3), `PyJWT` (MIT), `truststore` (MIT): all allowed.
+- The guard ports to `httpx2`/`httpcore2` as is: same `AsyncNetworkBackend` and `AsyncConnectionPool(network_backend=…)` shape, so `src/mcp/_guard.py` is the httpx guard with three additions for MCP: requests are locked to the server's origin, https only, and a response size cap. The fallback (delegating to the httpx transport) isn't needed. `safe_addresses` stays shared with model servers.
+- `streamable_http_client(url, http_client=…)` takes our guarded `httpx2.AsyncClient`; the SDK follows only same-origin redirects itself, and our transport refuses any other origin regardless.
+- `Client(mode="auto")` probes `server/discover` (2026-07-28) and falls back to `initialize` (tested against a server that 404s `server/discover`).
+- `input_required` is refused with `input_required_max_rounds=0` and no sampling, elicitation or roots callbacks.
+- Interface as built: `list_tools(server, *, network)`, `call_tool(server, name, args, *, network)` in `src/mcp/client.py`; `server` is `McpServerConfig` (URL, header auth, timeouts, byte cap, and `auth: httpx2.Auth | None` as the seam for 7.3's `OAuthClientProvider`). `start_oauth` is left to 7.3.

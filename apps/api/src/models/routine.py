@@ -12,7 +12,7 @@ class Routine(IdMixin, CreatedAtMixin, Base):
 
     Each time it's due, the `fire_routines` job starts a run of its bot in the creator's DM with
     that bot, acting for the creator (the requester). A routine whose bot was removed, or whose
-    creator left, is switched off with `disabled_reason`."""
+    creator left, is switched off with `disabled_reason`; a slot over budget is skipped."""
 
     __tablename__ = "routines"
     # "Which routines are due?" every minute.
@@ -44,5 +44,7 @@ class RoutineRun(IdMixin, Base):
     run_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("runs.id", ondelete="SET NULL"), unique=True)
     started_at: Mapped[datetime]
     # started: `run_id` holds the run (its own status says how it went).
-    # skipped: the routine's previous run was still going, so this one didn't start.
+    # skipped: it didn't start; `reason` says why (its previous run was still going, or a
+    # budget ran out).
     status: Mapped[str] = mapped_column(String(20), default="started")
+    reason: Mapped[str | None] = mapped_column(Text)

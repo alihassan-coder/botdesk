@@ -15,7 +15,7 @@ from sqlalchemy import select, update
 
 from src.jobs.queue import JobEnv
 from src.jobs.tasks import fire_routines
-from src.models import Message, Routine, Run
+from src.models import Bot, Message, Routine, Run, Thread
 from src.runtime.runner import RunManager
 from src.services import run_service, usage_service
 from tests.conftest import PASSWORD, TEST_SETTINGS, FakeProviders, api_client, sign_up
@@ -427,23 +427,71 @@ async def test_a_routine_whose_bot_was_removed_is_switched_off_with_a_reason(tea
     assert listed["disabledReason"] == "Its bot was removed."
 
 
-async def test_a_routine_whose_bot_is_over_budget_is_switched_off_with_a_reason(team: Team) -> None:
+OVER_BUDGET = "Reader reached its $50 monthly budget. Raise it in the bot's settings."
+
+
+async def test_a_routine_over_budget_skips_its_slot_and_fires_again_next_month(team: Team) -> None:
+    """In the future, so the Run now one (stamped with the real clock) is the older run."""
     routine = await team.create()
     run_id = (await team.client.post(f"{team.url}/{routine['id']}/run-now")).json()["runId"]
     async with team.runs.sessionmaker() as db:
         await db.execute(update(Run).values(status="succeeded"))
-        usage_service.record(
+        usage = usage_service.record(
             db, org_id=uuid.UUID(team.org_id), bot_id=uuid.UUID(team.bot), run_id=uuid.UUID(run_id),
             provider="anthropic", model_id="m", input_tokens=1, output_tokens=1, cost_usd=60.0,
         )  # fmt: skip
+        usage.created_at = utc(2030, 1, 2, 0, 0)
         await db.commit()
-    now = datetime.now(UTC)
-    await team.make_due(routine["id"], now - timedelta(minutes=1))
-    await team.fire(now)
+    await team.make_due(routine["id"], utc(2030, 1, 15, 4, 0))
+    await team.fire(utc(2030, 1, 15, 4, 0, 10))
     assert len(await team.routine_runs()) == 1  # only the Run now one
     listed = await team.get(routine["id"])
-    assert listed["enabled"] is False
-    assert listed["disabledReason"] == "Reader reached its $50 monthly budget. Raise it in the bot's settings."
+    # Still on, moved to its next slot; the slot it missed says why.
+    assert listed["enabled"] is True and listed["disabledReason"] is None
+    assert datetime.fromisoformat(listed["nextRunAt"]) == utc(2030, 1, 16, 4, 0)
+    assert listed["lastResult"] == "skipped"
+    runs = (await team.client.get(f"{team.url}/{routine['id']}/runs")).json()
+    assert (runs[0]["status"], runs[0]["reason"]) == ("skipped", OVER_BUDGET)
+    # A new month, a new budget: it fires.
+    await team.make_due(routine["id"], utc(2030, 2, 1, 4, 0))
+    await team.fire(utc(2030, 2, 1, 4, 0, 10))
+    assert len(await team.routine_runs()) == 2
+
+
+async def test_run_now_over_budget_says_why(team: Team) -> None:
+    routine = await team.create()
+    async with team.runs.sessionmaker() as db:
+        await db.execute(update(Bot).values(monthly_budget_usd=0.01))
+        thread = await db.scalar(select(Thread.id))
+        run = Run(org_id=uuid.UUID(team.org_id), bot_id=uuid.UUID(team.bot), thread_id=thread, status="succeeded",
+                  max_steps=1, max_seconds=1)  # fmt: skip
+        db.add(run)
+        await db.flush()
+        usage_service.record(
+            db, org_id=uuid.UUID(team.org_id), bot_id=uuid.UUID(team.bot), run_id=run.id,
+            provider="anthropic", model_id="m", input_tokens=1, output_tokens=1, cost_usd=1.0,
+        )  # fmt: skip
+        await db.commit()
+    response = await team.client.post(f"{team.url}/{routine['id']}/run-now")
+    assert response.status_code == 409
+    assert "budget" in response.json()["detail"]
+    assert (await team.get(routine["id"]))["enabled"] is True
+
+
+async def test_one_failing_routine_does_not_stop_the_others_from_firing(team: Team) -> None:
+    broken = await team.create(name="Broken")
+    fine = await team.create(name="Fine")
+    await team.make_due(broken["id"], utc(2026, 11, 15, 3, 59))  # first in line
+    await team.make_due(fine["id"], utc(2026, 11, 15, 4, 0))
+    async with team.runs.sessionmaker() as db:  # saved before schedules were checked: never comes
+        await db.execute(update(Routine).where(Routine.id == uuid.UUID(broken["id"])).values(cron="0 0 30 2 *"))
+        await db.commit()
+    await team.fire(utc(2026, 11, 15, 4, 0, 10))
+    [run] = await team.routine_runs()
+    async with team.runs.sessionmaker() as db:
+        trigger = await db.get(Message, run.trigger_message_id)
+    assert trigger is not None and trigger.parts[0]["text"] == "Routine: Fine"
+    assert (await team.get(broken["id"]))["lastRunAt"] is None  # its transaction was rolled back
 
 
 async def test_a_routine_whose_last_run_is_still_going_skips_its_slot(team: Team) -> None:

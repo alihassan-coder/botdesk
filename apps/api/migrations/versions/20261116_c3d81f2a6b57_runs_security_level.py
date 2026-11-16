@@ -1,4 +1,4 @@
-"""runs.security_level: a routine's run keeps the level it started at
+"""runs.security_level: a routine's run keeps the level it started at; routine_runs.reason
 
 Revision ID: c3d81f2a6b57
 Revises: 8cf59be5197c
@@ -20,7 +20,9 @@ depends_on: str | Sequence[str] | None = None
 
 def upgrade() -> None:
     """Additive. Runs a routine already started keep its level (the run reads the strictest of it
-    and its bot's), so removing the routine later can't loosen them."""
+    and its bot's), so removing the routine later can't loosen them. A skipped slot says why."""
+    with op.batch_alter_table("routine_runs", schema=None) as batch_op:
+        batch_op.add_column(sa.Column("reason", sa.Text(), nullable=True))
     with op.batch_alter_table("runs", schema=None) as batch_op:
         batch_op.add_column(sa.Column("security_level", sa.String(length=30), nullable=True))
     op.execute(
@@ -31,5 +33,7 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
+    with op.batch_alter_table("routine_runs", schema=None) as batch_op:
+        batch_op.drop_column("reason")
     with op.batch_alter_table("runs", schema=None) as batch_op:
         batch_op.drop_column("security_level")

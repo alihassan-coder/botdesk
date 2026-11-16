@@ -2,11 +2,13 @@
 
 Firing a routine (on its schedule, or Run now) happens in one transaction:
 
-1. Checks: its bot still exists, its creator is still in the organization, and the bot and the
-   organization are under budget. On schedule, a routine that fails a check is switched off with
-   the reason (`disabled_reason`); Run now just says why it can't.
-2. Its previous run must have finished: a slot that comes while it's still going (say, waiting
-   for an approval) is recorded as `skipped`, so runs never pile up.
+1. Checks: its bot still exists and its creator is still in the organization. On schedule, a
+   routine that fails one is switched off with the reason (`disabled_reason`): only these two
+   switch a routine off. Run now just says why it can't.
+2. The bot and the organization must be under budget, and its previous run must have finished
+   (say, not waiting for an approval). Otherwise the slot is recorded as `skipped` with the
+   reason and the routine moves on to its next slot, so runs never pile up and a new month's
+   budget picks it up again.
 3. In the creator's DM with the bot (opened if missing), a system message "Routine: {name}"
    carries the routine's instructions in a `routine-run` part; a queued run (hop 0) answers it.
    The run acts for the creator (the requester: their DM) at the strictest of the bot's and the
@@ -117,6 +119,7 @@ async def recent_runs(db: AsyncSession, routine: Routine, viewer: Viewer) -> lis
             started_at=row.started_at,
             status=run_status or row.status,
             error=error,
+            reason=row.reason,
         )
         for row, thread_id, run_status, error in rows
     ]
@@ -236,18 +239,28 @@ async def due(db: AsyncSession, now: datetime) -> list[uuid.UUID]:
 class Fired:
     run: Run | None  # the queued run to start after commit; None if nothing started
     thread_id: uuid.UUID | None = None
-    problem: str | None = None  # why it couldn't run (switched off on schedule)
+    problem: str | None = None  # why it was switched off
+    skipped: str | None = None  # why this slot didn't run
 
 
-async def _problem(db: AsyncSession, routine: Routine, now: datetime) -> str | None:
+async def _gone(db: AsyncSession, routine: Routine) -> str | None:
+    """Why the routine can't run at all (its bot or its creator is gone), or None."""
     if routine.bot_id is None or await db.get(Bot, routine.bot_id) is None:
         return BOT_REMOVED
     member = routine.created_by and await db.scalar(
         select(Membership.user_id).where(Membership.org_id == routine.org_id, Membership.user_id == routine.created_by)
     )
-    if not member:
-        return CREATOR_LEFT
-    return await usage_service.budget_stop(db, org_id=routine.org_id, bot_id=routine.bot_id, estimate_usd=0.0, now=now)
+    return None if member else CREATOR_LEFT
+
+
+async def _wait(db: AsyncSession, routine: Routine, now: datetime) -> str | None:
+    """Why it can't run right now (over budget, or its last run is still going), or None."""
+    assert routine.bot_id  # checked by _gone
+    if stop := await usage_service.budget_stop(
+        db, org_id=routine.org_id, bot_id=routine.bot_id, estimate_usd=0.0, now=now
+    ):
+        return stop
+    return STILL_GOING if await _still_going(db, routine) else None
 
 
 async def _still_going(db: AsyncSession, routine: Routine) -> bool:
@@ -262,9 +275,9 @@ async def _still_going(db: AsyncSession, routine: Routine) -> bool:
 
 
 async def _start(db: AsyncSession, routine: Routine, *, now: datetime, settings: Settings) -> Run:
-    assert routine.bot_id and routine.created_by  # checked by _problem
+    assert routine.bot_id and routine.created_by  # checked by _gone
     bot = await db.get(Bot, routine.bot_id)
-    assert bot is not None  # checked by _problem
+    assert bot is not None  # checked by _gone
     thread = await thread_service.open_dm(db, org_id=routine.org_id, user_id=routine.created_by, bot_id=routine.bot_id)
     trigger = _system_message(
         db,
@@ -302,13 +315,13 @@ async def fire_on_schedule(db: AsyncSession, routine_id: uuid.UUID, *, now: date
     routine = await db.scalar(select(Routine).where(Routine.id == routine_id).with_for_update())
     if routine is None or not routine.enabled or routine.next_run_at is None or routine.next_run_at > now:
         return Fired(run=None)
-    if problem := await _problem(db, routine, now):
+    if problem := await _gone(db, routine):
         routine.enabled, routine.next_run_at, routine.disabled_reason = False, None, problem
         return Fired(run=None, problem=problem)
     _reschedule(routine, now)
-    if await _still_going(db, routine):
-        db.add(RoutineRun(routine_id=routine.id, run_id=None, started_at=now, status="skipped"))
-        return Fired(run=None)
+    if reason := await _wait(db, routine, now):
+        db.add(RoutineRun(routine_id=routine.id, run_id=None, started_at=now, status="skipped", reason=reason))
+        return Fired(run=None, skipped=reason)
     run = await _start(db, routine, now=now, settings=settings)
     return Fired(run=run, thread_id=run.thread_id)
 
@@ -317,8 +330,6 @@ async def run_now(db: AsyncSession, routine: Routine, *, viewer: Viewer, now: da
     """Run now (its creator only): the same run as on schedule, without moving the schedule.
     The caller commits."""
     require_creator(routine, viewer)
-    if problem := await _problem(db, routine, now):
+    if problem := await _gone(db, routine) or await _wait(db, routine, now):
         raise Conflict(problem)
-    if await _still_going(db, routine):
-        raise Conflict(STILL_GOING)
     return await _start(db, routine, now=now, settings=settings)

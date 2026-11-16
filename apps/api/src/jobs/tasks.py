@@ -13,6 +13,7 @@ defer it with `queue.defer(Job("name", {...}))`, or give it a `cron` to run on a
 backend guide, "Background jobs".
 """
 
+import logging
 import uuid
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
@@ -24,6 +25,7 @@ from src.runtime.runner import RUN_BOT, run_job
 from src.services import approval_service, routine_service, run_event_service
 
 JOBS = JobRegistry()
+log = logging.getLogger(__name__)
 
 # A run that can't start yet (its chat's turn, or its bot is busy) tries again this much later.
 # A new job, not a retry: it goes to the back of its chat's line, behind the run it waits for.
@@ -74,15 +76,20 @@ async def recover_runs(env: JobEnv, timestamp: int) -> None:
 async def fire_routines(env: JobEnv, timestamp: int) -> None:
     """Each due routine in its own short transaction: its trigger message, its run and the run's
     job together. `timestamp` is the minute this job is for, so a late job fires what was due
-    then, and running it twice fires nothing twice (the routine moved on to its next slot)."""
+    then, and running it twice fires nothing twice (the routine moved on to its next slot). One
+    routine that fails is logged and left for the next minute: the others still fire."""
     now = datetime.fromtimestamp(timestamp, UTC)
     async with env.sessionmaker() as db:
         due = await routine_service.due(db, now)
     for routine_id in due:
-        async with env.sessionmaker() as db:
-            fired = await routine_service.fire_on_schedule(db, routine_id, now=now, settings=env.settings)
-            if fired.run is not None:
-                await env.runs.start(db, [fired.run])
-            await db.commit()
+        try:
+            async with env.sessionmaker() as db:
+                fired = await routine_service.fire_on_schedule(db, routine_id, now=now, settings=env.settings)
+                if fired.run is not None:
+                    await env.runs.start(db, [fired.run])
+                await db.commit()
+        except Exception:
+            log.exception("Routine %s failed to fire; the other due routines carry on.", routine_id)
+            continue
         if fired.thread_id is not None:
             env.runs.bus.announce(fired.thread_id)

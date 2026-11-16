@@ -65,8 +65,9 @@ class RoutineRunOut(ApiModel):
     run_id: uuid.UUID | None
     thread_id: uuid.UUID | None  # the creator's DM, where the reply is
     started_at: datetime
-    status: str  # the run's status, or "skipped" (its last run was still going)
-    error: str | None
+    status: str  # the run's status, or "skipped"
+    error: str | None  # the run's error
+    reason: str | None = None  # why a skipped slot didn't run (still going, over budget)
 
 
 class RunNowOut(ApiModel):

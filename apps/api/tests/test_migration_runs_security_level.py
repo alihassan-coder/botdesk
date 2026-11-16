@@ -31,9 +31,11 @@ def test_upgrade_keeps_each_routine_runs_level_on_the_run(tmp_path: Path) -> Non
     db = sqlite3.connect(database)
     levels = dict(db.execute("SELECT id, security_level FROM runs"))
     assert levels == {by_strict: "read-only", by_plain: None, by_person: None}
+    assert "reason" in [column[1] for column in db.execute("PRAGMA table_info(routine_runs)")]
     db.close()
 
     _alembic(database, "downgrade", BEFORE)
     db = sqlite3.connect(database)
     assert "security_level" not in [column[1] for column in db.execute("PRAGMA table_info(runs)")]
+    assert "reason" not in [column[1] for column in db.execute("PRAGMA table_info(routine_runs)")]
     db.close()

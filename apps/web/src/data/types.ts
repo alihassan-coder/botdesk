@@ -422,8 +422,10 @@ export interface Routine {
   timezone?: string;
   nextRunAt?: ISODate;
   createdBy?: ID;
-  /** Why BotDesk switched it off (its bot was removed, a budget ran out…). */
+  /** Why BotDesk switched it off (its bot was removed, or its creator left). */
   disabledReason?: string;
+  /** True when the API doesn't show you what it does (someone else's, and you're a member). */
+  instructionsHidden?: boolean;
 }
 
 /** A model a bot can use, from a connected provider's live list. */

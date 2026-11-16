@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { describeCron, describeSchedule, formatTime, fromCron, isCronLine, toCron } from "./schedule";
+import { describeCron, describeSchedule, formatTime, fromCron, isCronLine, isTime, toCron } from "./schedule";
 
 describe("formatTime", () => {
   it("drops :00 and uses AM/PM", () => {
@@ -52,5 +52,34 @@ describe("schedules as cron lines (routines on the API)", () => {
     expect(isCronLine("0 9 * * *")).toBe(true);
     expect(isCronLine("0 9 * *")).toBe(false);
     expect(isCronLine("every day")).toBe(false);
+  });
+});
+
+describe("edge cases", () => {
+  it("an empty or broken time never shows as numbers it doesn't have", () => {
+    expect(formatTime("")).toBe("");
+    expect(formatTime("9")).toBe("");
+    expect(describeSchedule({ kind: "daily", time: "" })).toBe("Every day (pick a time)");
+    expect(describeSchedule({ kind: "weekly", day: "Friday", time: "" })).toBe("Every Friday (pick a time)");
+  });
+
+  it("a schedule with no time has no cron line, so the form can't save it", () => {
+    expect(toCron({ kind: "daily", time: "" })).toBe("");
+    expect(toCron({ kind: "weekdays", time: "25:00" })).toBe("");
+    expect(isTime("")).toBe(false);
+    expect(isTime("07:30")).toBe(true);
+    expect(isTime("24:00")).toBe(false);
+  });
+
+  it("describes a list of minutes in words instead of falling back to the cron line", () => {
+    expect(describeCron("0,30 9 * * *")).toBe("Every day at 9 AM and 9:30 AM");
+    expect(describeCron("0,30 9 * * 1-5")).toBe("Weekdays at 9 AM and 9:30 AM");
+    expect(describeCron("0,20,40 17 * * 5")).toBe("Every Friday at 5 PM, 5:20 PM and 5:40 PM");
+    expect(describeCron("0,30 * * * *")).toBe("Every hour at :00 and :30");
+    expect(describeCron("15 * * * *")).toBe("Every hour at :15");
+  });
+
+  it("keeps a minute list as a custom line in the picker (the presets have one time)", () => {
+    expect(fromCron("0,30 9 * * *")).toEqual({ kind: "cron", cron: "0,30 9 * * *" });
   });
 });

@@ -21,7 +21,7 @@ const OUTCOME = {
   failed: { label: "Last run failed", className: "text-destructive" },
   "needs-approval": { label: "Last run is waiting for approval", className: "text-brand" },
   running: { label: "Running now", className: "text-foreground" },
-  skipped: { label: "Last slot skipped: the run before was still going", className: "text-muted-foreground" },
+  skipped: { label: "Last slot skipped (the run before was still going, or a budget ran out)", className: "text-muted-foreground" },
 };
 
 /** Switch a routine on or off, saying so if the API refuses. */
@@ -30,9 +30,12 @@ export async function toggle(routine: Routine) {
   if (!result.ok) toast.error(result.error);
 }
 
-/** Its creator, owners and admins may change a routine (demo routines have no creator: anyone). */
+/** Its creator, owners and admins may switch a routine on or off and delete it (demo routines have no creator: anyone). */
 export const canChangeRoutine = (routine: Routine, me: Pick<User, "id" | "role">) =>
   me.role !== "member" || !routine.createdBy || routine.createdBy === me.id;
+
+/** Only its creator edits it or runs it now: its runs act for them. */
+export const canEditRoutine = (routine: Routine, me: Pick<User, "id">) => !routine.createdBy || routine.createdBy === me.id;
 
 /** One routine: who runs it, when, how the last run went, and (for who may change it) its actions. */
 export function RoutineCard({ routine }: { routine: Routine }) {
@@ -47,7 +50,11 @@ export function RoutineCard({ routine }: { routine: Routine }) {
         {bot && <BotAvatar name={bot.name} color={bot.avatarColor} />}
         <div className="min-w-0 flex-1">
           <h3 className="font-semibold tracking-tight">{routine.name}</h3>
-          <p className="line-clamp-3 text-sm whitespace-pre-line text-muted-foreground">{routine.description}</p>
+          {routine.instructionsHidden ? (
+            <p className="text-sm text-muted-foreground italic">Only its creator, owners and admins see what it does.</p>
+          ) : (
+            <p className="line-clamp-3 text-sm whitespace-pre-line text-muted-foreground">{routine.description}</p>
+          )}
         </div>
         <Switch
           checked={routine.enabled}
@@ -101,7 +108,7 @@ export function RoutineCard({ routine }: { routine: Routine }) {
 
       {canChange && (
         <div className="mt-4 border-t pt-3">
-          <RoutineActions routine={routine} />
+          <RoutineActions routine={routine} canEdit={canEditRoutine(routine, me)} />
         </div>
       )}
     </article>

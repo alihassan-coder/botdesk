@@ -363,7 +363,8 @@ export interface ApiRoutine {
   botId: string | null;
   createdBy: string | null;
   name: string;
-  instructions: string;
+  /** Null for members who didn't create it: only its creator, owners and admins read it. */
+  instructions: string | null;
   cron: string;
   timezone: string;
   enabled: boolean;
@@ -371,7 +372,7 @@ export interface ApiRoutine {
   disabledReason: string | null;
   lastRunAt: string | null;
   nextRunAt: string | null;
-  /** The latest run's status, or "skipped" (its previous run was still going). */
+  /** The latest run's status, or "skipped" (its previous run was still going, or a budget ran out). */
   lastResult: ApiRunStatus | "skipped" | null;
   createdAt: string;
 }

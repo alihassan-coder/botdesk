@@ -17,8 +17,8 @@ import { Button } from "@/components/ui/button";
 import { actions } from "@/data/store";
 import type { Routine } from "@/data/types";
 
-/** Run now, Edit and Delete: for the routine's creator, owners and admins. */
-export function RoutineActions({ routine }: { routine: Routine }) {
+/** Run now and Edit (its creator: its runs act for them), and Delete (its creator, owners and admins). */
+export function RoutineActions({ routine, canEdit }: { routine: Routine; canEdit: boolean }) {
   const [running, setRunning] = useState(false);
 
   async function runNow() {
@@ -37,14 +37,18 @@ export function RoutineActions({ routine }: { routine: Routine }) {
 
   return (
     <div className="flex flex-wrap gap-1">
-      <Button variant="outline" size="sm" onClick={() => void runNow()} disabled={running || !routine.botId}>
-        <Play /> Run now
-      </Button>
-      <Button asChild variant="ghost" size="sm">
-        <Link href={`/routines/${routine.id}/edit`} aria-label={`Edit ${routine.name}`}>
-          <Pencil /> Edit
-        </Link>
-      </Button>
+      {canEdit && (
+        <>
+          <Button variant="outline" size="sm" onClick={() => void runNow()} disabled={running || !routine.botId}>
+            <Play /> Run now
+          </Button>
+          <Button asChild variant="ghost" size="sm">
+            <Link href={`/routines/${routine.id}/edit`} aria-label={`Edit ${routine.name}`}>
+              <Pencil /> Edit
+            </Link>
+          </Button>
+        </>
+      )}
       <AlertDialog>
         <AlertDialogTrigger asChild>
           <Button variant="ghost" size="sm" aria-label={`Delete ${routine.name}`}>

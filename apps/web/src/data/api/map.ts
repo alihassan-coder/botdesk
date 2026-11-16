@@ -159,12 +159,13 @@ const OUTCOMES: Partial<Record<NonNullable<ApiRoutine["lastResult"]>, NonNullabl
 export function toRoutine(r: ApiRoutine): Routine {
   const outcome = r.lastResult ? OUTCOMES[r.lastResult] : undefined;
   return {
-    id: r.id, botId: r.botId ?? "", name: r.name, description: r.instructions, schedule: describeCron(r.cron),
+    id: r.id, botId: r.botId ?? "", name: r.name, description: r.instructions ?? "", schedule: describeCron(r.cron),
     source: "edit", steps: [], enabled: r.enabled, cron: r.cron, timezone: r.timezone,
     ...(r.lastRunAt ? { lastRunAt: asUtc(r.lastRunAt) } : {}),
     ...(outcome ? { lastOutcome: outcome } : {}),
     ...(r.nextRunAt ? { nextRunAt: asUtc(r.nextRunAt) } : {}),
     ...(r.createdBy ? { createdBy: r.createdBy } : {}),
     ...(r.disabledReason ? { disabledReason: r.disabledReason } : {}),
+    ...(r.instructions === null ? { instructionsHidden: true } : {}),
   };
 }

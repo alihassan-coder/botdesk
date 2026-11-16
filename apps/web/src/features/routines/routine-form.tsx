@@ -10,7 +10,7 @@ import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
-import { describeSchedule, fromCron, isCronLine, toCron, type Schedule } from "@/lib/schedule";
+import { describeCron, describeSchedule, fromCron, isCronLine, isTime, toCron, type Schedule } from "@/lib/schedule";
 import { actions, useBots, useIsDemo } from "@/data/store";
 import type { Routine } from "@/data/types";
 import { BotAvatar } from "@/features/bots/bot-avatar";
@@ -49,12 +49,17 @@ export function RoutineForm({ routine }: { routine?: Routine }) {
     steps: isDemo && cleanSteps.length === 0,
     what: !isDemo && !description.trim(),
     cron: schedule.kind === "cron" && !isCronLine(schedule.cron),
+    time: "time" in schedule && !isTime(schedule.time),
   };
+  /** aria-invalid and aria-describedby for a field whose error shows. */
+  const errorOn = (field: keyof typeof missing, id: string) =>
+    showErrors && missing[field] ? { "aria-invalid": true, "aria-describedby": id } : {};
 
   async function save() {
     if (!bot || Object.values(missing).some(Boolean)) return setShowErrors(true);
     const input = {
-      botId: bot.id, name: name.trim(), description: description.trim(), schedule: describeSchedule(schedule),
+      botId: bot.id, name: name.trim(), description: description.trim(),
+      schedule: schedule.kind === "cron" ? describeCron(schedule.cron) : describeSchedule(schedule),
       steps: isDemo ? cleanSteps : [], enabled,
       ...(isDemo ? {} : { cron: toCron(schedule), timezone: timeZone }),
     };
@@ -83,8 +88,11 @@ export function RoutineForm({ routine }: { routine?: Routine }) {
       <FieldGroup>
         <Field data-invalid={showErrors && missing.name}>
           <FieldLabel htmlFor="routine-name">Name</FieldLabel>
-          <Input id="routine-name" value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Friday expense report" />
-          {showErrors && missing.name && <FieldError>Give the routine a name.</FieldError>}
+          <Input
+            id="routine-name" value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Friday expense report"
+            {...errorOn("name", "routine-name-error")}
+          />
+          {showErrors && missing.name && <FieldError id="routine-name-error">Give the routine a name.</FieldError>}
         </Field>
         <Field data-invalid={showErrors && missing.bot}>
           <FieldLabel htmlFor="routine-bot">Who runs it</FieldLabel>
@@ -106,18 +114,24 @@ export function RoutineForm({ routine }: { routine?: Routine }) {
         </Field>
         <Field data-invalid={showErrors && missing.what}>
           <FieldLabel htmlFor="routine-description">{isDemo ? "What it does" : "What to do"}</FieldLabel>
-          {!isDemo && <FieldDescription>The bot reads this each time, in your chat with it, and replies there.</FieldDescription>}
+          {!isDemo && <FieldDescription id="routine-description-help">The bot reads this each time, in your chat with it, and replies there.</FieldDescription>}
           <Textarea
             id="routine-description" value={description} onChange={(e) => setDescription(e.target.value)} rows={isDemo ? 2 : 4}
+            aria-invalid={showErrors && missing.what ? true : undefined}
+            aria-describedby={[!isDemo && "routine-description-help", showErrors && missing.what && "routine-description-error"].filter(Boolean).join(" ") || undefined}
             placeholder={isDemo ? "One sentence, so the team knows what this is." : "e.g. Sum up yesterday's support emails and list anything urgent."}
           />
-          {showErrors && missing.what && <FieldError>Say what the bot should do.</FieldError>}
+          {showErrors && missing.what && <FieldError id="routine-description-error">Say what the bot should do.</FieldError>}
         </Field>
         {/* These labels name a group of controls, not one input, so the group points at them. */}
-        <Field aria-labelledby="routine-when" data-invalid={showErrors && missing.cron}>
+        <Field aria-labelledby="routine-when" data-invalid={showErrors && (missing.cron || missing.time)}>
           <FieldLabel id="routine-when">When</FieldLabel>
-          <SchedulePicker value={schedule} onChange={setSchedule} kinds={isDemo ? DEMO_KINDS : API_KINDS} timeZone={isDemo ? undefined : timeZone} />
-          {showErrors && missing.cron && <FieldError>A cron line has 5 parts: minute hour day month weekday.</FieldError>}
+          <SchedulePicker
+            value={schedule} onChange={setSchedule} kinds={isDemo ? DEMO_KINDS : API_KINDS} timeZone={isDemo ? undefined : timeZone}
+            invalid={showErrors && (missing.cron || missing.time)} errorId="routine-when-error"
+          />
+          {showErrors && missing.cron && <FieldError id="routine-when-error">A cron line has 5 parts: minute hour day month weekday.</FieldError>}
+          {showErrors && missing.time && <FieldError id="routine-when-error">Pick a time.</FieldError>}
         </Field>
         {isDemo && (
           <Field data-invalid={showErrors && missing.steps} aria-labelledby="routine-steps">

@@ -1,7 +1,7 @@
 import { CalendarClock } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { describeSchedule, WEEKDAYS, type Schedule, type Weekday } from "@/lib/schedule";
+import { describeCron, describeSchedule, WEEKDAYS, type Schedule, type Weekday } from "@/lib/schedule";
 
 type Kind = Schedule["kind"];
 
@@ -19,11 +19,15 @@ const LABELS: Record<Kind, string> = {
 export const DEMO_KINDS: Kind[] = ["daily", "weekdays", "weekly", "monthly", "trigger"];
 export const API_KINDS: Kind[] = ["daily", "weekdays", "weekly", "hourly", "cron"];
 
-/** When a routine runs: how often, which day, what time. Shows the result as a sentence. */
+/**
+ * When a routine runs: how often, which day, what time. Shows the result as a sentence. `invalid`
+ * and `errorId` tie the form's error to the time or cron field, so a screen reader reads it there.
+ */
 export function SchedulePicker({
-  value, onChange, kinds = DEMO_KINDS, timeZone,
-}: { value: Schedule; onChange: (s: Schedule) => void; kinds?: Kind[]; timeZone?: string }) {
+  value, onChange, kinds = DEMO_KINDS, timeZone, invalid = false, errorId,
+}: { value: Schedule; onChange: (s: Schedule) => void; kinds?: Kind[]; timeZone?: string; invalid?: boolean; errorId?: string }) {
   const time = "time" in value ? value.time : "09:00";
+  const error = invalid ? { "aria-invalid": true, "aria-describedby": errorId } : {};
   const day: Weekday = value.kind === "weekly" ? value.day : "Monday";
 
   function changeKind(kind: Kind) {
@@ -52,8 +56,9 @@ export function SchedulePicker({
             type="time"
             aria-label="Time"
             value={time}
-            onChange={(e) => e.target.value && onChange({ ...value, time: e.target.value } as Schedule)}
+            onChange={(e) => onChange({ ...value, time: e.target.value } as Schedule)}
             className="w-36"
+            {...error}
           />
         )}
         {value.kind === "cron" && (
@@ -64,11 +69,12 @@ export function SchedulePicker({
             placeholder="minute hour day month weekday"
             className="w-56 font-mono"
             spellCheck={false}
+            {...error}
           />
         )}
       </div>
       <p className="flex flex-wrap items-center gap-2 text-sm text-muted-foreground">
-        <CalendarClock className="size-4" /> Runs: <span className="font-medium text-foreground">{describeSchedule(value)}</span>
+        <CalendarClock className="size-4" /> Runs: <span className="font-medium text-foreground">{value.kind === "cron" ? describeCron(value.cron) : describeSchedule(value)}</span>
         {timeZone && <span>· {timeZone} time</span>}
       </p>
     </div>

@@ -12,6 +12,7 @@ import type { Thread } from "@/data/types";
 import { LoadOlderMessages } from "./load-older-messages";
 import { MessageItem } from "./message-item";
 import { RunAttentionNotices } from "./run-attention-notice";
+import { RunWaitingNotices } from "./run-waiting-notice";
 
 /** The scrolling conversation. Opens at the newest message and follows new ones as they arrive. */
 export function MessageList({ thread }: { thread: Thread }) {
@@ -50,10 +51,18 @@ export function MessageList({ thread }: { thread: Thread }) {
           <MessageScrollerContent className="mx-auto w-full max-w-3xl gap-5 px-4 py-6 md:px-6">
             {load?.hasOlder && <LoadOlderMessages threadId={thread.id} />}
             {messages.map((message) => (
-              <MessageScrollerItem key={message.id} messageId={message.id}>
+              // The id and tabIndex let a handoff card's "View reply" scroll to a message and focus it.
+              <MessageScrollerItem
+                key={message.id}
+                messageId={message.id}
+                id={`message-${message.id}`}
+                tabIndex={-1}
+                className="rounded-xl outline-none focus-visible:ring-2 focus-visible:ring-ring/50"
+              >
                 <MessageItem message={message} isGroup={thread.kind === "group"} dmBotId={thread.botId} />
               </MessageScrollerItem>
             ))}
+            <RunWaitingNotices threadId={thread.id} />
             <RunAttentionNotices threadId={thread.id} />
           </MessageScrollerContent>
         </MessageScrollerViewport>

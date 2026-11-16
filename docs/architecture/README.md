@@ -29,6 +29,13 @@ Everything about how BotDesk works inside, in the order that makes it easiest to
 | 5 | [review-2026-11-12.md](review-2026-11-12.md) | 20 min | *Why* the design looks like this: what the review found, with sources |
 | 6 | [high-level.md](high-level.md) | optional | The first proposal (TypeScript era), kept as history. Its stack was replaced by ADR 0003 and its runtime, security and plugin sections by ADRs 0004–0006. Still useful for the DeepSeek Harness study (§5.1), bot computers (§6) and the Gmail tool list (§8.7) |
 
+## Contracts for builders
+
+Exact shapes for features that are designed but not built yet:
+
+- [connections-api-contract.md](connections-api-contract.md): connections, OAuth and bot tool bindings (slices 5.2, 5.3)
+- [handoffs-contract.md](handoffs-contract.md): handoffs and tasks, the `team.handoff` tool, `waiting_handoff` ([ADR 0014](../adr/0014-handoffs-and-tasks.md))
+
 ## Diagrams
 
 Every diagram is a Mermaid file in [diagrams/](diagrams/) with a PNG next to it in `diagrams/png/`. GitHub renders the Mermaid too. To change one, edit the `.mmd` file and run:

@@ -216,6 +216,7 @@ async def test_connectors_say_how_each_app_connects_and_whether_it_is_set_up(tea
         tool for tool in demo["tools"] if tool["name"] == "demo.send_email"
     ).items()
     assert (await team.client.get(f"{team.org}/plugins")).status_code == 200  # still there
+    assert "team" not in by_id  # the built-in Team plugin is always there, not an app to connect
 
 
 async def test_gmail_is_not_set_up_without_both_halves_of_the_google_client() -> None:

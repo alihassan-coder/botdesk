@@ -7,10 +7,13 @@ from sqlalchemy.orm import Mapped, mapped_column
 
 from src.core.database import Base, CreatedAtMixin, IdMixin
 
-RunStatus = Literal["queued", "running", "waiting_approval", "needs_attention", "succeeded", "failed", "cancelled"]
+RunStatus = Literal[
+    "queued", "running", "waiting_approval", "waiting_handoff", "needs_attention", "succeeded", "failed", "cancelled"
+]
 ACTIVE_STATUSES = ("queued", "running")
-# Paused: waiting for a person (an approval, or a decision after a tool may have half run).
-PAUSED_STATUSES = ("waiting_approval", "needs_attention")
+# Paused: waiting for a person (an approval, or a decision after a tool may have half run), or
+# for the tasks it handed off to end (ADR 0014).
+PAUSED_STATUSES = ("waiting_approval", "waiting_handoff", "needs_attention")
 FINISHED_STATUSES = ("succeeded", "failed", "cancelled")
 
 
@@ -46,8 +49,11 @@ class Run(IdMixin, CreatedAtMixin, Base):
     # The member this run acts for (slice 5.2): who wrote the message that started its chain, or
     # who set up the routine. A member's own connection serves only that member's runs.
     requester_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
-    # The level a routine's run started at: the strictest of its bot's and its routine's. Kept on
-    # the run so removing or loosening the routine mid-run can't loosen it. Empty otherwise.
+    # A cap on the run's security level, fixed when it was created: the run's effective level is
+    # the strictest of its bot's and this. A routine's run keeps the strictest of its bot's and its
+    # routine's (so removing or loosening the routine mid-run can't loosen it); a handoff's child
+    # run keeps its parent's effective level (ADR 0014: a child is never looser than its parent).
+    # Empty for other runs. (The handoffs contract's `level_cap` is this column.)
     security_level: Mapped[str | None] = mapped_column(String(30))
     status: Mapped[str] = mapped_column(String(20), default="queued")
     # Limits, copied from settings when the run is created, and what has been used so far.

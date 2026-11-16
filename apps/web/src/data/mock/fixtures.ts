@@ -195,7 +195,7 @@ export const messages: Message[] = [
   { id: "m2", threadId: "t_chief", author: { type: "bot", id: "b_chief" }, createdAt: ago(94), parts: [
     { type: "reasoning", text: "Two sources: Account threads flagged by Inbox Manager, and the CRM pipeline. Sales Outbound owns drafting. I'll hand off and check the queue before anything sends.", durationSec: 6 },
     { type: "text", text: "On it. Handing the drafting to @sales and pulling flagged accounts from @inbox." },
-    { type: "handoff", fromBotId: "b_chief", toBotId: "b_sales", task: "Draft openers for tonight's top accounts" },
+    { type: "handoff", taskId: "task_1", fromBotId: "b_chief", toBotId: "b_sales", task: "Draft openers for tonight's top accounts", status: "working" },
   ] },
   { id: "m3", threadId: "t_chief", author: { type: "bot", id: "b_chief" }, createdAt: ago(40), parts: [
     { type: "work-log", title: "Tonight's outbound", items: [

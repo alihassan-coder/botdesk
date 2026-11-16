@@ -29,6 +29,8 @@ import { ApiError, apiBaseUrl } from "./api/client";
 import { toAccountConnection, toApiBot, toApproval, toBot, toInvitation, toMemory, toMemoryStatus, toMessage, toModel, toModelProvider, toOrg, toRoutine, toThread, toUsage, toUser } from "./api/map";
 import { applyRunEvent, typingId, upsertApproval, withActiveRuns, withPreview, withWaitingApprovals, type ActiveRun } from "./api/run-events";
 import type { ApiMe, ApiRunEvent, ApiThread, ApiThreadRuns } from "./api/types";
+import { isTaskOpen, taskPreview, withTaskChangeIn, type TaskChange } from "@/lib/tasks";
+import * as chiefDemo from "./mock/chief-demo";
 import * as mock from "./mock/fixtures";
 import type {
   AccountConnection, AccountConnectionList, Approval, ApprovalStatus, Bot, BotToolChange, BotTools, ConnectionOwner, Invitation, MemoryItem, MemoryList, MemoryStatus, Membership, Message, Model, ModelListProblem, ModelProvider, Org,
@@ -103,10 +105,12 @@ interface State {
   messages: Message[];
   /** API only: which chats' messages have been loaded. The mock has them all from the start. */
   threadLoads: Record<string, ThreadLoad>;
-  /** API only: bot replies in progress. The mock fakes its replies without these. */
+  /** Bot replies in progress. The mock fakes most replies without these; its Chief demo has one. */
   runs: ActiveRun[];
   /** API only: runs seen finish, so a late event can't revive one (see api/run-events.ts). */
   endedRunIds: string[];
+  /** The newest state heard for each handed-off Task (ADR 0014), so its card never moves backwards. */
+  taskChanges: Record<string, TaskChange>;
   approvals: Approval[];
   connectors: typeof mock.connectors;
   /** API only: the plugins the server loaded (Connect apps). The demo has none. */
@@ -163,6 +167,7 @@ function seed(): State {
     threadLoads: {},
     runs: [],
     endedRunIds: [],
+    taskChanges: {},
     approvals: mock.approvals,
     connectors: mock.connectors,
     plugins: { status: "ready", items: [] },
@@ -352,6 +357,7 @@ function enterOrg(org: Membership) {
     threadLoads: {},
     runs: [],
     endedRunIds: [],
+    taskChanges: {},
     approvals: [],
     models: [],
     modelProviders: [],
@@ -752,10 +758,12 @@ function withRunStatus(st: State): State {
 function runStatus(runs: ActiveRun[]): Pick<Bot, "status" | "statusText"> | undefined {
   if (runs.some((r) => r.status === "needs_attention")) return { status: "error", statusText: NEEDS_ATTENTION };
   if (runs.some((r) => r.status === "waiting_approval")) return { status: "waiting-approval", statusText: "Waiting for approval" };
-  const running = runs[0];
-  if (!running) return undefined;
-  return { status: "working", statusText: running.messageId ? "Replying…" : "Thinking…" };
+  const running = runs.find((r) => r.status !== "waiting_handoff");
+  if (running) return { status: "working", statusText: running.messageId ? "Replying…" : "Thinking…" };
+  return runs.length > 0 ? { status: "working", statusText: WAITING_ON_TEAMMATES } : undefined;
 }
+
+const WAITING_ON_TEAMMATES = "Waiting on teammates";
 
 const setThreadLoad = (threadId: string, load: ThreadLoad) =>
   set((st) => ({ ...st, threadLoads: { ...st.threadLoads, [threadId]: load } }));
@@ -773,8 +781,9 @@ async function loadMessages(orgId: string, threadId: string, active: ApiThreadRu
       threadApi.messages(orgId, threadId, { limit: PAGE_SIZE }),
       approvalApi.list(orgId, { status: "all", threadId }).catch(() => []),
     ]);
-    const page = apiPage.map(toMessage);
     set((st) => {
+      // An update heard on the stream may be newer than the page's cards.
+      const page = Object.values(st.taskChanges).reduce(withTaskChangeIn, apiPage.map(toMessage));
       if (st.org.id !== orgId) return st;
       const others = st.messages.filter((m) => m.threadId !== threadId);
       const kept = st.messages.filter((m) => m.threadId === threadId && keepBesidePage(st, m, page));
@@ -852,9 +861,13 @@ const chatActions = {
     }
   },
 
-  /** Stop the bot replies in progress in this chat. API only: mock replies finish on their own. */
+  /** Stop the bot replies in progress in this chat. In the demo, only the Chief demo can be stopped. */
   async stopReplies(threadId: string): Promise<ActionResult> {
     const runs = state.runs.filter((r) => r.threadId === threadId);
+    if (isDemoMode()) {
+      runs.forEach((r) => stopMockRun(r.id));
+      return { ok: true };
+    }
     const orgId = state.org.id;
     try {
       await Promise.all(runs.map((r) => runApi.cancel(orgId, r.id)));
@@ -866,7 +879,10 @@ const chatActions = {
 
   /** Stop one run, say one that needs attention. Its waiting approvals expire. API only. */
   async stopRun(runId: string): Promise<ActionResult> {
-    if (isDemoMode()) return { ok: true };
+    if (isDemoMode()) {
+      stopMockRun(runId);
+      return { ok: true };
+    }
     try {
       await runApi.cancel(state.org.id, runId);
       return { ok: true };
@@ -1839,6 +1855,7 @@ function every(run: (stop: () => void) => void, ms: number) {
 
 function cancelMockTimers() {
   mockQueues.clear();
+  mockDemoRuns.clear();
   // clearTimeout and clearInterval cancel either kind of timer.
   mockTimers.forEach((timer) => clearTimeout(timer));
   mockTimers.clear();
@@ -1921,42 +1938,122 @@ function mockReplyText(threadId: string, botId: string, trigger: string): string
 
 /** MOCK ONLY: simulates a bot streaming a reply. Real replies arrive over realtime. */
 function fakeBotReply(threadId: string, reply: BotReply, userText: string) {
-  const botId = reply.botId;
-  const bot = state.bots.find((b) => b.id === botId);
+  const bot = state.bots.find((b) => b.id === reply.botId);
   if (!bot) return finishMockReply(threadId, reply, "");
-  set((st) => ({ ...st, bots: st.bots.map((b) => (b.id === botId ? { ...b, status: "working", statusText: "Thinking…" } : b)) }));
+  if (bot.id === chiefDemo.chiefId && chiefDemo.trigger.test(userText)) return playChiefDemo(threadId, reply);
+  const full = mockReplyText(threadId, bot.id, userText);
+  streamMockReply(threadId, bot, full, () => finishMockReply(threadId, reply, full));
+}
 
-  const full = mockReplyText(threadId, botId, userText);
-  const words = full.split(" ");
+const setBotStatus = (botId: string, status: Bot["status"], statusText: string) =>
+  set((st) => ({ ...st, bots: st.bots.map((b) => (b.id === botId ? { ...b, status, statusText } : b)) }));
+
+/**
+ * MOCK ONLY: a bot thinks for a moment, then writes `text` two words at a time. `done` gets the
+ * reply's id. `isStopped` ends it early (a person pressed Stop): the words so far stay.
+ */
+function streamMockReply(threadId: string, bot: Bot, text: string, done: (messageId: string) => void, isStopped = () => false) {
+  setBotStatus(bot.id, "working", "Thinking…");
+  const words = text.split(" ");
   let i = 0;
-  let msgId: string | null = null;
+  const reasoning = `Reading the request, checking ${bot.name}'s tools and memory, planning steps.`;
 
   later(() => {
-    msgId = pushBotMessage(
-      threadId,
-      botId,
-      [{ type: "reasoning", text: `Reading the request, checking ${bot.name}'s tools and memory, planning steps.`, durationSec: 2 }, { type: "text", text: "" }],
-      "streaming",
-    );
+    if (isStopped()) return setBotStatus(bot.id, "idle", "Stopped");
+    const msgId = pushBotMessage(threadId, bot.id, [{ type: "reasoning", text: reasoning, durationSec: 2 }, { type: "text", text: "" }], "streaming");
     every((stop) => {
+      const stopped = isStopped();
       i += 2;
-      const text = words.slice(0, i).join(" ");
-      const done = i >= words.length;
+      const finished = stopped || i >= words.length;
+      const shown = words.slice(0, stopped ? i - 2 : i).join(" ");
       set((st) => ({
         ...st,
         messages: st.messages.map((m) =>
           m.id === msgId
-            ? { ...m, status: done ? "complete" : "streaming", parts: m.parts.map((p) => (p.type === "text" ? { ...p, text } : p)) }
+            ? { ...m, status: finished ? "complete" : "streaming", parts: m.parts.map((p) => (p.type === "text" ? { ...p, text: shown } : p)) }
             : m,
         ),
       }));
-      if (done) {
-        stop();
-        set((st) => ({ ...st, bots: st.bots.map((b) => (b.id === botId ? { ...b, status: "idle", statusText: "Just replied" } : b)) }));
-        finishMockReply(threadId, reply, full);
-      }
+      if (!finished) return;
+      stop();
+      // The reply started empty, so the chat list shows its words only now.
+      if (shown) set((st) => ({ ...st, threads: st.threads.map((t) => (t.id === threadId ? { ...t, lastMessagePreview: shown } : t)) }));
+      setBotStatus(bot.id, "idle", stopped ? "Stopped" : "Just replied");
+      if (!stopped) done(msgId);
     }, 60);
   }, 600);
+}
+
+/* ---------- MOCK ONLY: the Chief demo (handoffs, ADR 0014) ----------
+ * Chief hands two Tasks to teammates and pauses (`waiting_handoff`). Each teammate works and
+ * replies in turn, and its card moves from queued to working to done. Then Chief resumes and
+ * writes one combined answer as a new message. It's the API's flow, played on timers.
+ */
+
+/** Demo runs still going, by run id: what Stop needs to wind one down. */
+const mockDemoRuns = new Map<string, { threadId: string; reply: BotReply; taskIds: string[] }>();
+
+function setMockRun(run: ActiveRun | null, runId: string) {
+  set((st) => withRunStatus({ ...st, runs: [...st.runs.filter((r) => r.id !== runId), ...(run ? [run] : [])] }));
+}
+
+function changeMockTask(change: TaskChange) {
+  set((st) => ({ ...st, messages: withTaskChangeIn(st.messages, change), taskChanges: { ...st.taskChanges, [change.taskId]: change } }));
+}
+
+function playChiefDemo(threadId: string, reply: BotReply) {
+  const chief = state.bots.find((b) => b.id === reply.botId)!;
+  const runId = `mock-run-${id()}`;
+  const taskIds = chiefDemo.tasks.map(() => `mock-task-${id()}`);
+  const isStopped = () => !mockDemoRuns.has(runId);
+  mockDemoRuns.set(runId, { threadId, reply, taskIds });
+  setMockRun({ id: runId, threadId, botId: chief.id }, runId);
+
+  later(() => {
+    if (isStopped()) return;
+    pushBotMessage(threadId, chief.id, [
+      { type: "text", text: chiefDemo.opener },
+      ...chiefDemo.tasks.map((t, i) => ({ type: "handoff" as const, taskId: taskIds[i], fromBotId: chief.id, toBotId: t.toBotId, task: t.task, status: "queued" as const })),
+    ]);
+    setMockRun({ id: runId, threadId, botId: chief.id, status: "waiting_handoff", taskIds }, runId);
+    later(() => workOnTask(0), 700);
+  }, 600);
+
+  // Teammates take their turns one after another in this chat, as on the API.
+  function workOnTask(index: number) {
+    if (isStopped()) return;
+    const task = chiefDemo.tasks[index];
+    const bot = state.bots.find((b) => b.id === task?.toBotId);
+    if (!task || !bot) return resume();
+    changeMockTask({ taskId: taskIds[index], status: "working" });
+    streamMockReply(threadId, bot, task.reply, (messageId) => {
+      changeMockTask({ taskId: taskIds[index], status: "done", resultMessageId: messageId, resultPreview: taskPreview(task.reply) });
+      later(() => workOnTask(index + 1), 500);
+    }, isStopped);
+  }
+
+  function resume() {
+    setMockRun({ id: runId, threadId, botId: chief.id, status: "running" }, runId);
+    streamMockReply(threadId, chief, chiefDemo.finalAnswer, () => {
+      mockDemoRuns.delete(runId);
+      setMockRun(null, runId);
+      finishMockReply(threadId, reply, chiefDemo.finalAnswer);
+    }, isStopped);
+  }
+}
+
+/** MOCK ONLY: Stop on a demo run. Its open Tasks are cancelled, as the API does when a parent ends first. */
+function stopMockRun(runId: string) {
+  const run = mockDemoRuns.get(runId);
+  if (!run) return;
+  mockDemoRuns.delete(runId);
+  const chief = state.bots.find((b) => b.id === run.reply.botId);
+  for (const taskId of run.taskIds) {
+    if (!isTaskOpen(state.taskChanges[taskId]?.status ?? "queued")) continue;
+    changeMockTask({ taskId, status: "cancelled", error: `Cancelled: ${chief?.name ?? "the bot"} stopped before it finished.` });
+  }
+  setMockRun(null, runId);
+  finishMockReply(run.threadId, run.reply, "");
 }
 
 /* ---------- Memory helpers ---------- */
@@ -2086,6 +2183,34 @@ export type { ActiveRun };
 /** API only: runs in this chat that stopped until a person checks on them. */
 export const useRunsNeedingAttention = (threadId: string) =>
   useStore(useCallback((s: State) => s.runs.filter((r) => r.threadId === threadId && r.status === "needs_attention"), [threadId]));
+/** Runs in this chat paused until the Tasks they handed off have ended (ADR 0014). */
+export const useRunsWaitingOnTasks = (threadId: string) =>
+  useStore(useCallback((s: State) => s.runs.filter((r) => r.threadId === threadId && r.status === "waiting_handoff"), [threadId]));
+
+/**
+ * The teammates a waiting run waits for: the owners of its open Tasks, or of all its Tasks once
+ * none is open (it's about to resume). Its Tasks are the ones the stream named; a chat opened
+ * mid-wait doesn't know them, so it reads the open cards in the run's bot's messages.
+ */
+export const useWaitedOnBots = (run: ActiveRun) => {
+  const { threadId, botId, taskIds } = run;
+  const key = taskIds?.join(" ");
+  return useStore(
+    useCallback(
+      (s: State) => {
+        const ids = key?.split(" ");
+        const cards = s.messages
+          .filter((m) => m.threadId === threadId && (ids || m.author.id === botId))
+          .flatMap((m) => m.parts.filter((p) => p.type === "handoff"))
+          .filter((p) => (ids ? ids.includes(p.taskId) : isTaskOpen(p.status)));
+        const open = cards.filter((p) => isTaskOpen(p.status));
+        return [...new Set((open.length > 0 ? open : cards).map((p) => p.toBotId))];
+      },
+      [threadId, botId, key],
+    ),
+  );
+};
+
 export const usePendingApprovalCount = () => useStore(useCallback((s: State) => selectPendingApprovals(s).length, []));
 
 export const useBotRoutines = (botId?: string) =>

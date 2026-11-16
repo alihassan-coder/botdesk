@@ -11,7 +11,8 @@ from typing import Any
 
 from botdesk_plugin_sdk import PluginManifest, ToolSpec, validate_manifest
 
-from src.plugins.loader import load_plugins
+from src.plugins import team
+from src.plugins.loader import installed_plugins, load_plugins
 
 MODEL_NAME_SEPARATOR = "__"
 
@@ -89,8 +90,15 @@ def build_registry(plugin_ids: list[str]) -> ToolRegistry:
     A plugin that is installed but broken is skipped (and logged) so one bad plugin can't take
     the API down. An id in `PLUGINS` that no installed package provides is an operator typo, and
     stops startup with a clear message instead of quietly running without the plugin.
+
+    The core plugins (Team, ADR 0014) are always registered first. Their ids are reserved: naming
+    one in `PLUGINS`, or installing a package that claims one, stops startup.
     """
+    for plugin_id in [*plugin_ids, *installed_plugins()]:
+        if plugin_id in team.CORE_PLUGIN_IDS:
+            raise ValueError(f"The plugin id {plugin_id!r} is reserved.")
     registry = ToolRegistry()
+    registry.register(team.manifest())
     for manifest in load_plugins(plugin_ids):
         registry.register(manifest)
     return registry

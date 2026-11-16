@@ -90,7 +90,7 @@ When you finish something, tick it here in the same pull request.
 ### Multi-bot (from the 2026-11-14 test)
 - [x] Speaker names in group history, so a bot knows who said what
 - [x] Bot-to-bot @mentions start runs, with a hop limit (ADR 0009); guests in DMs
-- [ ] Handoffs and Chief delegation: a handoff tool and tasks
+- [ ] Handoffs and Chief delegation: a handoff tool and tasks; the parent waits and gets the results back ([ADR 0014](adr/0014-handoffs-and-tasks.md), [contract and build slices](architecture/handoffs-contract.md))
 - [x] A default responder when no bot is mentioned in a group: the group's lead
 
 ### Memory and routines (steps 6–7)

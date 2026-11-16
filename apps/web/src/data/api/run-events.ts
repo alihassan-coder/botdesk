@@ -1,5 +1,6 @@
 import type { Approval, Message, MessagePart, Thread, ToolCallPart } from "../types";
-import { asUtc, toApproval, toMessage } from "./map";
+import { newerTaskChange, taskRank, withTaskChange, withTaskChangeIn, type TaskChange } from "@/lib/tasks";
+import { asUtc, toApproval, toMessage, toTaskChange } from "./map";
 import type { ApiRun, ApiRunEvent } from "./types";
 
 /**
@@ -22,6 +23,13 @@ import type { ApiRun, ApiRunEvent } from "./types";
  * start (see `replayFrom` in withActiveRuns), so events can arrive twice. Every event is safe to apply
  * again except `message_delta`, which adds words: a run remembers the newest event id it has
  * seen, and a delta at or below it is skipped.
+ *
+ * Handoffs (ADR 0014): a bot hands Tasks to teammates. Its message holds one card per Task, and
+ * `task_updated` (on the parent run) moves each card on: queued, working, then done, failed or
+ * cancelled. The parent then pauses (`run_waiting_handoff`) while the teammates reply, one after
+ * another, and resumes (`run_resumed` with `after: "tasks"`) to write its final answer as a new
+ * message. A card never moves backwards, and the newest state of every Task is remembered
+ * (`taskChanges`), so a card that arrives after its update still shows it.
  */
 
 /** A bot reply in progress. Known from the moment you send, so the Stop button can show. */
@@ -32,10 +40,15 @@ export interface ActiveRun {
   botId?: string;
   /** The reply's id, known once its first words arrive. */
   messageId?: string;
-  /** Unset means running. A paused run waits for a decision, or for a person to check on it. */
-  status?: "running" | "waiting_approval" | "needs_attention";
+  /**
+   * Unset means running. A paused run waits for a decision, for a person to check on it, or for
+   * the Tasks it handed off to end.
+   */
+  status?: "running" | "waiting_approval" | "needs_attention" | "waiting_handoff";
   /** Why it needs attention. */
   error?: string;
+  /** The Tasks a `waiting_handoff` run waits for, when the stream said (the active-runs list doesn't). */
+  taskIds?: string[];
   /** The newest of its events this chat has applied (event ids only grow within a chat). */
   lastEventId?: number;
 }
@@ -47,6 +60,8 @@ export interface ChatSlice {
   approvals: Approval[];
   /** Runs seen finish (newest last). A late or replayed event can't bring one back as paused. */
   endedRunIds?: string[];
+  /** The newest state heard for each handed-off Task, by task id. */
+  taskChanges?: Record<string, TaskChange>;
 }
 
 /** How many ended run ids to remember: enough for any replay after a reconnect. */
@@ -67,7 +82,8 @@ function reduce(chat: ChatSlice, event: ApiRunEvent): ChatSlice {
     case "message_saved": {
       const saved = toMessage(event.data.message);
       const streamed = chat.messages.find((m) => m.id === saved.id || (event.runId !== null && m.id === typingId(event.runId)));
-      const message = streamed ? { ...saved, parts: withToolLines(saved.parts, streamed.parts) } : saved;
+      const merged = streamed ? { ...saved, parts: withToolLines(saved.parts, streamed.parts) } : saved;
+      const message = withKnownTasks(merged, streamed, chat.taskChanges);
       const messages = chat.messages.filter((m) => !event.runId || m.id !== typingId(event.runId));
       return { ...chat, messages: upsertMessage(messages, message), threads: withPreview(chat.threads, message) };
     }
@@ -148,7 +164,21 @@ function reduce(chat: ChatSlice, event: ApiRunEvent): ChatSlice {
 
     case "run_resumed": {
       if (!event.runId || hasEnded(chat, event.runId)) return chat;
-      const resumed: ActiveRun = { ...run, id: event.runId, threadId: event.threadId, botId: event.data.botId, status: "running", error: undefined };
+      const resumed: ActiveRun = {
+        ...run, id: event.runId, threadId: event.threadId, botId: event.data.botId, status: "running", error: undefined, taskIds: undefined,
+      };
+      if (event.data.after === "tasks") {
+        // Already applied (a replay): the run may have written words since, so leave it be.
+        if (run?.lastEventId !== undefined && event.id <= run.lastEventId) return chat;
+        // The handoff message is finished; the final answer is a new message, so the run starts afresh.
+        const typing: Message = {
+          id: typingId(event.runId), threadId: event.threadId, author: { type: "bot", id: event.data.botId },
+          parts: [{ type: "text", text: "" }], status: "streaming", createdAt: asUtc(event.createdAt),
+        };
+        const known = chat.messages.find((m) => m.id === typing.id);
+        const messages = known ? chat.messages.map((m) => (m === known ? { ...m, status: "streaming" as const } : m)) : [...chat.messages, typing];
+        return { ...chat, messages, runs: upsertRun(chat.runs, { ...resumed, messageId: undefined }) };
+      }
       const reply = replyOf(chat, event.runId);
       const messages = chat.messages.map((m) => (m === reply ? { ...m, status: "streaming" as const } : m));
       return { ...chat, messages, runs: upsertRun(chat.runs, resumed) };
@@ -156,6 +186,16 @@ function reduce(chat: ChatSlice, event: ApiRunEvent): ChatSlice {
 
     case "run_needs_attention":
       return pauseRun(chat, event.runId, event.threadId, run?.botId, { status: "needs_attention", error: event.data.error });
+
+    case "run_waiting_handoff":
+      return pauseRun(chat, event.runId, event.threadId, run?.botId, { status: "waiting_handoff", error: undefined, taskIds: event.data.taskIds });
+
+    case "task_updated": {
+      const change = toTaskChange(event.data.task);
+      const newest = newerTaskChange(chat.taskChanges?.[change.taskId], change);
+      if (newest !== change) return chat; // older than what we know: a replay
+      return { ...chat, messages: withTaskChangeIn(chat.messages, change), taskChanges: { ...chat.taskChanges, [change.taskId]: change } };
+    }
 
     default:
       return chat;
@@ -217,7 +257,7 @@ export function withActiveRuns(chat: ChatSlice, threadId: string, apiRuns: ApiRu
     // The stream already has this run, and it replays all the run's events (it follows from
     // `replayFrom`), so what it shows is at least as new as the list.
     if (next.runs.find((r) => r.id === apiRun.id)?.lastEventId !== undefined) continue;
-    if (apiRun.status === "waiting_approval" || apiRun.status === "needs_attention") {
+    if (apiRun.status === "waiting_approval" || apiRun.status === "needs_attention" || apiRun.status === "waiting_handoff") {
       const error = apiRun.status === "needs_attention" ? (apiRun.error ?? undefined) : undefined;
       next = pauseRun(next, apiRun.id, threadId, apiRun.botId, { status: apiRun.status, error });
       continue;
@@ -348,6 +388,22 @@ function withToolLines(saved: MessagePart[], streamed: MessagePart[]): MessagePa
   return [...saved.filter((p) => p.type === "approval"), ...lines, ...saved.filter((p) => p.type !== "approval")];
 }
 
+/**
+ * A saved message's handoff cards, each at its newest known state: the one an update already
+ * brought (it can arrive before the card), or the one shown before (a replayed save is older).
+ */
+function withKnownTasks(message: Message, shown: Message | undefined, known: ChatSlice["taskChanges"]): Message {
+  if (!message.parts.some((p) => p.type === "handoff")) return message;
+  const parts = message.parts.map((part) => {
+    if (part.type !== "handoff") return part;
+    const before = shown?.parts.find((p) => p.type === "handoff" && p.taskId === part.taskId);
+    const withShown = before?.type === "handoff" && taskRank(before.status) > taskRank(part.status) ? before : part;
+    const change = known?.[part.taskId];
+    return change ? withTaskChange(withShown, change) : withShown;
+  });
+  return { ...message, parts };
+}
+
 function hasEnded(chat: ChatSlice, runId: string): boolean {
   return chat.endedRunIds?.includes(runId) ?? false;
 }
@@ -366,7 +422,7 @@ function pauseRun(
   runId: string | null,
   threadId: string,
   botId: string | undefined,
-  pause: Pick<ActiveRun, "status" | "error">,
+  pause: Pick<ActiveRun, "status" | "error" | "taskIds">,
 ): ChatSlice {
   if (!runId || hasEnded(chat, runId)) return chat;
   const run = chat.runs.find((r) => r.id === runId);

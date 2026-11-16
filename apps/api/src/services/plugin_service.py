@@ -6,6 +6,7 @@ from botdesk_plugin_sdk import ApiKeyAuth, OAuth2Auth, PluginManifest
 
 from src.core.config import Settings
 from src.plugins.registry import ToolRegistry
+from src.plugins.team import CORE_PLUGIN_IDS
 from src.schemas.plugin import ConnectorOut, PluginOut, PluginToolOut
 from src.services.oauth_flow import default_access, setup_state
 
@@ -27,6 +28,7 @@ def plugin_views(registry: ToolRegistry) -> list[PluginOut]:
             tools=_tools(plugin),
         )
         for plugin in registry.plugins()
+        if plugin.id not in CORE_PLUGIN_IDS  # always there, and not an app people connect
     ]
 
 
@@ -35,6 +37,8 @@ def connector_views(registry: ToolRegistry, settings: Settings) -> list[Connecto
     can connect it yet."""
     views = []
     for plugin in registry.plugins():
+        if plugin.id in CORE_PLUGIN_IDS:  # always there, and not an app people connect
+            continue
         auth = plugin.auth
         oauth = auth if isinstance(auth, OAuth2Auth) else None
         views.append(

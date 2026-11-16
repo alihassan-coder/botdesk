@@ -7,7 +7,7 @@ state is a single conditional UPDATE, so two API copies (or a double-clicked Sto
 """
 
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 from sqlalchemy import and_, exists, func, or_, select, update
@@ -19,9 +19,11 @@ from src.core.config import Settings
 from src.core.database import utcnow
 from src.core.errors import NotFound
 from src.core.handles import mentioned_handles
-from src.models import Approval, Bot, Message, Run, RunEvent, Thread, ThreadParticipant, User
+from src.models import Approval, Bot, Message, Run, RunEvent, Task, Thread, ThreadParticipant, User
 from src.models.run import ACTIVE_STATUSES, PAUSED_STATUSES
+from src.models.task import OPEN_TASK_STATUSES
 from src.runtime.policy import strictest_level
+from src.runtime.prompt import ROSTER_LIMIT, TaskBrief, Teammate, handoff_prompt
 from src.schemas.run import RunOut
 from src.services.mention_routing import BotAuthor, ChatBots, Reply, route
 from src.services.run_event_service import add_event
@@ -224,6 +226,11 @@ class RunContext:
     hop: int  # 0 when a person's message started the run, one more per bot reply since
     member_id: uuid.UUID | None  # in a DM, the person the bot is talking to (a guest's too)
     history: list[ChatLine]  # oldest first, ending with the run's trigger message
+    # ADR 0014: a child run's task (its trigger line is the task itself), and the organization's
+    # other bots by name (at most `ROSTER_LIMIT`, with how many more there are).
+    task: TaskBrief | None = None
+    teammates: list[Teammate] = field(default_factory=list)
+    more_teammates: int = 0
 
 
 # A routine's trigger is a system message (people see "Routine: {name}") whose `routine-run` part
@@ -239,15 +246,41 @@ def routine_prompt(parts: list[dict[str, Any]]) -> str | None:
     return f"It's time for your routine “{part.get('name', '')}”. Do this now:\n\n{part.get('instructions', '')}"
 
 
-def _line(line: Any, *, bot_id: uuid.UUID) -> ChatLine:
+def _line(line: Any, *, bot_id: uuid.UUID, handles: dict[str, str]) -> ChatLine:
     if line.author_type == "system":  # only a run's own trigger gets here: a routine's
         return ChatLine(from_this_bot=False, author_type="user", author="", text=routine_prompt(line.parts) or "")
     return ChatLine(
         from_this_bot=line.author_type == "bot" and line.author_id == bot_id,
         author_type=line.author_type,
         author=_label(line.user_name, line.user_handle) or _label(line.bot_name, line.bot_handle),
-        text=text_of(line.parts),
+        text="\n".join(filter(None, [text_of(line.parts), *_handoff_lines(line.parts, handles)])),
     )
+
+
+def _handoff_lines(parts: list[dict[str, Any]], handles: dict[str, str]) -> list[str]:
+    """A handoff message's cards, as another run reads them: `(handed @sales a task: "…", done)`."""
+    lines = []
+    for part in parts:
+        if part.get("type") != "handoff":
+            continue
+        handle = handles.get(str(part.get("toBotId")), "a teammate")
+        task = str(part.get("task", "")).replace('"', "'")
+        lines.append(f'(handed @{handle} a task: "{task}", {part.get("status", "queued")})')
+    return lines
+
+
+async def _handles_of_cards(db: AsyncSession, parts_of: list[list[dict[str, Any]]]) -> dict[str, str]:
+    """The @handles of the bots the handoff cards in these messages name (no query when none)."""
+    ids = {
+        uuid.UUID(str(part["toBotId"]))
+        for parts in parts_of
+        for part in parts
+        if part.get("type") == "handoff" and part.get("toBotId")
+    }
+    if not ids:
+        return {}
+    rows = await db.execute(select(Bot.id, Bot.handle).where(Bot.id.in_(ids)))
+    return {str(bot_id): handle for bot_id, handle in rows}
 
 
 def _label(name: str | None, handle: str | None) -> str:
@@ -262,14 +295,21 @@ async def run_context(db: AsyncSession, run_id: uuid.UUID) -> RunContext:
 
     When the history carries taint into a clean run, the run is marked tainted here (one UPDATE);
     the caller commits."""
-    trigger = aliased(Message)
+    trigger, from_bot, requester = aliased(Message), aliased(Bot), aliased(User)
     row = (
         await db.execute(
             select(
+                Run.org_id,
                 Run.bot_id,
                 Run.thread_id,
                 Run.tainted,
                 Run.hop,
+                Task.id.label("task_id"),
+                Task.task.label("task_text"),
+                Task.context.label("task_context"),
+                from_bot.name.label("from_bot_name"),
+                from_bot.handle.label("from_bot_handle"),
+                requester.name.label("requester_name"),
                 Bot.name,
                 Bot.instructions,
                 Bot.model_id,
@@ -285,17 +325,22 @@ async def run_context(db: AsyncSession, run_id: uuid.UUID) -> RunContext:
             .join(Bot, Bot.id == Run.bot_id)
             .join(Thread, Thread.id == Run.thread_id)
             .outerjoin(trigger, trigger.id == Run.trigger_message_id)
+            .outerjoin(Task, Task.child_run_id == Run.id)
+            .outerjoin(from_bot, from_bot.id == Task.from_bot_id)
+            .outerjoin(requester, requester.id == Task.requester_id)
             .where(Run.id == run_id)
         )
     ).one()
     author_bot, reply_of = aliased(Bot), aliased(Run)
-    written_by_tainted_run = (
-        exists()
-        .where(reply_of.thread_id == row.thread_id, reply_of.reply_message_id == Message.id, reply_of.tainted)
-        .label("tainted")
-    )
+    task_of, handed_by = aliased(Task), aliased(Run)
+    written_by_tainted_run = or_(
+        exists().where(reply_of.thread_id == row.thread_id, reply_of.reply_message_id == Message.id, reply_of.tainted),
+        # A handoff message carries its run's taint too (ADR 0014).
+        exists().where(task_of.message_id == Message.id, handed_by.id == task_of.parent_run_id, handed_by.tainted),
+    ).label("tainted")
     query = (
         select(
+            Message.id,
             Message.author_type,
             Message.author_id,
             Message.parts,
@@ -324,7 +369,27 @@ async def run_context(db: AsyncSession, run_id: uuid.UUID) -> RunContext:
             )
         )
     lines = list(reversed((await db.execute(query)).all()))
-    history = [_line(line, bot_id=row.bot_id) for line in lines]
+    handles = await _handles_of_cards(db, [line.parts for line in lines])
+    task = (
+        TaskBrief(
+            task_id=str(row.task_id),
+            task=row.task_text,
+            context=row.task_context,
+            from_bot_name=row.from_bot_name or "A teammate",
+            from_bot_handle=row.from_bot_handle or "teammate",
+            requester_name=row.requester_name,
+        )
+        if row.task_id is not None
+        else None
+    )
+    history = [
+        # A child's trigger (the handoff message) is its task, as its request.
+        ChatLine(from_this_bot=False, author_type="user", author="", text=handoff_prompt(task))
+        if task is not None and line.id == row.trigger_id
+        else _line(line, bot_id=row.bot_id, handles=handles)
+        for line in lines
+    ]
+    teammates, more = await _teammates(db, org_id=row.org_id, bot_id=row.bot_id)
     tainted = row.tainted
     if not tainted and any(line.tainted for line in lines):
         await db.execute(update(Run).where(Run.id == run_id).values(tainted=True))
@@ -340,11 +405,29 @@ async def run_context(db: AsyncSession, run_id: uuid.UUID) -> RunContext:
         memory_enabled=row.memory_enabled,
         tainted=tainted,
         group=row.kind == "group",
-        guest=row.kind == "dm" and row.dm_bot_id != row.bot_id,
+        guest=row.kind == "dm" and row.dm_bot_id != row.bot_id and task is None,
         hop=row.hop,
         member_id=row.created_by if row.kind == "dm" else None,
         history=history,
+        task=task,
+        teammates=teammates,
+        more_teammates=more,
     )
+
+
+async def _teammates(db: AsyncSession, *, org_id: uuid.UUID, bot_id: uuid.UUID) -> tuple[list[Teammate], int]:
+    """The organization's other bots by name (at most `ROSTER_LIMIT`), and how many more there are.
+    One query: the count comes with every row."""
+    rows = (
+        await db.execute(
+            select(Bot.name, Bot.handle, Bot.role, func.count().over().label("total"))
+            .where(Bot.org_id == org_id, Bot.id != bot_id)
+            .order_by(Bot.name, Bot.handle)
+            .limit(ROSTER_LIMIT)
+        )
+    ).all()
+    mates = [Teammate(name=r.name, handle=r.handle, role=r.role or "") for r in rows]
+    return mates, (rows[0].total - len(rows)) if rows else 0
 
 
 def chain_stopped_text(hop_limit: int) -> str:
@@ -393,7 +476,7 @@ async def save_reply(
         text,
         org_bots=await _org_bots_by_handle(db, org_id=thread.org_id, text=text),
         hop_limit=settings.bot_hop_limit,
-        by_bot=BotAuthor(bot_id=run.bot_id, hop=run.hop),
+        by_bot=BotAuthor(bot_id=run.bot_id, hop=run.hop, skip=await _handed_by(db, run.id)),
     )
     runs = [
         _queued_run(thread, reply, trigger=message, settings=settings, parent=run.id, requester_id=run.requester_id)
@@ -411,6 +494,12 @@ async def save_reply(
     if notice is not None:
         _message_saved(db, run, notice)
     return SavedReply(message=message, runs=runs, notice=notice)
+
+
+async def _handed_by(db: AsyncSession, run_id: uuid.UUID) -> frozenset[uuid.UUID]:
+    """For a child run: the bot that handed it the task (its reply goes back there by itself)."""
+    from_bot = await db.scalar(select(Task.from_bot_id).where(Task.child_run_id == run_id))
+    return frozenset({from_bot}) if from_bot else frozenset()
 
 
 def _message(thread: Thread, *, author_type: str, author_id: uuid.UUID | None, parts: list[dict[str, Any]]) -> Message:
@@ -444,7 +533,7 @@ async def finish_run(db: AsyncSession, run_id: uuid.UUID, *, status: str, error:
 
 
 async def pause_run(db: AsyncSession, run_id: uuid.UUID, *, status: str, error: str | None = None) -> bool:
-    """running → waiting_approval or needs_attention. False if the run isn't running any more
+    """running → waiting_approval, waiting_handoff or needs_attention. False if the run isn't running any more
     (Stop was pressed). The caller commits."""
     result = await db.execute(
         update(Run)
@@ -481,15 +570,22 @@ async def fail_interrupted_runs(db: AsyncSession) -> list[Run]:
 
 
 async def runs_to_pick_up(db: AsyncSession) -> list[tuple[uuid.UUID, uuid.UUID]]:
-    """(run id, chat id) of every run that should be moving: queued, running, or waiting for an
-    approval that has been decided (none of its approvals is pending any more). The job queue
-    gives each one without a job a new one (`RunManager.pick_up_stuck_runs`)."""
+    """(run id, chat id) of every run that should be moving: queued, running, waiting for an
+    approval that has been decided (none of its approvals is pending any more), or waiting for
+    tasks that have all ended. The job queue gives each one without a job a new one
+    (`RunManager.pick_up_stuck_runs`)."""
     decided = and_(
         Run.status == "waiting_approval",
         ~exists().where(Approval.run_id == Run.id, Approval.status == "pending"),
     )
+    tasks_ended = and_(
+        Run.status == "waiting_handoff",
+        ~exists().where(Task.parent_run_id == Run.id, Task.status.in_(OPEN_TASK_STATUSES)),
+    )
     rows = await db.execute(
-        select(Run.id, Run.thread_id).where(or_(Run.status.in_(ACTIVE_STATUSES), decided)).order_by(Run.created_at)
+        select(Run.id, Run.thread_id)
+        .where(or_(Run.status.in_(ACTIVE_STATUSES), decided, tasks_ended))
+        .order_by(Run.created_at)
     )
     return [(run_id, thread_id) for run_id, thread_id in rows]
 
@@ -585,5 +681,25 @@ async def thread_runs(db: AsyncSession, thread_id: uuid.UUID, *, active: bool) -
     return ThreadRuns(runs=[run for _, _, run in rows if run is not None], last_event_id=first[0], replay_from=first[1])
 
 
-def run_out(run: Run) -> RunOut:
-    return RunOut.model_validate(run)
+def run_out(run: Run, *, task_ids: list[uuid.UUID] | None = None) -> RunOut:
+    out = RunOut.model_validate(run)
+    if task_ids:
+        out.task_ids = task_ids
+    return out
+
+
+async def waiting_task_ids(db: AsyncSession, runs: list[Run]) -> dict[uuid.UUID, list[uuid.UUID]]:
+    """For the runs waiting for handed-off tasks: the open tasks each waits for, oldest first.
+    One query, none when no run waits."""
+    waiting = [run.id for run in runs if run.status == "waiting_handoff"]
+    if not waiting:
+        return {}
+    rows = await db.execute(
+        select(Task.parent_run_id, Task.id)
+        .where(Task.parent_run_id.in_(waiting), Task.status.in_(OPEN_TASK_STATUSES))
+        .order_by(Task.created_at, Task.id)
+    )
+    found: dict[uuid.UUID, list[uuid.UUID]] = {}
+    for parent_id, task_id in rows:
+        found.setdefault(parent_id, []).append(task_id)
+    return found

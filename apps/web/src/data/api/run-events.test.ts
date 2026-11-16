@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { Message, Thread } from "../types";
 import { toApproval, toMessage } from "./map";
 import { applyRunEvent, upsertApproval, withActiveRuns, withWaitingApprovals, type ChatSlice } from "./run-events";
-import type { ApiApproval, ApiMessage, ApiRun, ApiRunEvent } from "./types";
+import type { ApiApproval, ApiMessage, ApiRun, ApiRunEvent, ApiTask } from "./types";
 
 const thread: Thread = {
   id: "t1", kind: "dm", title: "Scout", botId: "b1", participants: [], lastMessageAt: "2026-11-12T09:00:00Z", lastMessagePreview: "", unread: 0,
@@ -341,5 +341,121 @@ describe("a chat that opens mid-reply (the list, then the stream replays from re
     expect(chat.runs).toEqual([]);
     // Its words, replayed when the run isn't known here at all, are skipped too.
     expect(only(applyRunEvent(page, deltaAt(4, "Done.", "r2", "m2"))).parts).toEqual([{ type: "text", text: "Done." }]);
+  });
+});
+
+/* ---------- Handoffs (ADR 0014) ---------- */
+
+describe("handoffs: cards that move on, a parent that waits, then a new answer", () => {
+  const apiTask = (id: string, patch: Partial<ApiTask> = {}): ApiTask => ({
+    id, threadId: "t1", parentRunId: "r1", childRunId: `c-${id}`, messageId: "m1", fromBotId: "b1", toBotId: "b2",
+    task: "Draft openers", status: "queued", resultMessageId: null, resultPreview: null, error: null, errorCode: null,
+    createdAt: "2026-11-12T09:00:01Z", startedAt: null, finishedAt: null, deadlineAt: "2026-11-12T10:00:01Z", ...patch,
+  });
+  const card = (taskId: string, patch: Record<string, unknown> = {}) => ({
+    type: "handoff", taskId, fromBotId: "b1", toBotId: "b2", task: "Draft openers", status: "queued",
+    resultMessageId: null, resultPreview: null, error: null, errorCode: null, ...patch,
+  });
+  const handoffMessage = (...cards: Record<string, unknown>[]): ApiMessage => ({
+    id: "m1", threadId: "t1", author: { type: "bot", id: "b1" }, status: "complete", createdAt: "2026-11-12T09:00:01Z",
+    parts: [{ type: "text", text: "I'll ask Sales." }, ...cards],
+  });
+  const saved = (message: ApiMessage) => event({ kind: "message_saved", data: { message } });
+  const updated = (task: ApiTask) => event({ kind: "task_updated", data: { task } });
+  const waiting = (...taskIds: string[]) => event({ kind: "run_waiting_handoff", data: { status: "waiting_handoff", taskIds } });
+  const resumedAfterTasks = () => event({ kind: "run_resumed", data: { botId: "b1", after: "tasks" } });
+  const cardsOf = (chat: ChatSlice) => chat.messages.find((m) => m.id === "m1")!.parts.filter((p) => p.type === "handoff");
+
+  it("a saved handoff card arrives with its nulls left out", () => {
+    const chat = play(started, saved(handoffMessage(card("k1"))));
+    expect(cardsOf(chat)).toEqual([{ type: "handoff", taskId: "k1", fromBotId: "b1", toBotId: "b2", task: "Draft openers", status: "queued" }]);
+  });
+
+  it("task_updated moves the card on: working, then done with a preview and the reply's id", () => {
+    const chat = play(
+      started, saved(handoffMessage(card("k1"))), updated(apiTask("k1", { status: "working" })),
+      updated(apiTask("k1", { status: "done", resultMessageId: "m7", resultPreview: "Three drafts are ready." })),
+    );
+    expect(cardsOf(chat)).toEqual([expect.objectContaining({ status: "done", resultMessageId: "m7", resultPreview: "Three drafts are ready." })]);
+  });
+
+  it("a failed task carries its error and code; a cancelled one its reason", () => {
+    const failed = play(saved(handoffMessage(card("k1"), card("k2"))),
+      updated(apiTask("k1", { status: "failed", error: "Sales reached its budget.", errorCode: "budget" })),
+      updated(apiTask("k2", { status: "cancelled", error: "Cancelled: Chief stopped before it finished." })),
+    );
+    expect(cardsOf(failed)).toEqual([
+      expect.objectContaining({ taskId: "k1", status: "failed", error: "Sales reached its budget.", errorCode: "budget" }),
+      expect.objectContaining({ taskId: "k2", status: "cancelled", error: "Cancelled: Chief stopped before it finished." }),
+    ]);
+  });
+
+  it("only the card with that task id changes", () => {
+    const chat = play(saved(handoffMessage(card("k1"), card("k2"))), updated(apiTask("k2", { status: "working" })));
+    expect(cardsOf(chat).map((p) => p.status)).toEqual(["queued", "working"]);
+  });
+
+  it("never moves a card backwards: an older update (a replay) is ignored", () => {
+    const done = apiTask("k1", { status: "done", resultPreview: "Ready." });
+    const chat = play(saved(handoffMessage(card("k1"))), updated(done), updated(apiTask("k1", { status: "working" })), updated(apiTask("k1")));
+    expect(cardsOf(chat)).toEqual([expect.objectContaining({ status: "done", resultPreview: "Ready." })]);
+  });
+
+  it("the same update twice changes nothing more", () => {
+    const working = apiTask("k1", { status: "working" });
+    const once = play(saved(handoffMessage(card("k1"))), updated(working));
+    const twice = applyRunEvent(once, { ...updated(working) });
+    expect(cardsOf(twice)).toEqual(cardsOf(once));
+  });
+
+  it("an update that arrives before its card is kept, and the card shows it when it comes", () => {
+    const chat = play(updated(apiTask("k1", { status: "working" })), saved(handoffMessage(card("k1"))));
+    expect(cardsOf(chat)).toEqual([expect.objectContaining({ status: "working" })]);
+  });
+
+  it("an older save of the handoff message (a replay) doesn't undo a card's progress", () => {
+    const chat = play(saved(handoffMessage(card("k1", { status: "done", resultPreview: "Ready." }))), saved(handoffMessage(card("k1"))));
+    expect(cardsOf(chat)).toEqual([expect.objectContaining({ status: "done", resultPreview: "Ready." })]);
+  });
+
+  it("run_waiting_handoff pauses the run with the tasks it waits for; its message stops streaming", () => {
+    const chat = play(started, delta("I'll ask Sales."), waiting("k1", "k2"));
+    expect(chat.runs).toMatchObject([{ id: "r1", status: "waiting_handoff", taskIds: ["k1", "k2"] }]);
+    expect(only(chat).status).toBe("complete");
+  });
+
+  it("a run that has finished isn't brought back by a late waiting event", () => {
+    expect(play(started, cancelled, waiting("k1")).runs).toEqual([]);
+  });
+
+  it("run_resumed after tasks starts a new message: the handoff message stays complete", () => {
+    const chat = play(started, delta("I'll ask Sales."), waiting("k1"), resumedAfterTasks());
+    expect(chat.messages.map((m) => [m.id, m.status])).toEqual([["m1", "complete"], ["typing-r1", "streaming"]]);
+    expect(chat.runs).toMatchObject([{ id: "r1", status: "running", messageId: undefined, taskIds: undefined }]);
+
+    const answer = [
+      event({ kind: "message_delta", data: { messageId: "m9", botId: "b1", text: "Here's the plan." } }),
+    ].reduce(applyRunEvent, chat);
+    expect(answer.messages.map((m) => [m.id, m.status])).toEqual([["m1", "complete"], ["m9", "streaming"]]);
+    expect(answer.messages[0].parts).toEqual([{ type: "text", text: "I'll ask Sales." }]);
+  });
+
+  it("run_resumed with no `after` (an older event) is an approval: the same message goes on", () => {
+    const resumed = event({ kind: "run_resumed", data: { botId: "b1" } });
+    const chat = play(started, delta("Half"), waiting("k1"), resumed);
+    expect(only(chat)).toMatchObject({ id: "m1", status: "streaming" });
+  });
+
+  it("a replayed run_resumed after tasks doesn't bring the dots back once the answer has words", () => {
+    const resumedAt = { ...resumedAfterTasks(), id: 10_000 };
+    const words = { ...event({ kind: "message_delta", data: { messageId: "m9", botId: "b1", text: "Plan." } }), id: 10_001 };
+    const chat = [resumedAt, words, resumedAt].reduce(applyRunEvent, play(started, waiting("k1")));
+    expect(chat.messages.map((m) => m.id)).toEqual(["m9"]);
+  });
+
+  it("withActiveRuns: a waiting_handoff run is paused, with no thinking dots", () => {
+    const chat = withActiveRuns(empty, "t1", [apiRun({ status: "waiting_handoff" })]);
+    expect(chat.runs).toEqual([{ id: "r1", threadId: "t1", botId: "b1", status: "waiting_handoff", error: undefined }]);
+    expect(chat.messages).toEqual([]);
   });
 });

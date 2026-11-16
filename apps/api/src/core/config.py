@@ -69,6 +69,11 @@ class Settings(BaseSettings):
     # Bots @mentioning bots (ADR 0009): how many hops a chain of bot replies may go from a
     # person's message before it stops (and the chat says so).
     bot_hop_limit: int = 3
+    # Handoffs (ADR 0014): tasks one run may hand off over its whole life, open tasks per
+    # organization (a soft cap), and how long a task may take before it fails as timed out.
+    handoff_max_tasks_per_run: int = 5
+    handoff_max_open_tasks_per_org: int = 20
+    handoff_timeout_minutes: int = 60
 
     # Tools. PLUGINS is the allowlist of built-in plugins to load (ADR 0006); "demo" adds fake
     # tools (notes, a fake outbox) so approvals can be tried with no outside account; "gmail"

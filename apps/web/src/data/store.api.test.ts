@@ -539,6 +539,85 @@ describe("chats on the API", () => {
     expect(state().threads.find((t) => t.id === "t1")?.lastMessagePreview).toBe("On it.");
   });
 
+  describe("handoffs (ADR 0014)", () => {
+    const card = (taskId: string, toBotId: string) => ({
+      type: "handoff", taskId, fromBotId: "b1", toBotId, task: `Task for ${toBotId}`, status: "queued",
+      resultMessageId: null, resultPreview: null, error: null, errorCode: null,
+    });
+    const handoffMessage = { ...message("m5", "I'll ask the team.", scoutSays), parts: [{ type: "text", text: "I'll ask the team." }, card("k1", "b2"), card("k2", "b2")] };
+    const task = (id: string, patch: Record<string, unknown>) => ({
+      id, threadId: "t1", parentRunId: "r1", childRunId: `c-${id}`, messageId: "m5", fromBotId: "b1", toBotId: "b2", task: `Task for b2`,
+      status: "queued", resultMessageId: null, resultPreview: null, error: null, errorCode: null,
+      createdAt: "2026-11-12T09:00:01Z", startedAt: null, finishedAt: null, deadlineAt: "2026-11-12T10:00:01Z", ...patch,
+    });
+    const cards = () => state().messages.find((m) => m.id === "m5")?.parts.flatMap((p) => (p.type === "handoff" ? [p] : []));
+
+    it("a bot hands off and waits; the cards move on live; it resumes with a new message", async () => {
+      actions.openThread("t1");
+      await vi.waitFor(() => expect(state().threadLoads.t1?.status).toBe("ready"));
+      const stream = FakeEventSource.last!;
+
+      stream.emit("run_started", { runId: "r1", data: { botId: "b1" } });
+      stream.emit("message_saved", { runId: "r1", data: { message: handoffMessage } });
+      stream.emit("run_waiting_handoff", { runId: "r1", data: { status: "waiting_handoff", taskIds: ["k1", "k2"] } });
+      expect(state().runs).toMatchObject([{ id: "r1", status: "waiting_handoff", taskIds: ["k1", "k2"] }]);
+      expect(state().bots.find((b) => b.id === "b1")).toMatchObject({ status: "working", statusText: "Waiting on teammates" });
+      expect(cards()?.map((p) => p.status)).toEqual(["queued", "queued"]);
+
+      // The child runs are ordinary runs; their tasks' updates come on the parent.
+      stream.emit("task_updated", { runId: "r1", data: { task: task("k1", { status: "working" }) } });
+      stream.emit("task_updated", { runId: "r1", data: { task: task("k1", { status: "done", resultMessageId: "m6", resultPreview: "Found 3 leads." }) } });
+      stream.emit("task_updated", { runId: "r1", data: { task: task("k1", { status: "working" }) } }); // a late, older copy
+      stream.emit("task_updated", { runId: "r1", data: { task: task("k2", { status: "failed", error: "Writer reached its budget.", errorCode: "budget" }) } });
+      expect(cards()).toEqual([
+        expect.objectContaining({ taskId: "k1", status: "done", resultMessageId: "m6", resultPreview: "Found 3 leads." }),
+        expect.objectContaining({ taskId: "k2", status: "failed", error: "Writer reached its budget.", errorCode: "budget" }),
+      ]);
+      expect(cards()?.[0]).not.toHaveProperty("error");
+
+      stream.emit("run_resumed", { runId: "r1", data: { botId: "b1", after: "tasks" } });
+      expect(state().messages.at(-1)).toMatchObject({ id: "typing-r1", status: "streaming" });
+      expect(state().bots.find((b) => b.id === "b1")?.statusText).toBe("Thinking…");
+      stream.emit("message_delta", { runId: "r1", data: { messageId: "m7", botId: "b1", text: "Here's the plan." } });
+      stream.emit("message_saved", { runId: "r1", data: { message: message("m7", "Here's the plan.", scoutSays, "2026-11-12T09:05:00Z") } });
+      stream.emit("run_finished", { runId: "r1", data: { status: "succeeded" } });
+
+      expect(texts()).toEqual(["Hi Scout", "Hello!", "I'll ask the team.", "Here's the plan."]);
+      expect(state().runs).toEqual([]);
+      expect(state().bots.find((b) => b.id === "b1")?.status).toBe("idle");
+    });
+
+    it("opening a chat where a bot waits on its tasks shows it waiting, with the cards as saved", async () => {
+      routes["GET /api/v1/orgs/o1/threads/t1/runs?active=true"] = { status: 200, body: { runs: [apiRun({ status: "waiting_handoff" })], lastEventId: 9, replayFrom: 9 } };
+      routes["GET /api/v1/orgs/o1/threads/t1/messages?limit=50"] = { status: 200, body: [message("m1", "Plan it"), { ...handoffMessage, parts: [card("k1", "b2")] }] };
+      actions.openThread("t1");
+      await vi.waitFor(() => expect(state().runs[0]?.status).toBe("waiting_handoff"));
+      expect(state().messages.some((m) => m.id === "typing-r1")).toBe(false);
+      expect(cards()).toEqual([{ type: "handoff", taskId: "k1", fromBotId: "b1", toBotId: "b2", task: "Task for b2", status: "queued" }]);
+
+      // Stop works on a waiting run.
+      routes["POST /api/v1/orgs/o1/runs/r1/cancel"] = { status: 200, body: {} };
+      await expect(actions.stopRun("r1")).resolves.toEqual({ ok: true });
+      FakeEventSource.last!.emit("task_updated", { runId: "r1", data: { task: task("k1", { status: "cancelled", error: "Cancelled: Scout stopped before it finished." }) } });
+      FakeEventSource.last!.emit("run_finished", { runId: "r1", data: { status: "cancelled" } });
+      expect(cards()?.[0]).toMatchObject({ status: "cancelled", error: "Cancelled: Scout stopped before it finished." });
+      expect(state().runs).toEqual([]);
+    });
+
+    it("listens for the new event kinds", async () => {
+      const added: string[] = [];
+      class Recording extends FakeEventSource {
+        addEventListener(kind: string, listener: (event: MessageEvent<string>) => void) {
+          added.push(kind);
+          super.addEventListener(kind, listener);
+        }
+      }
+      vi.stubGlobal("EventSource", Recording);
+      actions.openThread("t1");
+      await vi.waitFor(() => expect(added).toEqual(expect.arrayContaining(["task_updated", "run_waiting_handoff"])));
+    });
+  });
+
   it("a message that can't be sent stays, marked with why", async () => {
     routes["POST /api/v1/orgs/o1/threads/t1/messages"] = { status: 404, body: { detail: "Chat not found." } };
     actions.sendMessage("t1", "Anyone there?");

@@ -181,11 +181,27 @@ export interface FilePart {
   sizeBytes: number;
 }
 
+/** Where a handed-off Task is (ADR 0014). `queued` and `working` are open; the rest are final. */
+export type TaskStatus = "queued" | "working" | "done" | "failed" | "cancelled";
+
+/**
+ * One bot handing a Task to a teammate (`team.handoff`). The card lives in the handing-off
+ * bot's message and changes in place as the Task moves on (`task_updated`).
+ */
 export interface HandoffPart {
   type: "handoff";
+  taskId: ID;
   fromBotId: ID;
   toBotId: ID;
   task: string;
+  status: TaskStatus;
+  /** The owner's reply, once the Task is done: the card links to it. */
+  resultMessageId?: ID;
+  /** The first 280 characters of the result, whitespace collapsed. */
+  resultPreview?: string;
+  /** Why it failed or was cancelled. */
+  error?: string;
+  errorCode?: "budget" | "timeout" | "stopped";
 }
 
 export type MessagePart =

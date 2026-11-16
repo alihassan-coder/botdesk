@@ -19,7 +19,7 @@ const everyPart: Message = {
     { type: "question", question: "Archive cold emails?", options: ["Yes", "No"] },
     { type: "routine-created", routineId: "r_1", name: "Overnight outbound" },
     { type: "file", name: "report.csv", mime: "text/csv", sizeBytes: 18_204 },
-    { type: "handoff", fromBotId: "b_chief", toBotId: "b_sales", task: "Draft openers" },
+    { type: "handoff", taskId: "task_1", fromBotId: "b_chief", toBotId: "b_sales", task: "Draft openers", status: "working" },
     { type: "tool-call", toolExecutionId: "x1", tool: "demo.send_email", status: "succeeded" },
     { type: "tool-call", toolExecutionId: "x2", tool: "demo.read_inbox", status: "failed", error: "The inbox didn't answer." },
   ],
@@ -34,7 +34,7 @@ describe("MessageParts", () => {
     expect(screen.getByText("Read inbox").parentElement).toHaveTextContent("Tried Read inbox · failed");
     expect(screen.getByText("The inbox didn't answer.")).toBeInTheDocument();
 
-    expect(screen.getByText("@sales")).toBeInTheDocument(); // text, with the mention highlighted
+    expect(screen.getAllByText("@sales")).toHaveLength(2); // the text's highlighted mention, and the handoff card's handle
     expect(screen.getByText("Thought for 3s")).toBeInTheDocument(); // reasoning
     expect(screen.getByText("Tonight's run")).toBeInTheDocument(); // work log
     expect(screen.getByLabelText("Not done yet")).toBeInTheDocument();
@@ -43,7 +43,7 @@ describe("MessageParts", () => {
     expect(screen.getByText("Archive cold emails?")).toBeInTheDocument(); // question
     expect(screen.getByText("Overnight outbound")).toBeInTheDocument(); // routine created
     expect(screen.getByText("18 KB")).toBeInTheDocument(); // file
-    expect(screen.getByText("· Draft openers")).toBeInTheDocument(); // handoff
+    expect(screen.getByRole("article", { name: "Chief handed a task to Sales Outbound" })).toHaveTextContent("Draft openers"); // handoff
   });
 
   it("opens the reasoning when you click it", async () => {

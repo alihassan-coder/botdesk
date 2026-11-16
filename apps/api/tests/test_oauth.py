@@ -6,11 +6,12 @@ Google (sign-in, token, revoke) and the Gmail API are `FakeGoogle`, answering th
 `httpx.MockTransport`. Two concurrent refreshes are in test_oauth_postgres.py.
 """
 
+import asyncio
 import base64
 import hashlib
 import logging
 import uuid
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import timedelta
@@ -24,12 +25,15 @@ from fastapi import FastAPI
 from pydantic import SecretStr
 from sqlalchemy import delete, select, update
 
+from src.core.access_log import RedactOAuthCallback
 from src.core.config import Settings
 from src.core.database import utcnow
+from src.core.url_guard import GuardedTransport, UnsafeUrl
 from src.main import create_app
 from src.models import AuditEntry, BotTool, Connection, Membership, OAuthFlow
 from src.plugins.registry import RegisteredTool
 from src.runtime.runner import RunManager
+from src.services import oauth_flow
 from src.services.tool_execution_service import RunRef
 from tests.conftest import PASSWORD, sign_up
 
@@ -40,6 +44,8 @@ MODIFY = "https://www.googleapis.com/auth/gmail.modify"
 PROFILE = "https://gmail.googleapis.com/gmail/v1/users/me/profile"
 CALLBACK = "/api/v1/oauth/callback"
 WEB = "http://localhost:3000"
+ISSUER = "https://accounts.google.com"
+MISSING = object()
 
 GOOGLE_SETTINGS = Settings(
     environment="test",
@@ -65,6 +71,10 @@ class FakeGoogle:
     token_error: str = ""
     profile_status: int = 200
     revoke_status: int = 200
+    expires_in: Any = 3599  # MISSING: no `expires_in` in the answer
+    token_fault: BaseException | None = None  # raised instead of answering /token (a guard refusal, a bug)
+    token_delay: float = 0.0  # seconds before /token answers
+    on_token: Callable[[], Awaitable[None]] | None = None  # runs while /token is answering
     requests: list[httpx.Request] = field(default_factory=list)
     issued: int = 0
 
@@ -78,17 +88,21 @@ class FakeGoogle:
         self.requests.append(request)
         host, path = request.url.host, request.url.path
         if host == "oauth2.googleapis.com" and path == "/token":
+            if self.token_delay:
+                await asyncio.sleep(self.token_delay)
+            if self.on_token is not None:
+                await self.on_token()
+            if self.token_fault is not None:
+                raise self.token_fault
             if self.token_status != 200:
                 return httpx.Response(
                     self.token_status,
                     json={"error": self.token_error, "error_description": "Token has been expired or revoked."},
                 )
             self.issued += 1
-            body: dict[str, Any] = {
-                "access_token": f"ya29.ACCESS-{self.issued}",
-                "expires_in": 3599,
-                "token_type": "Bearer",
-            }
+            body: dict[str, Any] = {"access_token": f"ya29.ACCESS-{self.issued}", "token_type": "Bearer"}
+            if self.expires_in is not MISSING:
+                body["expires_in"] = self.expires_in
             if self.granted is not None:
                 body["scope"] = self.granted
             if self.send_refresh_token:
@@ -129,9 +143,11 @@ class Team:
         url = (await self.start(**body))["authorizeUrl"]
         return {key: values[0] for key, values in parse_qs(urlsplit(url).query).items()}
 
-    async def callback(self, **params: str) -> dict[str, str]:
-        """Come back from Google; returns the web callback page's query (result, code, connector)."""
-        response = await self.client.get(CALLBACK, params=params)
+    async def callback(self, **params: str | None) -> dict[str, str]:
+        """Come back from Google; returns the web callback page's query (result, code, connector).
+        Google's `iss` comes along unless the test passes `iss=None`."""
+        query = {key: value for key, value in {"iss": ISSUER, **params}.items() if value is not None}
+        response = await self.client.get(CALLBACK, params=query)
         assert response.status_code == 303, response.text
         location = response.headers["location"]
         assert location.startswith(f"{WEB}/apps/callback?"), location
@@ -357,7 +373,7 @@ async def test_an_admin_made_a_member_mid_flow_is_forbidden_an_org_account(team:
 async def test_google_refusing_the_code_or_the_profile_is_failed_without_its_words(team: Team) -> None:
     team.google.token_status, team.google.token_error = 400, "invalid_grant"
     query = await team.authorize()
-    response = await team.client.get(CALLBACK, params={"state": query["state"], "code": "4/BAD"})
+    response = await team.client.get(CALLBACK, params={"state": query["state"], "code": "4/BAD", "iss": ISSUER})
     assert response.headers["location"] == f"{WEB}/apps/callback?result=error&code=failed"
     team.google.token_status = 200
     team.google.profile_status = 500
@@ -393,12 +409,12 @@ async def test_no_secret_reaches_a_response_a_log_line_or_a_redirect(
     seen: list[str] = []
     url = (await team.start())["authorizeUrl"]
     state = parse_qs(urlsplit(url).query)["state"][0]
-    response = await team.client.get(CALLBACK, params={"state": state, "code": "4/CODE-SECRET"})
+    response = await team.client.get(CALLBACK, params={"state": state, "code": "4/CODE-SECRET", "iss": ISSUER})
     seen += [response.headers["location"], response.text]
     team.google.token_status, team.google.token_error = 400, "invalid_grant"
     url = (await team.start())["authorizeUrl"]
     response = await team.client.get(
-        CALLBACK, params={"state": parse_qs(urlsplit(url).query)["state"][0], "code": "4/C2"}
+        CALLBACK, params={"state": parse_qs(urlsplit(url).query)["state"][0], "code": "4/C2", "iss": ISSUER}
     )
     seen += [response.headers["location"], (await team.client.get(f"{team.org}/connections")).text]
     (verifier,) = {form["code_verifier"] for form in team.google.forms("/token")[:1]}
@@ -548,3 +564,236 @@ async def test_a_callback_naming_another_issuer_is_failed(team: Team) -> None:
     query = await team.authorize()
     back = await team.callback(state=query["state"], code="4/X", iss="https://accounts.google.com")
     assert back["result"] == "connected"
+
+
+async def test_disconnecting_answers_204_even_when_the_guard_refuses_the_revoke(team: Team) -> None:
+    async def nowhere(_host: str) -> list[str]:
+        raise OSError("no DNS")
+
+    await team.connect_gmail()
+    connection_id = await _gmail_id(team)
+    team.app.state.oauth.transport = GuardedTransport(allow_private=False, resolve=nowhere)
+    response = await team.client.delete(f"{team.org}/connections/{connection_id}")
+    assert response.status_code == 204, response.text
+    async with team.app.state.sessionmaker() as db:
+        row = await db.get(Connection, connection_id)
+        assert row is not None and (row.status, row.encrypted_secret) == ("revoked", None)
+
+
+# Refresh failures
+
+
+async def _lease(team: Team, connection_id: uuid.UUID) -> Any:
+    async with team.app.state.sessionmaker() as db:
+        row = await db.get(Connection, connection_id, populate_existing=True)
+        assert row is not None
+        return row.refresh_lease_until
+
+
+async def test_a_guard_refusing_the_token_endpoint_goes_on_with_the_old_token(team: Team) -> None:
+    await team.connect_gmail()
+    connection_id = await _gmail_id(team)
+    await _expire(team, connection_id)
+    team.google.token_fault = UnsafeUrl("We couldn't find oauth2.googleapis.com.")
+    assert await _call_profile(team, connection_id) == "Bearer ya29.ACCESS-1"
+    lease = await _lease(team, connection_id)
+    assert lease is None or lease <= utcnow() + oauth_flow.BACKOFF  # backing off, not holding the lease
+    (gmail,) = await team.connections()
+    assert gmail["status"] == "active"
+
+
+async def test_a_bug_inside_a_refresh_gives_the_lease_back(team: Team) -> None:
+    await team.connect_gmail()
+    connection_id = await _gmail_id(team)
+    await _expire(team, connection_id)
+    team.google.token_fault = RuntimeError("a bug")
+    with pytest.raises(RuntimeError):
+        await _call_profile(team, connection_id)
+    assert await _lease(team, connection_id) is None
+    team.google.token_fault = None
+    assert await _call_profile(team, connection_id) == "Bearer ya29.ACCESS-2"  # the next call refreshes
+
+
+async def test_a_slow_token_endpoint_is_given_up_on_before_the_lease_ends(
+    team: Team, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    await team.connect_gmail()
+    connection_id = await _gmail_id(team)
+    await _expire(team, connection_id)
+    monkeypatch.setattr(oauth_flow, "TOKEN_CALL_BUDGET", timedelta(seconds=0.2))
+    team.google.token_delay = 2.0
+    started = utcnow()
+    assert await _call_profile(team, connection_id) == "Bearer ya29.ACCESS-1"
+    assert utcnow() - started < timedelta(seconds=1.5)
+    assert oauth_flow.TOKEN_CALL_BUDGET < oauth_flow.LEASE - oauth_flow.BACKOFF
+
+
+async def test_a_failed_refresh_backs_off_instead_of_every_call_retrying(team: Team) -> None:
+    await team.connect_gmail()
+    connection_id = await _gmail_id(team)
+    await _expire(team, connection_id)
+    team.google.token_status = 503
+    assert await _call_profile(team, connection_id) == "Bearer ya29.ACCESS-1"
+    started = utcnow()
+    assert await _call_profile(team, connection_id) == "Bearer ya29.ACCESS-1"  # no second request, no wait
+    assert utcnow() - started < timedelta(seconds=1)
+    assert len(team.google.to("/token")) == 2  # the code exchange and ONE refresh
+    async with team.app.state.sessionmaker() as db:  # the backoff is over
+        await db.execute(update(Connection).values(refresh_lease_until=utcnow() - timedelta(seconds=1)))
+        await db.commit()
+    team.google.token_status = 200
+    assert await _call_profile(team, connection_id) == "Bearer ya29.ACCESS-2"
+
+
+async def test_a_refresh_finishing_after_a_disconnect_leaves_the_row_revoked(team: Team) -> None:
+    await team.connect_gmail()
+    connection_id = await _gmail_id(team)
+    await _expire(team, connection_id)
+
+    async def disconnect() -> None:  # while the refresh waits for Google
+        team.google.on_token = None
+        response = await team.client.delete(f"{team.org}/connections/{connection_id}")
+        assert response.status_code == 204, response.text
+
+    team.google.on_token = disconnect
+    refusal = await _call_profile(team, connection_id)
+    assert refusal == "Ali@Acme.dev was disconnected. Connect it again in Connect apps."
+    assert len(team.google.to("/token")) == 2  # the refresh did get a token: it was thrown away
+    async with team.app.state.sessionmaker() as db:
+        row = await db.get(Connection, connection_id, populate_existing=True)
+        assert row is not None and (row.status, row.encrypted_secret) == ("revoked", None)
+        assert row.refresh_lease_until is None
+
+
+# The callback's `iss` (RFC 9207)
+
+
+async def test_a_google_callback_without_iss_is_failed(team: Team) -> None:
+    query = await team.authorize()
+    back = await team.callback(state=query["state"], code="4/X", iss=None)
+    assert back == {"result": "error", "code": "failed"}
+    assert team.google.to("/token") == []
+
+
+def test_only_a_provider_that_advertises_iss_requires_it() -> None:
+    assert oauth_flow.ISSUERS == {"google": "https://accounts.google.com"}  # its discovery document says so
+
+
+# `expires_in`
+
+
+@pytest.mark.parametrize(
+    ("expires_in", "seconds"),
+    [(3599, 3599), (3599.0, 3599), ("3599", 3599), ("3599.5", 3599), (MISSING, 3600), ("soon", 3600), (-5, 3600)],
+)
+async def test_the_token_lifetime_is_read_from_any_number_google_sends(expires_in: Any, seconds: int) -> None:
+    async with acme() as team:
+        team.google.expires_in = expires_in
+        before = utcnow()
+        assert (await team.connect_gmail())["result"] == "connected"
+        async with team.app.state.sessionmaker() as db:
+            row = await db.get(Connection, await _gmail_id(team))
+        assert row is not None and row.access_expires_at is not None
+        lifetime = row.access_expires_at - before
+        assert timedelta(seconds=seconds - 5) < lifetime <= timedelta(seconds=seconds + 1)
+
+
+# Fake Google servers only in tests
+
+
+async def test_fake_google_addresses_are_ignored_outside_the_test_environment() -> None:
+    development = GOOGLE_SETTINGS.model_copy(
+        update={
+            "environment": "development",
+            "google_oauth_base_url": "http://127.0.0.1:9999",
+            "gmail_api_base_url": "http://127.0.0.1:9998",
+        }
+    )
+    async with acme(development) as team:
+        url = (await team.start())["authorizeUrl"]
+        assert url.startswith("https://accounts.google.com/o/oauth2/v2/auth?")
+        query = {key: values[0] for key, values in parse_qs(urlsplit(url).query).items()}
+        assert (await team.callback(state=query["state"], code="4/X"))["result"] == "connected"
+        assert {(r.url.scheme, r.url.host) for r in team.google.requests} == {
+            ("https", "oauth2.googleapis.com"),
+            ("https", "gmail.googleapis.com"),
+        }
+
+
+async def test_connectors_never_show_the_google_client(team: Team) -> None:
+    response = await team.client.get(f"{team.org}/connectors")
+    assert CLIENT_ID not in response.text and CLIENT_SECRET not in response.text
+    (gmail,) = [c for c in response.json() if c["id"] == "gmail"]
+    assert set(gmail) == {
+        "id",
+        "name",
+        "description",
+        "version",
+        "authType",
+        "setup",
+        "accessLevels",
+        "defaultAccess",
+        "tools",
+    }
+
+
+# Reconnecting
+
+
+async def _secret(team: Team, connection_id: str) -> tuple[str, str | None]:
+    async with team.app.state.sessionmaker() as db:
+        row = await db.get(Connection, uuid.UUID(connection_id), populate_existing=True)
+        assert row is not None
+        return row.status, row.encrypted_secret
+
+
+async def test_reconnecting_leaves_other_owners_of_the_same_account_alone(team: Team) -> None:
+    await team.connect_gmail(ownerKind="org")
+    await team.sign_in("sara@acme.dev")
+    await team.connect_gmail()  # Sara's own connection to the same mailbox
+    await team.sign_in("ali@acme.dev")
+    await team.connect_gmail()
+    org, sara, ali = await team.connections()
+    assert (org["ownerKind"], sara["ownerKind"], ali["ownerKind"]) == ("org", "member", "member")
+    before = {c["id"]: await _secret(team, c["id"]) for c in (org, sara)}
+    await team.connect_gmail()  # Ali reconnects his own
+    assert len(await team.connections()) == 3
+    assert {c["id"]: await _secret(team, c["id"]) for c in (org, sara)} == before
+    assert (await team.actions()).count("connection.reconnected") == 1
+
+
+async def test_connecting_a_disconnected_account_again_brings_the_row_back(team: Team) -> None:
+    await team.connect_gmail()
+    connection_id = await _gmail_id(team)
+    assert (await team.client.delete(f"{team.org}/connections/{connection_id}")).status_code == 204
+    assert (await team.connect_gmail())["result"] == "connected"
+    (gmail,) = await team.connections()
+    assert gmail["id"] == str(connection_id) and gmail["status"] == "active" and gmail["statusReason"] is None
+    await _expire(team, connection_id)
+    assert await _call_profile(team, connection_id) == "Bearer ya29.ACCESS-3"
+    assert team.google.forms("/token")[2]["refresh_token"] == "1//REFRESH-2"  # the new sign-in's
+    assert await team.actions() == ["connection.created", "connection.disconnected", "connection.reconnected"]
+
+
+# Access log
+
+
+def test_the_access_log_hides_the_callback_query() -> None:
+    def access_line(path: str) -> str:
+        record = logging.LogRecord(
+            "uvicorn.access",
+            logging.INFO,
+            "",
+            0,
+            '%s - "%s %s HTTP/%s" %d',
+            ("1.2.3.4:5", "GET", path, "1.1", 303),
+            None,
+        )
+        assert RedactOAuthCallback().filter(record)
+        return record.getMessage()
+
+    line = access_line("/api/v1/oauth/callback?state=STATE-SECRET&code=4/CODE-SECRET&iss=x")
+    assert "STATE-SECRET" not in line and "CODE-SECRET" not in line
+    assert "/api/v1/oauth/callback?<redacted>" in line
+    assert "/api/v1/orgs?x=1" in access_line("/api/v1/orgs?x=1")  # everything else as it was
+    assert any(isinstance(f, RedactOAuthCallback) for f in logging.getLogger("uvicorn.access").filters)

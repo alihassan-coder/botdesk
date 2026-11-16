@@ -54,9 +54,13 @@ async def _connect(client: httpx.AsyncClient, org_id: str) -> dict[str, Any]:
     started = await client.post(f"{org}/connections/oauth/start", json={"connectorId": "gmail", "ownerKind": "org"})
     assert started.status_code == 200, started.text
     state = parse_qs(urlsplit(started.json()["authorizeUrl"]).query)["state"][0]
-    back = await client.get("/api/v1/oauth/callback", params={"state": state, "code": "4/CODE"})
+    back = await client.get(
+        "/api/v1/oauth/callback", params={"state": state, "code": "4/CODE", "iss": "https://accounts.google.com"}
+    )
     assert back.headers["location"].endswith("result=connected&connector=gmail")
-    again = await client.get("/api/v1/oauth/callback", params={"state": state, "code": "4/CODE"})
+    again = await client.get(
+        "/api/v1/oauth/callback", params={"state": state, "code": "4/CODE", "iss": "https://accounts.google.com"}
+    )
     assert again.headers["location"].endswith("result=error&code=expired")  # used once
     (gmail,) = (await client.get(f"{org}/connections")).json()
     connection: dict[str, Any] = gmail
@@ -93,3 +97,41 @@ async def test_two_refreshes_at_once_make_one_token_request(
         row = await db.get(Connection, connection_id)
         assert row is not None and row.refresh_lease_until is None
         assert row.access_expires_at is not None and row.access_expires_at > utcnow() + timedelta(minutes=50)
+
+
+async def test_the_lease_is_taken_again_after_the_winner_crashes(
+    world: tuple[httpx.AsyncClient, RunManager, SlowGoogle, str],
+) -> None:
+    client, runs, google, org_id = world
+    connection_id = uuid.UUID((await _connect(client, org_id))["id"])
+
+    async def expire(lease: Any = None) -> None:
+        async with runs.sessionmaker() as db:
+            await db.execute(
+                update(Connection)
+                .where(Connection.id == connection_id)
+                .values(access_expires_at=utcnow() + timedelta(seconds=10), refresh_lease_until=lease)
+            )
+            await db.commit()
+
+    run = RunRef(run_id=uuid.uuid4(), org_id=uuid.UUID(org_id), thread_id=uuid.uuid4(), bot_id=uuid.uuid4())
+
+    async def call(name: str) -> str:
+        async with runs.tool_access.open(run, _gmail_tool(), name, connection_id=connection_id, timeout_seconds=5) as a:
+            await a.http.request("GET", PROFILE)
+        return google.to("/gmail/v1/users/me/profile")[-1].headers["authorization"]
+
+    await expire()
+    google.token_fault = RuntimeError("the winner crashed")
+    results = await asyncio.gather(call("call-1"), call("call-2"), return_exceptions=True)
+    assert sum(isinstance(result, RuntimeError) for result in results) == 1
+    assert "Bearer ya29.ACCESS-1" in results  # the other call went on with the token it had
+    assert len(google.to("/token")) == 2  # the code exchange and the one (crashed) refresh
+    async with runs.sessionmaker() as db:
+        row = await db.get(Connection, connection_id)
+        assert row is not None and row.refresh_lease_until is None  # given back at once
+
+    google.token_fault = None
+    await expire(lease=utcnow() - timedelta(seconds=1))  # a worker that died holding it
+    assert await call("call-3") == "Bearer ya29.ACCESS-2"
+    assert len(google.to("/token")) == 3

@@ -182,7 +182,30 @@ export interface ApiSentMessage extends ApiMessage {
 
 /* ---------- Runs ---------- */
 
-export type ApiRunStatus = "queued" | "running" | "waiting_approval" | "needs_attention" | "succeeded" | "failed" | "cancelled";
+export type ApiRunStatus =
+  | "queued" | "running" | "waiting_approval" | "needs_attention" | "waiting_handoff" | "succeeded" | "failed" | "cancelled";
+
+/** A handed-off Task (TaskOut, ADR 0014): the `task_updated` event's `data.task`. */
+export interface ApiTask {
+  id: string;
+  threadId: string;
+  parentRunId: string;
+  childRunId: string | null;
+  /** The message holding the Task's handoff card. */
+  messageId: string | null;
+  fromBotId: string | null;
+  toBotId: string;
+  task: string;
+  status: "queued" | "working" | "done" | "failed" | "cancelled";
+  resultMessageId: string | null;
+  resultPreview: string | null;
+  error: string | null;
+  errorCode: "budget" | "timeout" | "stopped" | null;
+  createdAt: string;
+  startedAt: string | null;
+  finishedAt: string | null;
+  deadlineAt: string;
+}
 
 /** One piece of work by one bot, from a message to its reply. */
 export interface ApiRun {
@@ -267,13 +290,19 @@ export type ApiRunEvent = {
     }
   | { kind: "approval_requested"; data: { approval: ApiApproval } }
   | { kind: "approval_decided"; data: { approval: ApiApproval } }
-  | { kind: "run_resumed"; data: { botId: string } }
+  /** `after` is missing on older events: read it as "approval". */
+  | { kind: "run_resumed"; data: { botId: string; after?: "approval" | "tasks" } }
   | { kind: "run_needs_attention"; data: { status: "needs_attention"; error: string } }
+  /** Sent on the parent run: a Task was created, started or ended. */
+  | { kind: "task_updated"; data: { task: ApiTask } }
+  /** The parent run paused until the Tasks it handed off have ended. */
+  | { kind: "run_waiting_handoff"; data: { status: "waiting_handoff"; taskIds: string[] } }
 );
 
 export const RUN_EVENT_KINDS = [
   "message_saved", "run_started", "message_delta", "run_finished", "run_failed",
   "tool_started", "tool_finished", "approval_requested", "approval_decided", "run_resumed", "run_needs_attention",
+  "task_updated", "run_waiting_handoff",
 ] as const satisfies readonly ApiRunEvent["kind"][];
 
 /* ---------- Memory ---------- */

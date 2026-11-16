@@ -3,7 +3,8 @@ import { ApprovalCard } from "@/features/approvals/approval-card";
 import { ComputerTaskPart } from "./computer-task-part";
 import { QuestionPart } from "./question-part";
 import { ReasoningPart } from "./reasoning-part";
-import { FilePart, HandoffPart, RoutineCreatedPart } from "./small-parts";
+import { HandoffPart } from "./handoff-part";
+import { FilePart, RoutineCreatedPart } from "./small-parts";
 import { TextPart } from "./text-part";
 import { ToolCallPart } from "./tool-call-part";
 import { WorkLogPart } from "./work-log-part";
@@ -17,7 +18,8 @@ export function MessageParts({ message, isOwn }: { message: Message; isOwn: bool
 
   return message.parts.map((part, index) => {
     // Cards can arrive above the text while a reply streams; stable keys keep their state (an open Edit form).
-    const key = part.type === "approval" ? part.approvalId : part.type === "tool-call" ? part.toolExecutionId : `${message.id}-${index}`;
+    const key =
+      part.type === "approval" ? part.approvalId : part.type === "tool-call" ? part.toolExecutionId : part.type === "handoff" ? part.taskId : `${message.id}-${index}`;
     switch (part.type) {
       case "text":
         return <TextPart key={key} part={part} isOwn={isOwn} isBot={message.author.type === "bot"} isStreaming={isStreaming} />;

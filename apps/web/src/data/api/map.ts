@@ -1,6 +1,7 @@
-import type { AccountConnection, Approval, ArgsSchema, Bot, Invitation, MemoryItem, MemoryStatus, Message, MessagePart, Model, ModelProvider, Org, Routine, Thread, UsageSummary, User } from "../types";
+import type { AccountConnection, Approval, ArgsSchema, Bot, HandoffPart, Invitation, MemoryItem, MemoryStatus, Message, MessagePart, Model, ModelProvider, Org, Routine, Thread, UsageSummary, User } from "../types";
 import { describeCron } from "@/lib/schedule";
-import type { ApiApproval, ApiBot, ApiConnection, ApiBotInput, ApiInvitation, ApiMemory, ApiMemoryStatus, ApiMessage, ApiModel, ApiModelProvider, ApiOrg, ApiRole, ApiRoutine, ApiThread, ApiUsage, ApiUser } from "./types";
+import type { TaskChange } from "@/lib/tasks";
+import type { ApiApproval, ApiTask, ApiBot, ApiConnection, ApiBotInput, ApiInvitation, ApiMemory, ApiMemoryStatus, ApiMessage, ApiModel, ApiModelProvider, ApiOrg, ApiRole, ApiRoutine, ApiThread, ApiUsage, ApiUser } from "./types";
 
 /**
  * Turns API answers into the web app's own types, so screens never see API shapes.
@@ -62,7 +63,24 @@ export function toMessage({ id, threadId, author, parts, status, createdAt }: Ap
   return {
     id, threadId, status, createdAt: asUtc(createdAt),
     author: author.type === "system" || !author.id ? { type: "system", id: "system" } : { type: author.type, id: author.id },
-    parts: parts.filter((part) => KNOWN_PARTS.has(part.type as MessagePart["type"])) as unknown as MessagePart[],
+    parts: parts.filter((part) => KNOWN_PARTS.has(part.type as MessagePart["type"])).map(toPart),
+  };
+}
+
+/** Parts are served as stored. A handoff card's nulls ("no result yet") become missing fields. */
+function toPart(part: Record<string, unknown>): MessagePart {
+  if (part.type !== "handoff") return part as unknown as MessagePart;
+  return Object.fromEntries(Object.entries(part).filter(([, value]) => value !== null)) as unknown as HandoffPart;
+}
+
+/** What a handoff card shows of a Task, from a `task_updated` event. */
+export function toTaskChange(task: ApiTask): TaskChange {
+  return {
+    taskId: task.id, status: task.status,
+    ...(task.resultMessageId ? { resultMessageId: task.resultMessageId } : {}),
+    ...(task.resultPreview ? { resultPreview: task.resultPreview } : {}),
+    ...(task.error ? { error: task.error } : {}),
+    ...(task.errorCode ? { errorCode: task.errorCode } : {}),
   };
 }
 

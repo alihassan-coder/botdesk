@@ -1,11 +1,10 @@
 import Link from "next/link";
-import { ArrowRight, FileText, Repeat } from "lucide-react";
+import { FileText, Repeat } from "lucide-react";
 import { formatBytes } from "@/lib/format";
-import { useBot } from "@/data/store";
-import type { FilePart as FilePartData, HandoffPart as HandoffPartData, RoutineCreatedPart as RoutineCreatedPartData } from "@/data/types";
+import type { FilePart as FilePartData, RoutineCreatedPart as RoutineCreatedPartData } from "@/data/types";
 
 /*
- * The three one-line parts. Each is a few lines long, so they share a file;
+ * The two one-line parts. Each is a few lines long, so they share a file;
  * if one grows, give it its own file like the bigger cards.
  */
 
@@ -29,19 +28,5 @@ export function FilePart({ part }: { part: FilePartData }) {
         <span className="block text-xs text-muted-foreground">{formatBytes(part.sizeBytes)}</span>
       </span>
     </div>
-  );
-}
-
-/** One bot passing a task to another: "Chief → Sales Outbound: draft openers". */
-export function HandoffPart({ part }: { part: HandoffPartData }) {
-  const from = useBot(part.fromBotId);
-  const to = useBot(part.toBotId);
-  return (
-    <p className="flex flex-wrap items-center gap-1.5 text-xs text-muted-foreground">
-      <span className="font-medium text-foreground">{from?.name}</span>
-      <ArrowRight className="size-3.5" />
-      <span className="font-medium text-foreground">{to?.name}</span>
-      <span>· {part.task}</span>
-    </p>
   );
 }

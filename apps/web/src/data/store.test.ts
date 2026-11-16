@@ -76,6 +76,76 @@ describe("sendMessage", () => {
   });
 });
 
+describe("the Chief demo: handoffs (mock, ADR 0014)", () => {
+  const handoffCards = () =>
+    messagesIn("t_chief").flatMap((m) => m.parts.flatMap((p) => (p.type === "handoff" && p.taskId.startsWith("mock-task-") ? [p] : [])));
+  const chiefRun = () => state().runs.find((r) => r.botId === "b_chief");
+  const chief = () => state().bots.find((b) => b.id === "b_chief")!;
+
+  it("Chief hands two tasks off, waits, each teammate works and replies in turn, then Chief answers", () => {
+    vi.useFakeTimers();
+    actions.sendMessage("t_chief", "Plan the launch for next week");
+    expect(chiefRun()).toMatchObject({ threadId: "t_chief" });
+    expect(chief()).toMatchObject({ status: "working", statusText: "Thinking…" });
+
+    vi.advanceTimersByTime(700);
+    const handoff = lastMessageIn("t_chief");
+    expect(handoff.author.id).toBe("b_chief");
+    expect(handoff.parts[0]).toMatchObject({ type: "text", text: expect.not.stringContaining("@") });
+    expect(handoffCards().map((p) => [p.toBotId, p.status])).toEqual([["b_sales", "queued"], ["b_inbox", "queued"]]);
+    expect(chiefRun()).toMatchObject({ status: "waiting_handoff", taskIds: handoffCards().map((p) => p.taskId) });
+    expect(chief().statusText).toBe("Waiting on teammates");
+
+    vi.advanceTimersByTime(700);
+    expect(handoffCards().map((p) => p.status)).toEqual(["working", "queued"]);
+
+    vi.advanceTimersByTime(4_000);
+    const [sales] = handoffCards();
+    expect(sales).toMatchObject({ status: "done", resultPreview: expect.stringMatching(/^Three launch emails/) });
+    expect(messagesIn("t_chief").find((m) => m.id === sales.resultMessageId)?.author.id).toBe("b_sales");
+
+    finishBotReply();
+    expect(handoffCards().map((p) => p.status)).toEqual(["done", "done"]);
+    const order = messagesIn("t_chief").slice(-5).map((m) => m.author.id);
+    expect(order).toEqual(["u_me", "b_chief", "b_sales", "b_inbox", "b_chief"]);
+    expect(lastMessageIn("t_chief")).toMatchObject({ status: "complete", parts: expect.arrayContaining([expect.objectContaining({ text: expect.stringMatching(/^Here's the launch plan/) })]) });
+    expect(state().runs).toEqual([]);
+    expect(chief().status).toBe("idle");
+  });
+
+  it("works in a group too, where Chief leads", () => {
+    vi.useFakeTimers();
+    actions.sendMessage("t_launch", "Can you plan the launch?");
+    finishBotReply();
+    expect(messagesIn("t_launch").slice(-4).map((m) => m.author.id)).toEqual(["b_chief", "b_sales", "b_inbox", "b_chief"]);
+  });
+
+  it("Stop while Chief waits cancels the open tasks, and nothing more is written", async () => {
+    vi.useFakeTimers();
+    actions.sendMessage("t_chief", "Plan the launch");
+    vi.advanceTimersByTime(1_500); // Sales is working
+    await expect(actions.stopReplies("t_chief")).resolves.toEqual({ ok: true });
+
+    expect(state().runs).toEqual([]);
+    expect(handoffCards()).toEqual([
+      expect.objectContaining({ status: "cancelled", error: "Cancelled: Chief stopped before it finished." }),
+      expect.objectContaining({ status: "cancelled" }),
+    ]);
+    const count = messagesIn("t_chief").length;
+    finishBotReply();
+    expect(messagesIn("t_chief")).toHaveLength(count);
+    expect(messagesIn("t_chief").some((m) => m.status === "streaming")).toBe(false);
+  });
+
+  it("other requests to Chief get the ordinary reply", () => {
+    vi.useFakeTimers();
+    actions.sendMessage("t_chief", "Morning!");
+    finishBotReply();
+    expect(handoffCards()).toEqual([]);
+    expect(state().runs).toEqual([]);
+  });
+});
+
 describe("group leads (mock)", () => {
   it("a new group is led by the first bot picked, or the one you choose", async () => {
     const first = await actions.createGroup({ title: "Ops", botIds: ["b_sales", "b_bugs"], userIds: [] });

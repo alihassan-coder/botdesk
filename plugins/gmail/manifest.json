@@ -51,7 +51,7 @@
         "https://www.googleapis.com/auth/gmail.readonly"
       ],
       "title": "List email labels",
-      "untrustedOutput": true
+      "untrustedOutput": false
     },
     {
       "description": "Read every message of one Gmail thread as plain text, with its main headers and its attachments' names (attachments themselves aren't read). Long threads are cut, oldest messages first.",

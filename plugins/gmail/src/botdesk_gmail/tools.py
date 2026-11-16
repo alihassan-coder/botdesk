@@ -1,9 +1,10 @@
 """The read tools (slice 6.1, ADR 0011 §3): `search`, `read_thread` and `list_labels`.
 
-All `read`, idempotent, and `untrusted_output`: what they return was written by people outside
-(senders, and label names other apps make), so reading it taints the run and every risky tool
-asks a person afterwards. Each needs `gmail.readonly`, which a `gmail.modify` connection also
-gives (`implied_scopes` in the manifest's auth).
+All `read` and idempotent. `search` and `read_thread` are `untrusted_output`: mail was written by
+people outside, so reading it taints the run and every risky tool asks a person afterwards.
+`list_labels` is not (ADR 0011 §3): it is the mailbox's own label list. Each needs
+`gmail.readonly`, which a `gmail.modify` connection also gives (`implied_scopes` in the
+manifest's auth).
 """
 
 import asyncio
@@ -192,7 +193,7 @@ TOOLS = (
         risk="read",
         handler=list_labels,
         idempotent=True,
-        untrusted_output=True,
+        untrusted_output=False,
         scopes=(READ_SCOPE,),
     ),
 )

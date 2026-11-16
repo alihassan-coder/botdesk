@@ -55,15 +55,17 @@ def email_blocks(text: str) -> list[str]:
 # The manifest
 
 
-def test_three_read_tools_that_taint_the_run_and_need_only_read_access() -> None:
+def test_three_read_tools_where_mail_taints_the_run_and_all_need_only_read_access() -> None:
     manifest = validate_manifest(gmail_plugin())
     tools = {tool.name: tool for tool in manifest.tools}
     assert set(tools) == {"search", "read_thread", "list_labels"}
     for tool in tools.values():
         assert tool.risk == "read"
-        assert tool.untrusted_output  # every Gmail result is outside text: it taints the run
         assert tool.idempotent
         assert tool.scopes == (READ_SCOPE,)
+    # ADR 0011 §3: mail is outside text and taints the run; the mailbox's own label list doesn't.
+    assert tools["search"].untrusted_output and tools["read_thread"].untrusted_output
+    assert not tools["list_labels"].untrusted_output
 
 
 def test_a_full_access_connection_gets_the_read_tools_too() -> None:

@@ -103,9 +103,9 @@ async def update_bindings(
             raise NotFound(UNKNOWN_PLUGIN)
     current = await bindings_of(db, bot.id)
     moved = [change for change in changes if change.connection_id != _connection_of(current.get(change.plugin_id))]
-    outgoing = {_connection_of(current.get(change.plugin_id)) for change in moved} - {None}
-    incoming = {change.connection_id for change in moved} - {None}
-    found = await _connections(db, actor.org_id, outgoing | incoming)  # type: ignore[arg-type]
+    involved = {_connection_of(current.get(change.plugin_id)) for change in moved}
+    involved |= {change.connection_id for change in moved}
+    found = await _connections(db, actor.org_id, {id_ for id_ in involved if id_ is not None})
     for change in moved:
         before = _connection_of(current.get(change.plugin_id))
         if before is not None:

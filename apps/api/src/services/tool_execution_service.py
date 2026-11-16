@@ -8,16 +8,18 @@ of status is a conditional UPDATE. Callers own the transaction (they commit).
 import hashlib
 import json
 import uuid
+from collections.abc import Collection
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import select, update
+from sqlalchemy import func, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.core.database import utcnow
 from src.models import Approval, Run, ToolExecution
+from src.plugins.team import is_core_tool
 
 
 def args_hash(args: dict[str, Any]) -> str:
@@ -172,23 +174,56 @@ async def mark_run_tainted(db: AsyncSession, run_id: uuid.UUID) -> None:
 _SHOWN_STATUSES = ("succeeded", "failed", "denied")
 
 
-async def reply_cards(db: AsyncSession, run_id: uuid.UUID) -> list[dict[str, Any]]:
+async def reply_cards(
+    db: AsyncSession, run_id: uuid.UUID, *, exclude_execution_ids: Collection[str] = ()
+) -> list[dict[str, Any]]:
     """The cards a run's reply keeps above its text, in the order the calls were made: each
     call's approval card (if it asked), then its tool line ("Used Send email · done"), the same
-    as they showed live. One query."""
+    as they showed live. One query.
+
+    Leaves out `exclude_execution_ids` (cards already shown in an earlier message of the run, when
+    it paused for handed-off tasks) and core tools like `team.handoff`, whose handoff card is what
+    people see (ADR 0014)."""
     rows = await db.execute(
         select(ToolExecution, Approval.id)
         .outerjoin(Approval, Approval.tool_execution_id == ToolExecution.id)
         .where(ToolExecution.run_id == run_id)
         .order_by(ToolExecution.created_at, ToolExecution.id)
     )
+    excluded = set(exclude_execution_ids)
     cards: list[dict[str, Any]] = []
     for execution, approval_id in rows:
+        if str(execution.id) in excluded or is_core_tool(execution.tool_name):
+            continue
         if approval_id:
             cards.append({"type": "approval", "approvalId": str(approval_id)})
         if execution.status in _SHOWN_STATUSES and not _denied_by_a_person(execution, approval_id):
             cards.append(tool_call_part(execution))
     return cards
+
+
+async def execution_ids(db: AsyncSession, run_id: uuid.UUID) -> list[str]:
+    """Every tool call this run has recorded so far."""
+    return [str(row) for row in await db.scalars(select(ToolExecution.id).where(ToolExecution.run_id == run_id))]
+
+
+async def settle(
+    db: AsyncSession, execution_id: uuid.UUID, *, result: dict[str, Any] | None = None, error: str | None = None
+) -> None:
+    """A call the graph handled itself (`team.handoff`): straight from `ready` (or `started`) to
+    `succeeded` with its result, or `failed` with why."""
+    now = utcnow()
+    await db.execute(
+        update(ToolExecution)
+        .where(ToolExecution.id == execution_id, ToolExecution.status.in_(("ready", "started")))
+        .values(
+            status="failed" if error else "succeeded",
+            result=result,
+            error=error,
+            started_at=func.coalesce(ToolExecution.started_at, now),
+            finished_at=now,
+        )
+    )
 
 
 def _denied_by_a_person(execution: ToolExecution, approval_id: uuid.UUID | None) -> bool:

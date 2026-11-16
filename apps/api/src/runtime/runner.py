@@ -121,8 +121,10 @@ class RunManager:
         # Tests set `tool_access.transport` to answer tools' requests without a network.
         vault = CredentialVault.from_settings(settings)
         # OAuth tokens are refreshed just before a tool uses them (services/oauth_flow.py).
+        oauth = OAuth(settings, vault, self.registry)
+        # In tests, GMAIL_API_BASE_URL points tool calls at a fake Gmail (ignored unless ENVIRONMENT=test).
         self.tool_access = ToolAccessProvider(
-            sessionmaker, self.registry, vault, oauth=OAuth(settings, vault, self.registry)
+            sessionmaker, self.registry, vault, oauth=oauth, rebase=oauth.test_hosts()
         )
         resolver = ModelResolver(settings, sessionmaker, secrets, catalog)
         # (org id, model id) → the chat model, with the org's keys. Tests swap in a fake model here.

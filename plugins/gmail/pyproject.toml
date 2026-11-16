@@ -1,13 +1,13 @@
 [project]
 name = "botdesk-plugin-gmail"
 version = "0.1.0"
-description = "BotDesk Gmail plugin: connect a Google account (tools come in slice 6.1)."
+description = "BotDesk Gmail plugin: connect a Google account, search and read its email."
 readme = "README.md"
 license = "MIT"
 license-files = ["LICENSE"]
 requires-python = ">=3.13"
 # A plugin depends on the SDK (and its own libraries), never on the BotDesk app.
-dependencies = ["botdesk-plugin-sdk"]
+dependencies = ["botdesk-plugin-sdk", "pydantic>=2.11"]
 
 # How BotDesk finds the plugin: the name is the plugin id, the value returns its manifest.
 [project.entry-points."botdesk.plugins"]

@@ -1,0 +1,70 @@
+{
+  "id": "18f0a1",
+  "threadId": "18f0a0",
+  "labelIds": [
+    "INBOX",
+    "UNREAD"
+  ],
+  "snippet": "Can you remind everyone the launch review is on Thursday at 3 PM? Thanks, Sara",
+  "historyId": "48213",
+  "internalDate": "1762708321000",
+  "sizeEstimate": 4120,
+  "payload": {
+    "partId": "",
+    "mimeType": "multipart/alternative",
+    "filename": "",
+    "body": {
+      "size": 0
+    },
+    "headers": [
+      {
+        "name": "Delivered-To",
+        "value": "ali@acme.dev"
+      },
+      {
+        "name": "Received",
+        "value": "by 2002:a05:6a10:1234 with SMTP id abc; Mon, 9 Nov 2026 09:12:01 -0800 (PST)"
+      },
+      {
+        "name": "Authentication-Results",
+        "value": "mx.google.com; dkim=pass header.i=@acme.dev; spf=pass"
+      },
+      {
+        "name": "DKIM-Signature",
+        "value": "v=1; a=rsa-sha256; d=acme.dev; s=google; b=AbCdEf0123"
+      },
+      {
+        "name": "X-Google-Smtp-Source",
+        "value": "AGHT+IFakeFakeFake"
+      },
+      {
+        "name": "Return-Path",
+        "value": "<sara@acme.dev>"
+      },
+      {
+        "name": "MIME-Version",
+        "value": "1.0"
+      },
+      {
+        "name": "From",
+        "value": "Sara Lee <sara@acme.dev>"
+      },
+      {
+        "name": "To",
+        "value": "Ali <ali@acme.dev>"
+      },
+      {
+        "name": "Date",
+        "value": "Mon, 9 Nov 2026 09:12:00 -0800"
+      },
+      {
+        "name": "Subject",
+        "value": "Launch checklist"
+      },
+      {
+        "name": "Message-Id",
+        "value": "<CAF1@mail.acme.dev>"
+      }
+    ]
+  }
+}

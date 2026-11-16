@@ -1,0 +1,148 @@
+{
+  "id": "18f0d0",
+  "messages": [
+    {
+      "id": "18f0d1",
+      "threadId": "18f0d0",
+      "labelIds": [
+        "INBOX",
+        "UNREAD"
+      ],
+      "snippet": "",
+      "historyId": "48213",
+      "internalDate": "1762708321000",
+      "sizeEstimate": 4120,
+      "payload": {
+        "partId": "",
+        "mimeType": "multipart/mixed",
+        "filename": "",
+        "body": {
+          "size": 0
+        },
+        "parts": [
+          {
+            "partId": "0",
+            "mimeType": "multipart/alternative",
+            "filename": "",
+            "headers": [],
+            "body": {
+              "size": 0
+            },
+            "parts": [
+              {
+                "partId": "0.0",
+                "mimeType": "text/plain",
+                "filename": "",
+                "headers": [
+                  {
+                    "name": "Content-Type",
+                    "value": "text/plain; charset=\"utf-8\""
+                  }
+                ],
+                "body": {
+                  "size": 37,
+                  "data": "VGhlIGNvbnRyYWN0IGlzIGF0dGFjaGVkLiBDYWbDqSBhdCA1Pw"
+                }
+              },
+              {
+                "partId": "0.1",
+                "mimeType": "text/html",
+                "filename": "",
+                "headers": [
+                  {
+                    "name": "Content-Type",
+                    "value": "text/html; charset=\"utf-8\""
+                  }
+                ],
+                "body": {
+                  "size": 55,
+                  "data": "PHA-VGhlIGNvbnRyYWN0IGlzIDxiPmF0dGFjaGVkPC9iPi4gSFRNTCBPTkxZIFdPUkRTPC9wPg"
+                }
+              }
+            ]
+          },
+          {
+            "partId": "1",
+            "mimeType": "application/pdf",
+            "filename": "contract.pdf",
+            "headers": [
+              {
+                "name": "Content-Disposition",
+                "value": "attachment; filename=\"contract.pdf\""
+              }
+            ],
+            "body": {
+              "attachmentId": "ANGjdJ8-attachment-one",
+              "size": 48213
+            }
+          },
+          {
+            "partId": "2",
+            "mimeType": "image/png",
+            "filename": "logo.png",
+            "headers": [
+              {
+                "name": "Content-Disposition",
+                "value": "inline; filename=\"logo.png\""
+              }
+            ],
+            "body": {
+              "attachmentId": "ANGjdJ8-attachment-two",
+              "size": 1024
+            }
+          }
+        ],
+        "headers": [
+          {
+            "name": "Delivered-To",
+            "value": "ali@acme.dev"
+          },
+          {
+            "name": "Received",
+            "value": "by 2002:a05:6a10:1234 with SMTP id abc; Mon, 9 Nov 2026 09:12:01 -0800 (PST)"
+          },
+          {
+            "name": "Authentication-Results",
+            "value": "mx.google.com; dkim=pass header.i=@acme.dev; spf=pass"
+          },
+          {
+            "name": "DKIM-Signature",
+            "value": "v=1; a=rsa-sha256; d=acme.dev; s=google; b=AbCdEf0123"
+          },
+          {
+            "name": "X-Google-Smtp-Source",
+            "value": "AGHT+IFakeFakeFake"
+          },
+          {
+            "name": "Return-Path",
+            "value": "<sara@acme.dev>"
+          },
+          {
+            "name": "MIME-Version",
+            "value": "1.0"
+          },
+          {
+            "name": "From",
+            "value": "Omar <omar@acme.dev>"
+          },
+          {
+            "name": "To",
+            "value": "ali@acme.dev"
+          },
+          {
+            "name": "Date",
+            "value": "Thu, 12 Nov 2026 14:30:00 +0000"
+          },
+          {
+            "name": "Subject",
+            "value": "Contract"
+          },
+          {
+            "name": "Message-Id",
+            "value": "<c1@acme.dev>"
+          }
+        ]
+      }
+    }
+  ]
+}

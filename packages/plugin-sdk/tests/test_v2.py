@@ -128,6 +128,7 @@ def test_a_version_2_manifest_shows_auth_egress_scopes_triggers_and_settings() -
         "revokeUrl": "https://oauth2.googleapis.com/revoke",
         "scopeSets": {"full": ["gmail.modify"], "read": ["gmail.readonly"]},
         "extraAuthorizeParams": {"access_type": "offline"},
+        "impliedScopes": {},
     }
     assert data["egress"] == ["gmail.googleapis.com"]
     assert data["tools"][0]["scopes"] == ["gmail.readonly"]
@@ -168,6 +169,25 @@ def test_bad_auth_and_scope_declarations_are_reported() -> None:
     scopes_without_oauth = api_key_plugin(tools=(whoami_tool(scopes=("x",)),))
     assert any("scopes need OAuth2Auth" in p for p in manifest_problems(scopes_without_oauth))
     assert any("auth must be ApiKeyAuth" in p for p in manifest_problems(api_key_plugin(auth="key")))
+
+
+def test_a_broader_scope_can_imply_a_narrower_one() -> None:
+    # Google's gmail.modify includes everything gmail.readonly gives, so a "full" connection
+    # (granted only modify) still gets the read tools.
+    auth = dataclasses.replace(GOOGLE, implied_scopes={"gmail.modify": ("gmail.readonly",)})
+    assert auth.effective_scopes(("gmail.modify",)) == frozenset({"gmail.modify", "gmail.readonly"})
+    assert auth.effective_scopes(("gmail.readonly",)) == frozenset({"gmail.readonly"})
+    assert auth.effective_scopes(("openid",)) == frozenset({"openid"})
+    assert GOOGLE.effective_scopes(("gmail.modify",)) == frozenset({"gmail.modify"})  # nothing implied
+    data = validate_manifest(oauth_plugin(auth=auth)).to_json()
+    assert data["auth"]["impliedScopes"] == {"gmail.modify": ["gmail.readonly"]}
+
+
+def test_implied_scopes_must_come_from_the_scope_sets() -> None:
+    unknown = dataclasses.replace(GOOGLE, implied_scopes={"gmail.modify": ("drive",)})
+    assert any("implied scope 'drive'" in p for p in manifest_problems(oauth_plugin(auth=unknown)))
+    unknown_key = dataclasses.replace(GOOGLE, implied_scopes={"drive": ("gmail.readonly",)})
+    assert any("implied scope 'drive'" in p for p in manifest_problems(oauth_plugin(auth=unknown_key)))
 
 
 def test_bad_triggers_and_settings_models_are_reported() -> None:

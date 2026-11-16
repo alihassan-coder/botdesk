@@ -32,11 +32,38 @@ DEFAULT_MAX_BYTES = 10 * 1024 * 1024
 REDIRECTS = {301, 302, 303, 307, 308}
 
 
-def guarded_client(timeout_seconds: float, transport: httpx.AsyncBaseTransport | None = None) -> httpx.AsyncClient:
+class RebaseHosts(httpx.AsyncBaseTransport):
+    """Tests only: sends requests for some hosts to a fake server instead (GMAIL_API_BASE_URL).
+    The URL a tool asked for is checked against its egress before this runs."""
+
+    def __init__(self, inner: httpx.AsyncBaseTransport, hosts: Mapping[str, str]) -> None:
+        self._inner = inner
+        self._hosts = {host: httpx.URL(base) for host, base in hosts.items()}
+
+    async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
+        if base := self._hosts.get(request.url.host):
+            request.url = request.url.copy_with(
+                scheme=base.scheme, host=base.host, port=base.port, path=base.path.rstrip("/") + request.url.path
+            )
+        return await self._inner.handle_async_request(request)
+
+    async def aclose(self) -> None:
+        await self._inner.aclose()
+
+
+def guarded_client(
+    timeout_seconds: float,
+    transport: httpx.AsyncBaseTransport | None = None,
+    *,
+    rebase: Mapping[str, str] | None = None,
+) -> httpx.AsyncClient:
     """An httpx client for tool calls: guarded transport (private addresses refused), no redirects,
-    no proxy from the environment. `transport` replaces the network in tests."""
+    no proxy from the environment. `transport` replaces the network in tests. `rebase` (tests
+    only, {host: fake base URL}) sends those hosts to a fake server, which may be on a private
+    address such as 127.0.0.1."""
+    inner = transport or GuardedTransport(allow_private=bool(rebase))
     return httpx.AsyncClient(
-        transport=transport or GuardedTransport(allow_private=False),
+        transport=RebaseHosts(inner, rebase) if rebase else inner,
         follow_redirects=False,
         trust_env=False,
         timeout=httpx.Timeout(timeout_seconds),

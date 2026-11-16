@@ -164,9 +164,9 @@ All optional, so a version-1 plugin loads unchanged:
 
 | Field | What it is |
 |---|---|
-| `auth` | `ApiKeyAuth(header, prefix)`, or `OAuth2Auth(provider, authorize_url, token_url, scope_sets={"read": (...), "full": (...)}, revoke_url, extra_authorize_params, account)` for "Sign in with ...". None: the plugin needs no account. |
+| `auth` | `ApiKeyAuth(header, prefix)`, or `OAuth2Auth(provider, authorize_url, token_url, scope_sets={"read": (...), "full": (...)}, revoke_url, extra_authorize_params, account, implied_scopes)` for "Sign in with ...". `implied_scopes={broad: (narrow, ...)}` says a broader scope already gives narrower ones (Google's `gmail.modify` includes `gmail.readonly`). None: the plugin needs no account. |
 | `egress` | exact host names, lowercase, no scheme or port. Required with `auth`, and enforced: any other host is refused. |
-| `ToolSpec.scopes` | the OAuth scopes a tool needs (from `scope_sets`); a connection granted fewer isn't offered the tool. |
+| `ToolSpec.scopes` | the OAuth scopes a tool needs (from `scope_sets`); a connection granted fewer (counting `implied_scopes`) isn't offered the tool. |
 | `settings_model`, `bot_settings_model` | Pydantic models for the organization's and each bot's settings; their JSON Schema drives the forms. The bot's validated settings arrive as `ctx.settings`. |
 | `triggers` | `TriggerSpec(name, title, description, poll, interval_seconds=300, untrusted_payload=True)`: things in the other app that start a run. Declared now; BotDesk runs them later (roadmap 6.3). |
 

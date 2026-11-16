@@ -10,15 +10,16 @@ The words BotDesk uses for its domain. Use these exact terms in code, UI copy, d
 | **Invitation** | An offer for someone to join an org as a member with a given role. |
 | **Session** | A signed-in member on one device. Signing out ends it. |
 | **Bot** | An AI teammate: a name, `@handle`, role, instructions, model, tools, memory, security level, budget, and usually its own computer. |
-| **Chief** | The chief-of-staff bot. It splits work and hands it to specialist bots. It is an ordinary bot with delegation tools, not a special type. |
+| **Chief** | The chief-of-staff bot. It splits work, hands the parts to specialist bots, and combines their results into one answer. It is an ordinary bot with the handoff tool and instructions to delegate, not a special type. |
 | **Computer** | A bot's persistent cloud sandbox (desktop + browser). Default: one per bot. A member can watch it live or **take over**. |
 | **Thread** | A conversation. `dm` = one member + one bot. `group` = several members and bots. |
 | **Mention** | `@handle` inside a message. Mentioning a bot in the chat starts a run for it, whether a member or another bot wrote the message; mentioning a member notifies them. |
 | **Lead** | The one bot in a group that answers a member's message that mentions no bot. Optional. |
 | **Guest** | A bot that a member pulled into a DM with an @mention: it answers there once, and the DM stays with its own bot. |
-| **Hop** | How far a run is from a person: a run started by a member's message is hop 0, one started by a bot's message is one more than that message's run. Chains stop at the hop limit. |
-| **Handoff** | One bot deliberately passing a task to another bot, recorded with an owner and shown in the thread. Unlike a mention, it assigns the work. |
-| **Run** | One piece of work by one bot, from a trigger to a final answer. It is a LangGraph graph and can pause: `waiting_approval` (a risky tool call waits for a person) or `needs_attention` (a tool may have half run; a person checks). A worker moves it forward by taking **jobs** from the queue ([ADR 0013](docs/adr/0013-the-job-queue-lands.md)). |
+| **Hop** | How far a run is from a person: a run started by a member's message is hop 0; one started by a bot's message or handoff is one more than that bot's run. Mentions and handoffs share one count, and chains stop at the hop limit. |
+| **Handoff** | One bot deliberately giving a task to another bot of the organization, through a tool. Unlike a mention, it assigns the work, and the result comes back to the bot that handed it off ([ADR 0014](docs/adr/0014-handoffs-and-tasks.md)). |
+| **Task** | The work one handoff assigns: who handed it off, the bot that owns it, what to do, its status (`queued`, `working`, `done`, `failed`, `cancelled`) and its result. Shown as a handoff card in the chat. _Avoid_: subtask, job, assignment. |
+| **Run** | One piece of work by one bot, from a trigger to a final answer. It is a LangGraph graph and can pause: `waiting_approval` (a risky tool call waits for a person), `waiting_handoff` (it handed off tasks and continues once all of them have ended) or `needs_attention` (a tool may have half run; a person checks). A run started by a handoff is that task's **child run**; the run that handed off is its **parent**. A worker moves a run forward by taking **jobs** from the queue ([ADR 0013](docs/adr/0013-the-job-queue-lands.md)). |
 | **Approval** | A run paused on a risky action. A member sees the exact action and approves, denies, or edits it. |
 | **Approval status** | `pending`, then `approved`, `edited` (approved with changed arguments), `denied`, or `expired` (nobody answered in time, or the run was stopped). Expired counts as no. |
 | **Tool call** | One use of a tool by a run, as the model asked for it. Recorded as a **tool execution** (`tool_executions`): `ready` / `waiting_approval` → `started` → `succeeded` / `failed`, or `denied`. Run + tool call id is its idempotency key, so it never runs twice. |

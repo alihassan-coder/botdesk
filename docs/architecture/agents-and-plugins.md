@@ -241,6 +241,7 @@ RETURNING run_id;      -- no row back = somebody already decided → 409
 - The child's risky actions still go through *its own* security level and approvals.
 - **Taint travels with the handoff.** If the parent was tainted, the child starts tainted. Otherwise handing off would be a way to wash outside text clean.
 - Each handoff also creates a **task**, so you can see who owns what.
+- Decided in [ADR 0014](../adr/0014-handoffs-and-tasks.md): the parent pauses as `waiting_handoff` and gets every child's result back, and the child's level is never looser than its parent's. Exact shapes: [handoffs-contract.md](handoffs-contract.md).
 
 ## 9. Memory
 

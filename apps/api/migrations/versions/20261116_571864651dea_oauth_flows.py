@@ -1,7 +1,7 @@
 """oauth_flows: sign-ins with a provider in progress (slice 5.3)
 
 Revision ID: 571864651dea
-Revises: 8cf59be5197c
+Revises: c3d81f2a6b57
 Create Date: 2026-11-16 12:57:40.305228
 
 """
@@ -14,7 +14,7 @@ from sqlalchemy.dialects import postgresql
 
 # revision identifiers, used by Alembic.
 revision: str = "571864651dea"
-down_revision: str | Sequence[str] | None = "8cf59be5197c"
+down_revision: str | Sequence[str] | None = "c3d81f2a6b57"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

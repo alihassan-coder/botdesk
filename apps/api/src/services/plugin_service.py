@@ -3,6 +3,7 @@ allowlist, so every organization on this server sees the same list; switching a 
 off per organization comes with installations (build step 5)."""
 
 from src.plugins.registry import ToolRegistry
+from src.plugins.team import CORE_PLUGIN_IDS
 from src.schemas.plugin import PluginOut, PluginToolOut
 
 
@@ -21,4 +22,5 @@ def plugin_views(registry: ToolRegistry) -> list[PluginOut]:
             ],
         )
         for plugin in registry.plugins()
+        if plugin.id not in CORE_PLUGIN_IDS  # always there, and not an app people connect
     ]

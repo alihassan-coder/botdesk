@@ -1,18 +1,24 @@
-"""A run as a LangGraph graph (agents-and-plugins.md §4):
+"""A run as a LangGraph graph (agents-and-plugins.md §4, handoffs ADR 0014):
 
     load_context → recall → call_model ─┬─ no tool calls ─→ save_reply → remember
-                                        └─ tool calls ─→ prepare_call ─┬─ auto ──→ execute_tool ─┐
-                                                                       ├─ ask ───→ approval_gate ┤
-                                                                       └─ deny ──────────────────┤
-                         call_model ←─ (no calls left) ─ finish_call ←──────────────────────────┘
-                                       (calls left) → prepare_call
+                                        └─ tool calls ─→ prepare_call ─┬─ team.handoff ─→ hand_off ─┐
+                                                                       ├─ auto ──→ execute_tool ────┤
+                                                                       ├─ ask ───→ approval_gate ───┤
+                                                                       └─ deny ─────────────────────┤
+                                                      finish_call ←─────────────────────────────────┘
+                     (calls left) → prepare_call
+                     (none left, tasks handed off) → save_progress → wait_for_tasks → call_model
+                     (none left) → call_model
 
-Tool calls are handled one at a time (ADR 0004 §7). The checkpointer saves the state after
+Tool calls are handled one at a time (ADR 0004 §7). A step that handed off tasks ends with the
+run paused in `wait_for_tasks` (an `interrupt`, like `approval_gate`) until every task has ended;
+then the model reads their results and goes on, writing a new message. The checkpointer saves the state after
 every node, keyed by the run id. Each node is safe to run twice (§4.1): when a paused run
 resumes, `approval_gate` starts again from its first line, which is why it does nothing but
 pause. Side effects happen only in `execute_tool`, after the decision is saved.
 """
 
+import json
 import logging
 import math
 import time
@@ -27,6 +33,7 @@ from langchain_core.messages import (
     AIMessage,
     AIMessageChunk,
     BaseMessage,
+    HumanMessage,
     ToolMessage,
     message_chunk_to_message,
     message_to_dict,
@@ -44,7 +51,9 @@ from src.core.config import Settings
 from src.core.database import utcnow
 from src.models.bot import Bot, SecurityLevel
 from src.models.run import Run
+from src.models.task import Task
 from src.plugins.registry import ToolRegistry
+from src.plugins.team import HANDOFF_TOOL, HandoffArgs, is_core_tool
 from src.runtime import tool_pipeline, toolset
 from src.runtime.chat_model import (
     ModelPrice,
@@ -57,12 +66,13 @@ from src.runtime.chat_model import (
 from src.runtime.limits import RunLimits, limit_reached
 from src.runtime.memory import MemoryScope, MemoryService
 from src.runtime.policy import LEVELS
-from src.runtime.prompt import HistoryLine, build_prompt
+from src.runtime.prompt import HistoryLine, TaskBrief, Teammate, build_prompt, results_text
 from src.runtime.reporter import RunReporter
 from src.runtime.token_batcher import BackgroundSender, TokenBatcher
 from src.runtime.tool_access import ToolAccessProvider
 from src.runtime.tool_pipeline import ToolCallRequest, finished_event
-from src.services import pricing, run_service, tool_execution_service, usage_service
+from src.services import pricing, run_service, task_service, tool_execution_service, usage_service
+from src.services.task_service import Refused
 from src.services.tool_execution_service import RunRef
 
 logger = logging.getLogger(__name__)
@@ -120,6 +130,13 @@ class RunState(TypedDict, total=False):
     # Approvals asked for in this run. Kept for checkpoints already saved; the reply's cards
     # now come from the tool calls recorded in the database (`reply_cards`).
     approval_ids: list[str]
+    # Handoffs (ADR 0014); all missing in older checkpoints.
+    handoff_task_ids: list[str]  # tasks handed off in this stretch, not waited for yet
+    shown_execution_ids: list[str]  # tool calls whose cards are in an earlier message of this run
+    # A child run's task: {"taskId", "fromBotName", "fromBotHandle", "requesterName"}.
+    task: dict[str, Any] | None
+    teammates: list[dict[str, Any]]  # {"name", "handle", "role"}: the org's other bots, by name
+    more_teammates: int  # how many more bots the organization has than `teammates` lists
 
 
 @dataclass(frozen=True)
@@ -220,6 +237,9 @@ async def load_context(state: RunState, runtime: Runtime[RunDeps]) -> RunState:
         "guest": context.guest,
         "hop": context.hop,
         "memory_on": context.memory_enabled,
+        "task": _task_state(context.task) if context.task else None,
+        "teammates": [{"name": m.name, "handle": m.handle, "role": m.role} for m in context.teammates],
+        "more_teammates": context.more_teammates,
         "history": [
             {
                 "fromThisBot": line.from_this_bot,
@@ -233,6 +253,36 @@ async def load_context(state: RunState, runtime: Runtime[RunDeps]) -> RunState:
         "pending_calls": [],
         "approval_ids": [],
     }
+
+
+def _task_state(task: TaskBrief) -> dict[str, Any]:
+    return {
+        "taskId": task.task_id,
+        "fromBotName": task.from_bot_name,
+        "fromBotHandle": task.from_bot_handle,
+        "requesterName": task.requester_name,
+    }
+
+
+def _task_brief(state: RunState) -> TaskBrief | None:
+    task = state.get("task")
+    if not task:
+        return None
+    return TaskBrief(
+        task_id=str(task.get("taskId", "")),
+        task="",
+        context=None,
+        from_bot_name=str(task.get("fromBotName", "")),
+        from_bot_handle=str(task.get("fromBotHandle", "")),
+        requester_name=task.get("requesterName"),
+    )
+
+
+def _teammates(state: RunState) -> list[Teammate]:
+    return [
+        Teammate(name=str(m.get("name", "")), handle=str(m.get("handle", "")), role=str(m.get("role") or ""))
+        for m in state.get("teammates", [])
+    ]
 
 
 async def recall(state: RunState, runtime: Runtime[RunDeps]) -> RunState:
@@ -258,6 +308,7 @@ async def call_model(state: RunState, runtime: Runtime[RunDeps]) -> RunState:
     if reason := limit_reached(deps.limits, steps_used=step.steps_used, elapsed_seconds=elapsed):
         raise RunError(reason)
 
+    tools_of_run = await _toolset(deps)
     prompt = build_prompt(
         bot_name=state["bot_name"],
         instructions=state["instructions"],
@@ -266,6 +317,10 @@ async def call_model(state: RunState, runtime: Runtime[RunDeps]) -> RunState:
         group=state.get("group", False),
         guest=state.get("guest", False),
         asked_by_bot=state.get("hop", 0) > 0,
+        can_hand_off=tools_of_run.get(HANDOFF_TOOL) is not None,
+        teammates=_teammates(state),
+        more_teammates=state.get("more_teammates", 0),
+        task=_task_brief(state),
     )
     turns = state.get("turns", [])
     messages = [*prompt, *messages_from_dict(turns)]
@@ -281,7 +336,7 @@ async def call_model(state: RunState, runtime: Runtime[RunDeps]) -> RunState:
         raise RunError(str(error)) from error
     # Each call may pass the budget by at most this many output tokens (budgets are soft, §4.2).
     cap = output_cap(remaining_usd, price.pricing, prompt_chars)
-    model = cap_output(_with_tools(chat_model, await _toolset(deps)), chat_model, cap)
+    model = cap_output(_with_tools(chat_model, tools_of_run), chat_model, cap)
     streamed = Streamed()
     try:
         answer = await _stream_reply(
@@ -448,7 +503,8 @@ async def prepare_call(state: RunState, runtime: Runtime[RunDeps]) -> RunState:
             db, deps.run_ref, prepared, tainted=tainted, approval_expiry=deps.approval_expiry
         )
         execution = recorded.execution
-        if recorded.created and execution.decision in ("deny", "invalid"):
+        # Core tools (`team.handoff`) send no tool events: the handoff card is what people see.
+        if recorded.created and execution.decision in ("deny", "invalid") and not is_core_tool(execution.tool_name):
             status = "denied" if execution.decision == "deny" else "failed"
             event = finished_event(execution.id, execution.tool_name, error=execution.error, status=status)
             deps.reporter.add(db, "tool_finished", event)
@@ -465,10 +521,10 @@ async def prepare_call(state: RunState, runtime: Runtime[RunDeps]) -> RunState:
     return {"pending_calls": rest, "call": call}
 
 
-def after_prepare(state: RunState) -> Literal["execute_tool", "approval_gate", "finish_call"]:
+def after_prepare(state: RunState) -> Literal["hand_off", "execute_tool", "approval_gate", "finish_call"]:
     decision = state["call"]["decision"]
     if decision == "auto":
-        return "execute_tool"
+        return "hand_off" if state["call"].get("tool") == HANDOFF_TOOL else "execute_tool"
     if decision == "ask":
         return "approval_gate"
     return "finish_call"
@@ -483,8 +539,72 @@ def approval_gate(state: RunState) -> RunState:
     return {"call": {**call, "decision": "approved" if approved else "denied", "refusal": answer.get("message")}}
 
 
-def after_gate(state: RunState) -> Literal["execute_tool", "finish_call"]:
-    return "execute_tool" if state["call"]["decision"] == "approved" else "finish_call"
+def after_gate(state: RunState) -> Literal["hand_off", "execute_tool", "finish_call"]:
+    if state["call"]["decision"] != "approved":
+        return "finish_call"
+    return "hand_off" if state["call"].get("tool") == HANDOFF_TOOL else "execute_tool"
+
+
+async def hand_off(state: RunState, runtime: Runtime[RunDeps]) -> RunState:
+    """`team.handoff`: the task, its child run and the child's job, the handoff message (or its new
+    card) and the call's `succeeded` record, all in one transaction (ADR 0014 §4). A refused
+    handoff marks the call `failed` and makes nothing. Safe to run twice: a call already recorded
+    `succeeded` returns its result, and the task's idempotency key finds the task."""
+    deps = runtime.context
+    call = state["call"]
+    execution_id = uuid.UUID(call["executionId"])
+    async with deps.sessionmaker() as db:
+        row = await tool_execution_service.get(db, execution_id)
+        if row is None:
+            raise RuntimeError(f"Tool execution {execution_id} is missing")
+        if row.status in ("failed", "denied"):
+            return {"call": {**call, "result": f"The tool failed: {row.error or 'not done.'}"}}
+        if row.status == "succeeded":
+            result = row.result or {}
+        else:
+            outcome = await task_service.hand_off(
+                db,
+                parent_run_id=deps.run_id,
+                tool_call_id=row.tool_call_id,
+                args=HandoffArgs.model_validate(row.args),
+                message_id=uuid.UUID(state["reply_message_id"]),
+                reply_text=state.get("reply", ""),
+                exclude_execution_ids=state.get("shown_execution_ids", []),
+                level=_security_level(state),
+                tainted=state.get("tainted", False),
+                settings=deps.settings,
+            )
+            if isinstance(outcome, Refused):
+                await tool_execution_service.settle(db, execution_id, error=outcome.message)
+                await db.commit()
+                return {"call": {**call, "result": f"The tool failed: {outcome.message}"}}
+            if outcome.created:
+                await deps.start_runs(db, [outcome.child])
+            target = await db.get(Bot, outcome.task.to_bot_id)
+            result = handoff_result(outcome.task, target)
+            await tool_execution_service.settle(db, execution_id, result=result)
+            await db.commit()
+    deps.reporter.announce()
+    task_ids = state.get("handoff_task_ids", [])
+    task_id = str(result.get("taskId", ""))
+    return {
+        "call": {**call, "result": json.dumps(result, ensure_ascii=False)},
+        "handoff_task_ids": task_ids if not task_id or task_id in task_ids else [*task_ids, task_id],
+    }
+
+
+def handoff_result(task: Task, target: Bot | None) -> dict[str, Any]:
+    """What the model reads when a handoff is made."""
+    name, handle = (target.name, target.handle) if target else ("your teammate", "teammate")
+    return {
+        "taskId": str(task.id),
+        "bot": f"@{handle}",
+        "status": task.status,
+        "note": (
+            f"Handed off to {name} (@{handle}). Their result will come back to you when they finish; "
+            "you don't need to wait or check."
+        ),
+    }
 
 
 async def execute_tool(state: RunState, runtime: Runtime[RunDeps]) -> RunState:
@@ -522,8 +642,44 @@ def finish_call(state: RunState) -> RunState:
     return {"turns": [*state.get("turns", []), message_to_dict(answer)], "call": {}, "approval_ids": approvals}
 
 
-def after_call(state: RunState) -> Literal["prepare_call", "call_model"]:
-    return "prepare_call" if state.get("pending_calls") else "call_model"
+def after_call(state: RunState) -> Literal["prepare_call", "save_progress", "call_model"]:
+    if state.get("pending_calls"):
+        return "prepare_call"
+    return "save_progress" if state.get("handoff_task_ids") else "call_model"
+
+
+async def save_progress(state: RunState, runtime: Runtime[RunDeps]) -> RunState:
+    """Before pausing for tasks: (re)write the handoff message with every card of this step (a
+    call after the first handoff may have added one). Writing it twice is harmless."""
+    deps = runtime.context
+    shown = state.get("shown_execution_ids", [])
+    async with deps.sessionmaker() as db:
+        await task_service.save_segment(
+            db,
+            run_id=deps.run_id,
+            message_id=uuid.UUID(state["reply_message_id"]),
+            reply_text=state.get("reply", ""),
+            exclude_execution_ids=shown,
+        )
+        now_shown = await tool_execution_service.execution_ids(db, deps.run_id)
+        await db.commit()
+    deps.reporter.announce()
+    return {"shown_execution_ids": [*shown, *(id_ for id_ in now_shown if id_ not in shown)]}
+
+
+def wait_for_tasks(state: RunState) -> RunState:
+    """Pause until every task handed off in this step has ended. RULE: nothing else happens here
+    (like `approval_gate`). The answer is `task_service.resume_answer`: the results, read next as
+    other bots' output, and whether any child read outside text."""
+    answer = interrupt({"taskIds": state.get("handoff_task_ids", [])})
+    results = HumanMessage(content=results_text(list(answer.get("tasks", []))))
+    return {
+        "turns": [*state.get("turns", []), message_to_dict(results)],
+        "handoff_task_ids": [],
+        "reply": "",  # the next step writes a new message
+        "reply_message_id": "",
+        "tainted": state.get("tainted", False) or bool(answer.get("tainted")),
+    }
 
 
 async def save_reply(state: RunState, runtime: Runtime[RunDeps]) -> RunState:
@@ -532,7 +688,9 @@ async def save_reply(state: RunState, runtime: Runtime[RunDeps]) -> RunState:
     runs wait for this run to finish (one run at a time per chat)."""
     deps = runtime.context
     async with deps.sessionmaker() as db:
-        cards = await tool_execution_service.reply_cards(db, deps.run_id)
+        cards = await tool_execution_service.reply_cards(
+            db, deps.run_id, exclude_execution_ids=state.get("shown_execution_ids", [])
+        )
         saved = await run_service.save_reply(
             db,
             run_id=deps.run_id,
@@ -578,6 +736,9 @@ def build_graph(checkpointer: BaseCheckpointSaver[Any]) -> CompiledStateGraph[Ru
     graph.add_node("finish_call", finish_call)
     graph.add_node("save_reply", save_reply)
     graph.add_node("remember", remember)
+    graph.add_node("hand_off", hand_off)
+    graph.add_node("save_progress", save_progress)
+    graph.add_node("wait_for_tasks", wait_for_tasks)
     graph.add_edge(START, "load_context")
     graph.add_edge("load_context", "recall")
     graph.add_edge("recall", "call_model")
@@ -585,6 +746,9 @@ def build_graph(checkpointer: BaseCheckpointSaver[Any]) -> CompiledStateGraph[Ru
     graph.add_conditional_edges("prepare_call", after_prepare)
     graph.add_conditional_edges("approval_gate", after_gate)
     graph.add_edge("execute_tool", "finish_call")
+    graph.add_edge("hand_off", "finish_call")
+    graph.add_edge("save_progress", "wait_for_tasks")
+    graph.add_edge("wait_for_tasks", "call_model")
     graph.add_conditional_edges("finish_call", after_call)
     graph.add_edge("save_reply", "remember")
     graph.add_edge("remember", END)

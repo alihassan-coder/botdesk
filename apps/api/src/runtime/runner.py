@@ -8,7 +8,14 @@ succeeded, failed or cancelled, or pauses it:
 - **waiting_approval:** the graph called `interrupt()`. The job ends; the run is rows in
   Postgres. When a person decides (or the approval expires), `RunManager.resume` defers another
   `run_bot` job, which continues the same checkpoint with `Command(resume=...)`.
+- **waiting_handoff:** the run handed tasks to teammate bots (ADR 0014) and paused in
+  `wait_for_tasks`. Its job ends, so the chat's lock is free for the children. When the last of
+  its tasks ends, `task_service` says so and `resume` defers its job, which continues the
+  checkpoint with the tasks' results (`task_service.resume_answer`).
 - **needs_attention:** a tool may have half run. A person has to look.
+
+When a run ends, `task_service.run_ended` ends its task if it was a child (resuming the parent
+when it was the last one), and cancels the tasks it still had open (their children are stopped).
 
 A run the worker was in the middle of when it stopped (a restart, a crash) is still `running`;
 its job comes back and `take_turn` carries on from the last saved step (Postgres checkpoints).
@@ -51,7 +58,7 @@ from src.runtime.memory import MemoryService, NoMemory
 from src.runtime.reporter import RunReporter
 from src.runtime.tool_access import ToolAccessProvider
 from src.runtime.tool_pipeline import NeedsAttention
-from src.services import approval_service, run_service
+from src.services import approval_service, run_event_service, run_service, task_service
 from src.services.credential_vault import CredentialVault
 from src.services.model_catalog import ModelCatalog
 
@@ -81,10 +88,11 @@ class RunTicket:
 class Outcome:
     """How one stretch of a run ended."""
 
-    status: str  # succeeded | failed | cancelled | waiting_approval | needs_attention
+    status: str  # succeeded | failed | cancelled | waiting_approval | waiting_handoff | needs_attention
     error: str | None = None
     code: str | None = None  # why it failed, for the web: "budget" when out of budget
     approval_id: str | None = None  # when waiting_approval: the approval it waits for
+    task_ids: tuple[str, ...] = ()  # when waiting_handoff: the tasks it waits for
 
 
 class RunManager:
@@ -135,9 +143,64 @@ class RunManager:
             await self.queue.defer(run_job(run.id, run.thread_id), db=db)
 
     async def resume(self, db: AsyncSession, run: Run) -> None:
-        """Defer the job that continues a run paused on an approval, in `db`'s transaction (with
-        the decision). The job reads the answer from the approval itself."""
+        """Defer the job that continues a paused run, in `db`'s transaction: with the decision, for
+        an approval (the job reads the answer from the approval), or with the end of its last open
+        task, for a handoff (the job reads the tasks' results)."""
         await self.start(db, [run])
+
+    async def stop(self, run_id: uuid.UUID) -> None:
+        """Stop button (and the cascade, and the task timeout). A queued or paused run is cancelled
+        on the spot: its pending approvals expire, and its open tasks are cancelled (their children
+        stop too). A running one gets the Stop flag and is aborted now. If it was a task's child,
+        its task fails as stopped and the parent may resume. Stopping an ended run does nothing."""
+        aftermath = task_service.Aftermath()
+        async with self.sessionmaker() as db:
+            run = await db.get(Run, run_id)
+            if run is None:
+                return
+            if await run_service.request_stop(db, run):  # it wasn't running: cancelled right here
+                for approval_id in await approval_service.expire_for_run(db, run.id):
+                    view = await approval_service.view_by_id(db, approval_id)
+                    run_event_service.add_event(
+                        db,
+                        org_id=run.org_id,
+                        thread_id=run.thread_id,
+                        run_id=run.id,
+                        kind="approval_decided",
+                        data={"approval": approval_service.approval_json(view, self.registry)},
+                    )
+                run_event_service.add_event(
+                    db,
+                    org_id=run.org_id,
+                    thread_id=run.thread_id,
+                    run_id=run.id,
+                    kind="run_finished",
+                    data={"status": "cancelled"},
+                )
+                aftermath = await task_service.run_ended(db, run.id, status="cancelled", error=None, code=None)
+                for parent in aftermath.resume:
+                    await self.resume(db, parent)
+            await db.commit()
+            thread_id = run.thread_id
+        self.bus.announce(thread_id)
+        await self.stop_now(run_id)  # if it's running, stop it now, not at its next step
+        for child_id in aftermath.stop:
+            await self.stop(child_id)
+
+    async def reconcile_tasks(self) -> None:
+        """The handoffs' safety net (recovery): tasks whose child already ended are ended, the open
+        tasks of runs that already ended are cancelled, and parents whose tasks have all ended
+        resume (`task_service.reconcile`)."""
+        async with self.sessionmaker() as db:
+            aftermath = await task_service.reconcile(db)
+            for parent in aftermath.resume:
+                await self.resume(db, parent)
+            threads = {run.thread_id for run in aftermath.resume}
+            await db.commit()
+        for thread_id in threads:
+            self.bus.announce(thread_id)
+        for child_id in aftermath.stop:
+            await self.stop(child_id)
 
     async def stop_now(self, run_id: uuid.UUID) -> None:
         """Stop a running run straight away, not at its next step (its Stop flag is already
@@ -186,6 +249,7 @@ class RunManager:
         runs fail with a clear message instead, or wait for a person if a tool call was half done.
         Runs waiting for approval stay paused either way."""
         if self.settings.uses_postgres:
+            await self.reconcile_tasks()
             await self.pick_up_stuck_runs()
             return
         async with self.sessionmaker() as db:
@@ -196,6 +260,9 @@ class RunManager:
                 else:
                     reporter.add(db, "run_failed", {"status": "failed", "error": run_service.RESTART_ERROR})
             await db.commit()
+        # Children that just failed end their tasks, and parents waiting for them resume (and
+        # fail: their checkpoints were in memory too).
+        await self.reconcile_tasks()
 
     async def pick_up_stuck_runs(self) -> None:
         """Postgres only: give every run that should be moving but has no job a job again."""
@@ -231,6 +298,9 @@ class RunManager:
             claimed = await self._claim(ticket, "queued")
             if claimed is not True:
                 return claimed is None
+            async with self.sessionmaker() as db:
+                await task_service.child_started(db, ticket.id)  # a task's child: its task is working
+                await db.commit()
             await reporter.send("run_started", {"botId": str(ticket.bot_id)})
             graph_input = {}
         elif status == "waiting_approval":
@@ -247,8 +317,24 @@ class RunManager:
                 # The checkpoint is gone (in-memory checkpoints don't survive a restart).
                 await self._finish(ticket, reporter, Outcome("failed", run_service.LOST_PAUSE_ERROR))
                 return True
-            await reporter.send("run_resumed", {"botId": str(ticket.bot_id)})
+            await reporter.send("run_resumed", {"botId": str(ticket.bot_id), "after": "approval"})
             graph_input = Command(resume=answer)
+        elif status == "waiting_handoff":
+            snapshot = await self._graph.aget_state(self._config(ticket))
+            task_ids = snapshot.interrupts[0].value.get("taskIds") if snapshot.interrupts else None
+            async with self.sessionmaker() as db:
+                tasks_answer = await task_service.resume_answer(db, ticket.id, task_ids)
+            if tasks_answer is None:
+                return True  # a task is still open; the last one to end defers this job again
+            claimed = await self._claim(ticket, "waiting_handoff")
+            if claimed is not True:
+                return claimed is None
+            if not snapshot.interrupts:
+                # The checkpoint is gone (in-memory checkpoints don't survive a restart).
+                await self._finish(ticket, reporter, Outcome("failed", run_service.LOST_PAUSE_ERROR))
+                return True
+            await reporter.send("run_resumed", {"botId": str(ticket.bot_id), "after": "tasks"})
+            graph_input = Command(resume=tasks_answer)
         elif status == "running":
             # A restart stopped it mid-way: carry on from the last saved step (from the start if
             # it hadn't saved one). A tool call left half done stops it as needs_attention.
@@ -335,13 +421,27 @@ class RunManager:
             logger.exception("Run %s failed", ticket.id)
             return Outcome("failed", SOMETHING_WENT_WRONG)
         if result.interrupts:
-            return Outcome("waiting_approval", approval_id=str(result.interrupts[0].value["approvalId"]))
+            paused_on = result.interrupts[0].value
+            if "taskIds" in paused_on:
+                return Outcome("waiting_handoff", task_ids=tuple(str(task_id) for task_id in paused_on["taskIds"]))
+            return Outcome("waiting_approval", approval_id=str(paused_on["approvalId"]))
         return Outcome("succeeded")
 
     async def _finish(self, ticket: RunTicket, reporter: RunReporter, outcome: Outcome) -> None:
-        """Save how this stretch ended, with its event, in one transaction."""
+        """Save how this stretch ended, with its event, in one transaction. A run that ended also
+        ends its task (if it was a child) and cancels its own open tasks; what that resumes is
+        deferred in the same transaction, and what it stops is stopped after the commit."""
+        aftermath = task_service.Aftermath()
         async with self.sessionmaker() as db:
-            if outcome.status == "waiting_approval" and outcome.approval_id:
+            if outcome.status == "waiting_handoff":
+                # The UPDATE takes the run's row lock, so a task ending at this moment either sees
+                # the run paused (and resumes it) or leaves it to `resume_if_ready` here.
+                if await run_service.pause_run(db, ticket.id, status="waiting_handoff"):
+                    data = {"status": "waiting_handoff", "taskIds": list(outcome.task_ids)}
+                    reporter.add(db, "run_waiting_handoff", data)
+                    if (ready := await task_service.resume_if_ready(db, ticket.id)) is not None:
+                        await self.resume(db, ready)
+            elif outcome.status == "waiting_approval" and outcome.approval_id:
                 if await run_service.pause_run(db, ticket.id, status="waiting_approval"):
                     view = await approval_service.view_by_id(db, uuid.UUID(outcome.approval_id))
                     approval = approval_service.approval_json(view, self.registry)
@@ -357,8 +457,15 @@ class RunManager:
                     reporter.add(db, "run_failed", failed)
                 else:
                     reporter.add(db, "run_finished", {"status": outcome.status})
+                aftermath = await task_service.run_ended(
+                    db, ticket.id, status=outcome.status, error=outcome.error, code=outcome.code
+                )
+                for parent in aftermath.resume:
+                    await self.resume(db, parent)
             await db.commit()
         reporter.announce()
+        for child_id in aftermath.stop:
+            await self.stop(child_id)
 
     async def _stop_was_requested(self, run_id: uuid.UUID) -> bool:
         async with self.sessionmaker() as db:

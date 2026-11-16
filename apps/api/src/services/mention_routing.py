@@ -39,10 +39,12 @@ class ChatBots:
 
 @dataclass(frozen=True)
 class BotAuthor:
-    """The message is a bot's reply, written by a run at `hop`."""
+    """The message is a bot's reply, written by a run at `hop`. Its mentions of the bots in `skip`
+    start nothing (a child run's reply goes back to the bot that handed it the task, ADR 0014)."""
 
     bot_id: uuid.UUID
     hop: int
+    skip: frozenset[uuid.UUID] = frozenset()
 
 
 @dataclass(frozen=True)
@@ -82,7 +84,7 @@ def route(
 
 
 def _bot_reply(chat: ChatBots, mentioned: list[uuid.UUID], author: BotAuthor, hop_limit: int) -> Routing:
-    targets = [bot for bot in mentioned if bot in chat.bots and bot != author.bot_id]
+    targets = [bot for bot in mentioned if bot in chat.bots and bot != author.bot_id and bot not in author.skip]
     if not targets:
         return Routing(())
     hop = author.hop + 1

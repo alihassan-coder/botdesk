@@ -77,8 +77,10 @@ class FakeGoogle:
     on_token: Callable[[], Awaitable[None]] | None = None  # runs while /token is answering
     requests: list[httpx.Request] = field(default_factory=list)
     issued: int = 0
-    # Gmail API answers by path ("/gmail/v1/users/me/labels"), besides the profile.
+    # Gmail API answers by path ("/gmail/v1/users/me/labels"), besides the profile: JSON, or a
+    # function of the request that returns the response.
     gmail: dict[str, Any] = field(default_factory=dict)
+    history_id: str = "48400"  # the profile's current historyId
     # Hosts that answer as Gmail: the real one, and a fake base (GMAIL_API_BASE_URL) in tests.
     gmail_hosts: tuple[str, ...] = ("gmail.googleapis.com",)
 
@@ -117,9 +119,12 @@ class FakeGoogle:
         if host in self.gmail_hosts and path == "/gmail/v1/users/me/profile":
             if self.profile_status != 200:
                 return httpx.Response(self.profile_status, json={"error": {"message": "nope"}})
-            return httpx.Response(200, json={"emailAddress": self.email, "messagesTotal": 12})
+            return httpx.Response(
+                200, json={"emailAddress": self.email, "messagesTotal": 12, "historyId": self.history_id}
+            )
         if host in self.gmail_hosts and path in self.gmail:
-            return httpx.Response(200, json=self.gmail[path])
+            answer = self.gmail[path]
+            return answer(request) if callable(answer) else httpx.Response(200, json=answer)
         raise httpx.ConnectError("no such fake", request=request)
 
 
@@ -219,6 +224,12 @@ async def test_connectors_say_how_each_app_connects_and_whether_it_is_set_up(tea
         ("gmail.search", "read"),
         ("gmail.read_thread", "read"),
         ("gmail.list_labels", "read"),
+        ("gmail.add_labels", "write-external"),
+        ("gmail.remove_labels", "write-external"),
+        ("gmail.archive", "write-external"),
+        ("gmail.create_draft", "write-external"),
+        ("gmail.send", "external-send"),
+        ("gmail.trash", "destructive"),
     ]
     assert gmail["name"] == "Gmail" and gmail["version"] == "0.1.0"
     assert demo["authType"] == "api_key" and demo["setup"] == "ready"

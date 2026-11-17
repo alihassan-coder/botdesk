@@ -1,0 +1,32 @@
+{
+  "id": "18f0a0",
+  "historyId": "48230",
+  "messages": [
+    {
+      "id": "18f0a1",
+      "threadId": "18f0a0",
+      "labelIds": ["INBOX"],
+      "payload": {
+        "headers": [
+          {"name": "From", "value": "Sara Lee <sara@acme.dev>"},
+          {"name": "Subject", "value": "Launch checklist"},
+          {"name": "Message-ID", "value": "<CAF1@mail.acme.dev>"}
+        ]
+      }
+    },
+    {
+      "id": "18f0a2",
+      "threadId": "18f0a0",
+      "labelIds": ["INBOX"],
+      "payload": {
+        "headers": [
+          {"name": "From", "value": "Omar <omar@acme.dev>"},
+          {"name": "Subject", "value": "Re: Launch checklist"},
+          {"name": "Message-Id", "value": "<CAF2@mail.acme.dev>"},
+          {"name": "In-Reply-To", "value": "<CAF1@mail.acme.dev>"},
+          {"name": "References", "value": "<CAF1@mail.acme.dev>"}
+        ]
+      }
+    }
+  ]
+}

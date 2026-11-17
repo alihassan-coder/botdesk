@@ -16,9 +16,9 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.core.errors import BadRequest, Conflict, Forbidden, NotFound
-from src.models import Bot, BotTool, Connection, Run, Thread
+from src.models import Bot, BotTool, Connection, Run, Thread, TriggerSubscription
 from src.plugins.registry import ToolRegistry
-from src.schemas.bot_tool import BotToolChange, BotToolOut, BotToolsOut
+from src.schemas.bot_tool import BotToolChange, BotToolOut, BotToolsOut, BotTriggerOut
 from src.schemas.plugin import PluginToolOut
 from src.services import connection_service
 from src.services.connection_service import Actor
@@ -36,13 +36,34 @@ async def bindings_of(db: AsyncSession, bot_id: uuid.UUID) -> dict[str, BotTool]
     return {row.plugin_id: row for row in await db.scalars(select(BotTool).where(BotTool.bot_id == bot_id))}
 
 
-def tools_out(registry: ToolRegistry, bindings: dict[str, BotTool]) -> BotToolsOut:
-    """One entry per loaded plugin. A plugin with no binding is off, with no connection."""
-    return BotToolsOut(plugins=[_plugin_out(plugin, bindings.get(plugin.id)) for plugin in registry.plugins()])
+def tools_out(
+    registry: ToolRegistry, bindings: dict[str, BotTool], subscriptions: Iterable[TriggerSubscription] = ()
+) -> BotToolsOut:
+    """One entry per loaded plugin. A plugin with no binding is off, with no connection. Each
+    plugin's triggers say whether this bot reacts to them (`subscriptions`, slice 6.3)."""
+    on = {(row.binding_id, row.trigger): row for row in subscriptions}
+    return BotToolsOut(plugins=[_plugin_out(plugin, bindings.get(plugin.id), on) for plugin in registry.plugins()])
 
 
-def _plugin_out(plugin: PluginManifest, binding: BotTool | None) -> BotToolOut:
+def _plugin_out(
+    plugin: PluginManifest,
+    binding: BotTool | None,
+    on: dict[tuple[uuid.UUID, str], TriggerSubscription],
+) -> BotToolOut:
     auth = plugin.auth
+    triggers = []
+    for trigger in plugin.triggers:
+        row = on.get((binding.id, trigger.name)) if binding else None
+        triggers.append(
+            BotTriggerOut(
+                name=trigger.name,
+                title=trigger.title,
+                description=trigger.description,
+                enabled=row is not None,
+                subscriber_id=row.subscriber_id if row else None,
+                problem=row.problem if row else None,
+            )
+        )
     return BotToolOut(
         plugin_id=plugin.id,
         name=plugin.name,
@@ -56,6 +77,7 @@ def _plugin_out(plugin: PluginManifest, binding: BotTool | None) -> BotToolOut:
             )
             for tool in plugin.tools
         ],
+        triggers=triggers,
     )
 
 
@@ -111,7 +133,7 @@ async def update_bindings(
         if before is not None:
             _check_can_unbind(actor, bot, found.get(before))
         if change.connection_id is not None:
-            _check_can_bind(actor, bot, change.plugin_id, found.get(change.connection_id))
+            check_can_bind(actor, bot, change.plugin_id, found.get(change.connection_id))
 
     for change in changes:
         binding = current.get(change.plugin_id)
@@ -161,7 +183,7 @@ def _check_can_unbind(actor: Actor, bot: Bot, connection: Connection | None) -> 
     raise Forbidden("Only whoever may choose this account (or an owner or admin) can change it.")
 
 
-def _check_can_bind(actor: Actor, bot: Bot, plugin_id: str, connection: Connection | None) -> None:
+def check_can_bind(actor: Actor, bot: Bot, plugin_id: str, connection: Connection | None) -> None:
     if connection is None or not connection_service.can_see(actor, connection):
         raise NotFound(connection_service.NOT_FOUND)
     if connection.connector_id != plugin_id:

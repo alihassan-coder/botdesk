@@ -30,7 +30,7 @@ The words BotDesk uses for its domain. Use these exact terms in code, UI copy, d
 | **Job** | A unit of background work in the queue (procrastinate): move a run forward, expire approvals, fire a routine. Deferred once, or periodic on a schedule. |
 | **Run event** | One step of a run's progress (a token, a tool call, an approval card), saved in `run_events` and streamed to the chat. |
 | **Routine** | A saved, repeatable task, either recorded by **follow along** (the bot watches a member do it) or created from chat, run on a schedule or trigger. |
-| **Trigger** | What starts a run without a message: schedule, new email, webhook, follow-up timer, stalled thread. |
+| **Trigger** | What starts a run without a message: schedule, new email, webhook, follow-up timer, stalled thread. A plugin's trigger (Gmail's "React to new email") is switched on per bot; whoever switches it on is its **subscriber**: its events come to their DM with the bot, and they are its runs' requester. |
 | **Plugin** | A self-contained source of tools described by a manifest: auth, tools (each with a risk class), triggers, settings. **Built in** plugins ship with the server (Gmail is the first); an **MCP server** is the other kind. A bot uses a plugin only through a binding. _Avoid_: integration, installation, app (except in UI copy "Connect apps"). |
 | **Connector** | A plugin as listed on Connect apps (e.g. "Gmail"), whether or not anyone has connected it. |
 | **Connection** | One authorised account on one connector (e.g. `ali@acme.dev` on Gmail), owned by a member, a bot (its own mailbox) or the org (shared). A member's own connection serves only runs whose requester is that member. _Avoid_: account, credential, integration. |

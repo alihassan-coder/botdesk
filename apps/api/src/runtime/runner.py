@@ -48,6 +48,7 @@ from src.core.config import Settings
 from src.core.database import POOL_MAX_LIFETIME_SECONDS, IdleCheck, postgres_connect_args
 from src.core.secrets import SecretBox
 from src.jobs.queue import Job, JobQueue, run_key, run_lock
+from src.mcp.client import McpNetwork
 from src.models import Run
 from src.plugins.registry import ToolRegistry, build_registry
 from src.runtime.chat_model import ModelPrice, ModelResolver
@@ -60,6 +61,7 @@ from src.runtime.tool_access import ToolAccessProvider
 from src.runtime.tool_pipeline import NeedsAttention
 from src.services import approval_service, run_event_service, run_service, task_service
 from src.services.credential_vault import CredentialVault
+from src.services.mcp_server_service import McpRuntime
 from src.services.model_catalog import ModelCatalog
 from src.services.oauth_flow import OAuth
 
@@ -126,6 +128,9 @@ class RunManager:
         self.tool_access = ToolAccessProvider(
             sessionmaker, self.registry, vault, oauth=oauth, rebase=oauth.test_hosts()
         )
+        # The organization's MCP servers (ADR 0012): their header keys and where we may connect.
+        # Tests swap in a network that reaches a local test server.
+        self.mcp = McpRuntime(vault, McpNetwork(allow_private=settings.allow_private_mcp_urls))
         resolver = ModelResolver(settings, sessionmaker, secrets, catalog)
         # (org id, model id) → the chat model, with the org's keys. Tests swap in a fake model here.
         self.model_for: Callable[[uuid.UUID, str], Awaitable[BaseChatModel]] = resolver
@@ -411,6 +416,7 @@ class RunManager:
             settings=self.settings,
             start_runs=self.start,
             tool_access=self.tool_access,
+            mcp=self.mcp,
         )
         try:
             # The time limit counts working time only: waiting for a person doesn't use it up.

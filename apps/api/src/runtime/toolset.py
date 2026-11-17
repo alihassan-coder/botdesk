@@ -34,7 +34,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.models import Connection
 from src.plugins.registry import RegisteredTool, ToolRegistry
-from src.services import binding_service
+from src.services import binding_service, mcp_server_service
+from src.services.mcp_server_service import McpRuntime, is_mcp_plugin
 
 
 @dataclass(frozen=True)
@@ -138,12 +139,15 @@ def _effective_scopes(auth: Auth | None, granted: Iterable[str]) -> frozenset[st
     return auth.effective_scopes(granted) if isinstance(auth, OAuth2Auth) else frozenset(granted)
 
 
-async def load(db: AsyncSession, registry: ToolRegistry, run_id: uuid.UUID) -> Toolset:
-    """The run's toolset, read from the database now (two queries). A run that's gone has none."""
+async def load(db: AsyncSession, registry: ToolRegistry, run_id: uuid.UUID, mcp: McpRuntime | None = None) -> Toolset:
+    """The run's toolset, read from the database now (two queries; a third when the bot has an
+    MCP server bound, to add the organization's servers as plugins). A run that's gone has none."""
     rows = await binding_service.run_bindings(db, run_id)
     if rows is None:
         return Toolset(_registry=registry)
     run, thread, bindings = rows
+    if any(is_mcp_plugin(binding.plugin_id) for binding, _ in bindings):
+        registry = await mcp_server_service.org_registry(db, registry, run.org_id, mcp)
     scope = RunScope(
         bot_id=run.bot_id,
         requester_id=run.requester_id,

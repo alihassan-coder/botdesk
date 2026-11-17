@@ -25,7 +25,16 @@ class GmailError(Exception):
 
 async def get(http: HttpClient, path: str, *, what: str, account: str | None, params: Params | None = None) -> Any:
     """GET `users/me/{path}` and return its JSON. `what` names the thing for a 404 ("thread 18f0a0")."""
-    response = await http.request("GET", f"{USERS_ME}/{path}", params=params)
+    return _answer(await http.request("GET", f"{USERS_ME}/{path}", params=params), what=what, account=account)
+
+
+async def post(http: HttpClient, path: str, *, what: str, account: str | None, body: Any = None) -> Any:
+    """POST `body` as JSON to `users/me/{path}`, once (no retry: a send must never happen twice),
+    and return the JSON answer."""
+    return _answer(await http.request("POST", f"{USERS_ME}/{path}", json=body), what=what, account=account)
+
+
+def _answer(response: HttpResponse, *, what: str, account: str | None) -> Any:
     if not response.ok:
         raise GmailError(_failure(response, what=what, account=account), response.status_code)
     try:

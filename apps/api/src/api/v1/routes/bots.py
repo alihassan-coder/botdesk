@@ -5,7 +5,7 @@ from fastapi import APIRouter, BackgroundTasks, status
 from src.api.deps import AppSettings, Db, OrgAccess, Runs
 from src.controllers import bot_controller
 from src.schemas.bot import BotIn, BotOut, BotUpdate
-from src.schemas.bot_tool import BotToolsIn, BotToolsOut
+from src.schemas.bot_tool import BotToolsIn, BotToolsOut, BotTriggerIn
 
 router = APIRouter(prefix="/orgs/{org_id}/bots", tags=["bots"])
 
@@ -65,11 +65,21 @@ async def delete_bot(bot_id: uuid.UUID, access: OrgAccess, db: Db, runs: Runs) -
 async def get_tools(bot_id: uuid.UUID, access: OrgAccess, db: Db, runs: Runs) -> BotToolsOut:
     """The bot's Tools: one entry per loaded plugin, with whether the bot may use it and through
     which connection. A plugin the bot has no binding for is off."""
-    return await bot_controller.get_tools(db, access, bot_id, runs.registry)
+    return await bot_controller.get_tools(db, access, bot_id, runs.registry, runs.mcp)
 
 
 @router.put("/{bot_id}/tools")
 async def set_tools(bot_id: uuid.UUID, body: BotToolsIn, access: OrgAccess, db: Db, runs: Runs) -> BotToolsOut:
     """Switch plugins on or off and choose their connections. Only the plugins sent change.
     Any member may switch a plugin; choosing a connection takes someone who may use it."""
-    return await bot_controller.set_tools(db, access, bot_id, body, runs.registry)
+    return await bot_controller.set_tools(db, access, bot_id, body, runs.registry, runs.mcp)
+
+
+@router.put("/{bot_id}/tools/{plugin_id}/triggers/{trigger}")
+async def set_trigger(
+    bot_id: uuid.UUID, plugin_id: str, trigger: str, body: BotTriggerIn, access: OrgAccess, db: Db, runs: Runs
+) -> BotToolsOut:
+    """Switch a trigger ("React to new email") on or off for this bot. On: you become its
+    subscriber (its events come to your DM with the bot and its runs act for you), which takes
+    the right to choose the plugin's account. Off: any member."""
+    return await bot_controller.set_trigger(db, access, bot_id, plugin_id, trigger, body, runs.registry, runs.mcp)

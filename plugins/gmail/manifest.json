@@ -25,7 +25,7 @@
     "type": "oauth2"
   },
   "botSettingsSchema": null,
-  "description": "Search and read a connected Gmail account's email. Sending and organising come later.",
+  "description": "Search, read, label, archive, draft, send and trash email in a connected Gmail account.",
   "egress": [
     "gmail.googleapis.com"
   ],
@@ -35,6 +35,150 @@
   "runtime": "builtin",
   "settingsSchema": null,
   "tools": [
+    {
+      "description": "Add labels to every message of a Gmail thread (STARRED to star it, IMPORTANT, or the user's own).",
+      "egress": "fixed",
+      "idempotent": true,
+      "inputSchema": {
+        "properties": {
+          "label_ids": {
+            "description": "Label ids from gmail.list_labels: the user's own (Label_12) or system ones such as STARRED, IMPORTANT, UNREAD (remove it to mark as read) or INBOX. Not TRASH or SPAM: use gmail.trash.",
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 10,
+            "minItems": 1,
+            "title": "Label Ids",
+            "type": "array"
+          },
+          "thread_id": {
+            "description": "The thread's id (`threadId` from gmail.search).",
+            "pattern": "^[A-Za-z0-9_-]{1,64}$",
+            "title": "Thread Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "thread_id",
+          "label_ids"
+        ],
+        "title": "LabelArgs",
+        "type": "object"
+      },
+      "name": "add_labels",
+      "risk": "write-external",
+      "scopes": [
+        "https://www.googleapis.com/auth/gmail.modify"
+      ],
+      "title": "Add email labels",
+      "untrustedOutput": false
+    },
+    {
+      "description": "Archive a Gmail thread: it leaves the inbox and stays in All Mail.",
+      "egress": "fixed",
+      "idempotent": true,
+      "inputSchema": {
+        "properties": {
+          "thread_id": {
+            "description": "The thread's id (`threadId` from gmail.search).",
+            "pattern": "^[A-Za-z0-9_-]{1,64}$",
+            "title": "Thread Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "thread_id"
+        ],
+        "title": "ThreadArgs",
+        "type": "object"
+      },
+      "name": "archive",
+      "risk": "write-external",
+      "scopes": [
+        "https://www.googleapis.com/auth/gmail.modify"
+      ],
+      "title": "Archive an email thread",
+      "untrustedOutput": false
+    },
+    {
+      "description": "Save a plain-text draft in the connected Gmail account, new or as a reply in a thread (reply_to_thread_id). Nothing is sent: the person sends it from Gmail.",
+      "egress": "fixed",
+      "idempotent": false,
+      "inputSchema": {
+        "properties": {
+          "bcc": {
+            "description": "Bcc: plain addresses.",
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 20,
+            "title": "Bcc",
+            "type": "array"
+          },
+          "body": {
+            "description": "The message, as plain text.",
+            "maxLength": 50000,
+            "minLength": 1,
+            "title": "Body",
+            "type": "string"
+          },
+          "cc": {
+            "description": "Cc: plain addresses.",
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 20,
+            "title": "Cc",
+            "type": "array"
+          },
+          "reply_to_thread_id": {
+            "anyOf": [
+              {
+                "pattern": "^[A-Za-z0-9_-]{1,64}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "To reply in a thread: its threadId. The reply answers the thread's newest message.",
+            "title": "Reply To Thread Id"
+          },
+          "subject": {
+            "description": "One line. For a reply, the thread's subject with 'Re: ' in front, so Gmail keeps it in the thread.",
+            "maxLength": 250,
+            "minLength": 1,
+            "title": "Subject",
+            "type": "string"
+          },
+          "to": {
+            "description": "Recipients: plain addresses.",
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 20,
+            "minItems": 1,
+            "title": "To",
+            "type": "array"
+          }
+        },
+        "required": [
+          "to",
+          "subject",
+          "body"
+        ],
+        "title": "MailArgs",
+        "type": "object"
+      },
+      "name": "create_draft",
+      "risk": "write-external",
+      "scopes": [
+        "https://www.googleapis.com/auth/gmail.modify"
+      ],
+      "title": "Draft an email",
+      "untrustedOutput": false
+    },
     {
       "description": "List the connected Gmail mailbox's labels (system ones such as INBOX, and the user's own).",
       "egress": "fixed",
@@ -81,6 +225,44 @@
       "untrustedOutput": true
     },
     {
+      "description": "Remove labels from every message of a Gmail thread (UNREAD to mark it read, STARRED to unstar).",
+      "egress": "fixed",
+      "idempotent": true,
+      "inputSchema": {
+        "properties": {
+          "label_ids": {
+            "description": "Label ids from gmail.list_labels: the user's own (Label_12) or system ones such as STARRED, IMPORTANT, UNREAD (remove it to mark as read) or INBOX. Not TRASH or SPAM: use gmail.trash.",
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 10,
+            "minItems": 1,
+            "title": "Label Ids",
+            "type": "array"
+          },
+          "thread_id": {
+            "description": "The thread's id (`threadId` from gmail.search).",
+            "pattern": "^[A-Za-z0-9_-]{1,64}$",
+            "title": "Thread Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "thread_id",
+          "label_ids"
+        ],
+        "title": "LabelArgs",
+        "type": "object"
+      },
+      "name": "remove_labels",
+      "risk": "write-external",
+      "scopes": [
+        "https://www.googleapis.com/auth/gmail.modify"
+      ],
+      "title": "Remove email labels",
+      "untrustedOutput": false
+    },
+    {
       "description": "Search the connected Gmail mailbox with a Gmail query. Returns up to 25 messages: id, threadId, from, to, subject, date, labels and a short snippet. Use gmail.read_thread with a threadId to read the full conversation.",
       "egress": "fixed",
       "idempotent": true,
@@ -115,8 +297,122 @@
       ],
       "title": "Search email",
       "untrustedOutput": true
+    },
+    {
+      "description": "Send a plain-text email from the connected Gmail account, new or as a reply in a thread (reply_to_thread_id). At most 20 recipients.",
+      "egress": "fixed",
+      "idempotent": false,
+      "inputSchema": {
+        "properties": {
+          "bcc": {
+            "description": "Bcc: plain addresses.",
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 20,
+            "title": "Bcc",
+            "type": "array"
+          },
+          "body": {
+            "description": "The message, as plain text.",
+            "maxLength": 50000,
+            "minLength": 1,
+            "title": "Body",
+            "type": "string"
+          },
+          "cc": {
+            "description": "Cc: plain addresses.",
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 20,
+            "title": "Cc",
+            "type": "array"
+          },
+          "reply_to_thread_id": {
+            "anyOf": [
+              {
+                "pattern": "^[A-Za-z0-9_-]{1,64}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "To reply in a thread: its threadId. The reply answers the thread's newest message.",
+            "title": "Reply To Thread Id"
+          },
+          "subject": {
+            "description": "One line. For a reply, the thread's subject with 'Re: ' in front, so Gmail keeps it in the thread.",
+            "maxLength": 250,
+            "minLength": 1,
+            "title": "Subject",
+            "type": "string"
+          },
+          "to": {
+            "description": "Recipients: plain addresses.",
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 20,
+            "minItems": 1,
+            "title": "To",
+            "type": "array"
+          }
+        },
+        "required": [
+          "to",
+          "subject",
+          "body"
+        ],
+        "title": "MailArgs",
+        "type": "object"
+      },
+      "name": "send",
+      "risk": "external-send",
+      "scopes": [
+        "https://www.googleapis.com/auth/gmail.modify"
+      ],
+      "title": "Send an email",
+      "untrustedOutput": false
+    },
+    {
+      "description": "Move a Gmail thread to Trash. Gmail deletes it for good after 30 days.",
+      "egress": "fixed",
+      "idempotent": true,
+      "inputSchema": {
+        "properties": {
+          "thread_id": {
+            "description": "The thread's id (`threadId` from gmail.search).",
+            "pattern": "^[A-Za-z0-9_-]{1,64}$",
+            "title": "Thread Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "thread_id"
+        ],
+        "title": "ThreadArgs",
+        "type": "object"
+      },
+      "name": "trash",
+      "risk": "destructive",
+      "scopes": [
+        "https://www.googleapis.com/auth/gmail.modify"
+      ],
+      "title": "Move an email thread to Trash",
+      "untrustedOutput": false
     }
   ],
-  "triggers": [],
+  "triggers": [
+    {
+      "description": "When a new email reaches the inbox, the bot gets a message in your chat with it and reads the email. Not for your own sent mail, drafts, Promotions or Social.",
+      "intervalSeconds": 60,
+      "name": "new_email",
+      "title": "React to new email",
+      "untrustedPayload": true
+    }
+  ],
   "version": "0.1.0"
 }

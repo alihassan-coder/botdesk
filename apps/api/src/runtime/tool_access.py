@@ -83,7 +83,18 @@ class ToolAccessProvider:
     ) -> AsyncIterator[ToolAccess]:
         """`connection_id`: the connection the run's toolset gives this tool's plugin (None: the
         binding has no account)."""
-        plugin = self.registry.plugin(tool.plugin_id)
+        async with self.open_plugin(
+            run.org_id, tool.plugin_id, connection_id=connection_id, timeout_seconds=timeout_seconds
+        ) as access:
+            yield access
+
+    @asynccontextmanager
+    async def open_plugin(
+        self, org_id: uuid.UUID, plugin_id: str, *, connection_id: uuid.UUID | None, timeout_seconds: float
+    ) -> AsyncIterator[ToolAccess]:
+        """The same access for any of a plugin's calls on `connection_id`: a tool call's, or a
+        trigger's poll (slice 6.3). The caller has checked that the connection may be used."""
+        plugin = self.registry.plugin(plugin_id)
         if plugin is None or not plugin.egress:
             yield NO_ACCESS
             return
@@ -91,7 +102,7 @@ class ToolAccessProvider:
         if plugin.auth is not None:
             if connection_id is not None:
                 async with self.sessionmaker() as db:
-                    connection = await connection_service.for_tool_call(db, run.org_id, connection_id)
+                    connection = await connection_service.for_tool_call(db, org_id, connection_id)
             if connection is not None and isinstance(plugin.auth, OAuth2Auth) and self.oauth is not None:
                 # A token with under a minute left is refreshed first (one refresh per connection
                 # at a time; `invalid_grant` comes back as needs_reconnect).

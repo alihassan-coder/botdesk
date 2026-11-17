@@ -74,6 +74,41 @@ describe("A bot's Tools tab on the API", () => {
     expect(screen.getByLabelText("Account")).toHaveValue("c1");
   });
 
+  it("'React to new email' shows under a connected Gmail and switching it saves only the trigger", async () => {
+    const trigger = { name: "new_email", title: "React to new email", description: "When a new email arrives…", enabled: false, subscriberId: null, problem: null };
+    const connected = { ...gmail, enabled: true, connectionId: "c1", triggers: [trigger] };
+    api.routes["GET /api/v1/orgs/o1/bots/b1/tools"] = { status: 200, body: { plugins: [plugin({}), connected] } };
+    api.routes["GET /api/v1/orgs/o1/connections"] = { status: 200, body: [account({})] };
+    api.routes["PUT /api/v1/orgs/o1/bots/b1/tools/gmail/triggers/new_email"] = {
+      status: 200,
+      body: { plugins: [plugin({}), { ...connected, triggers: [{ ...trigger, enabled: true, subscriberId: "u1" }] }] },
+    };
+    const { user } = await open();
+
+    const toggle = await screen.findByRole("switch", { name: "React to new email" });
+    expect(toggle).not.toBeChecked();
+    await user.click(toggle);
+    await vi.waitFor(() => expect(screen.getByRole("switch", { name: "React to new email" })).toBeChecked());
+    expect(api.sent.at(-1)).toEqual({ key: "PUT /api/v1/orgs/o1/bots/b1/tools/gmail/triggers/new_email", body: { enabled: true } });
+    expect(screen.getByText(/comes to your chat with/)).toBeInTheDocument();
+  });
+
+  it("hides the trigger until Gmail has an account, and shows why a trigger is paused", async () => {
+    const trigger = { name: "new_email", title: "React to new email", description: "", enabled: true, subscriberId: "u2", problem: "Paused: zara@example.com needs reconnecting first (Connect apps)." };
+    api.routes["GET /api/v1/orgs/o1/bots/b1/tools"] = {
+      status: 200,
+      body: { plugins: [{ ...gmail, triggers: [trigger] }, { ...gmail, pluginId: "gmail2", name: "Mail two", enabled: true, connectionId: "c1", triggers: [trigger] }] },
+    };
+    api.routes["GET /api/v1/orgs/o1/connections"] = { status: 200, body: [account({})] };
+    await open();
+
+    expect(within(await screen.findByRole("article", { name: "Gmail" })).queryByRole("switch", { name: "React to new email" })).toBeNull();
+    const two = screen.getByRole("article", { name: "Mail two" });
+    expect(within(two).getByRole("switch", { name: "React to new email" })).toBeChecked();
+    expect(within(two).getByText(/needs reconnecting/)).toBeInTheDocument();
+    expect(within(two).getByText(/Switched on by another member/)).toBeInTheDocument();
+  });
+
   it("shows the API's refusal", async () => {
     api.routes["GET /api/v1/orgs/o1/bots/b1/tools"] = { status: 200, body: { plugins: [gmail] } };
     api.routes["GET /api/v1/orgs/o1/connections"] = { status: 200, body: [account({})] };

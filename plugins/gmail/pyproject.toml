@@ -1,7 +1,7 @@
 [project]
 name = "botdesk-plugin-gmail"
 version = "0.1.0"
-description = "BotDesk Gmail plugin: connect a Google account, search and read its email."
+description = "BotDesk Gmail plugin: connect a Google account; search, read, organise, draft and send its email, and react to new mail."
 readme = "README.md"
 license = "MIT"
 license-files = ["LICENSE"]

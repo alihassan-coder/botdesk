@@ -1,0 +1,14 @@
+{
+  "id": "18f1a1",
+  "threadId": "18f1a0",
+  "labelIds": ["INBOX", "UNREAD", "CATEGORY_PERSONAL"],
+  "snippet": "Please find invoice 4471 attached.",
+  "payload": {
+    "headers": [
+      {"name": "From", "value": "Sara Lee <sara@acme.dev>"},
+      {"name": "To", "value": "ali@acme.dev"},
+      {"name": "Subject", "value": "Invoice 4471"},
+      {"name": "Date", "value": "Tue, 17 Nov 2026 08:01:00 -0800"}
+    ]
+  }
+}

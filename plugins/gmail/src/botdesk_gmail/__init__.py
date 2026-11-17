@@ -10,14 +10,17 @@
 - The account is the mailbox's address from `users.getProfile`, compared in lower case.
 - Slice 6.1: the read tools `search`, `read_thread` and `list_labels` (`tools.py`). Their results
   taint the run; email text is plain, capped and inside `<email>` blocks (`text.py`).
+- Slice 6.2: the write tools `add_labels`, `remove_labels`, `archive`, `create_draft`, `send` and
+  `trash` (`write_tools.py`), all needing `gmail.modify`.
+- Slice 6.3: the `new_email` trigger (`trigger.py`), polled every minute by BotDesk's job queue.
 """
 
 from botdesk_plugin_sdk import AccountIdentity, HttpClient, OAuth2Auth, PluginManifest
 
 from botdesk_gmail.api import GMAIL_API, GMAIL_HOST, GmailError
 from botdesk_gmail.tools import READ_SCOPE, TOOLS
-
-MODIFY_SCOPE = "https://www.googleapis.com/auth/gmail.modify"
+from botdesk_gmail.trigger import NEW_EMAIL
+from botdesk_gmail.write_tools import MODIFY_SCOPE, WRITE_TOOLS
 
 __all__ = ["GMAIL_API", "GMAIL_HOST", "GOOGLE", "MODIFY_SCOPE", "READ_SCOPE", "GmailError", "gmail_plugin"]
 
@@ -51,8 +54,9 @@ def gmail_plugin() -> PluginManifest:
         id="gmail",
         name="Gmail",
         version="0.1.0",
-        description="Search and read a connected Gmail account's email. Sending and organising come later.",
-        tools=TOOLS,
+        description="Search, read, label, archive, draft, send and trash email in a connected Gmail account.",
+        tools=TOOLS + WRITE_TOOLS,
         auth=GOOGLE,
         egress=(GMAIL_HOST,),
+        triggers=(NEW_EMAIL,),
     )

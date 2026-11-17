@@ -333,6 +333,44 @@ export interface ServerConnector {
   tools: PluginTool[];
 }
 
+/** One tool of an MCP server, as its snapshot pinned it. `name` is BotDesk's ("mcp-1a2b3c4d.search_issues"). */
+export interface McpTool {
+  name: string;
+  serverName: string;
+  title: string | null;
+  description: string | null;
+}
+
+/**
+ * A remote MCP server an owner or admin added (ADR 0012). It is the plugin `pluginId`: bots get
+ * its tools in their Tools tab. Its header key never comes back from the API.
+ */
+export interface McpServer {
+  id: ID;
+  pluginId: string;
+  name: string;
+  url: string;
+  authKind: "none" | "header";
+  authHeader: string | null;
+  status: "active" | "unreachable";
+  statusReason: string | null;
+  tools: McpTool[];
+  lastCheckedAt: string | null;
+}
+
+export interface McpServerList {
+  status: "loading" | "ready" | "error";
+  items: McpServer[];
+}
+
+/** Adding an MCP server: an API key is optional, sent once in the named header. */
+export interface McpServerInput {
+  name: string;
+  url: string;
+  apiKeyHeader?: string;
+  apiKeyValue?: string;
+}
+
 export interface ServerConnectorList {
   status: "loading" | "ready" | "error";
   items: ServerConnector[];
@@ -372,6 +410,19 @@ export interface BotToolPlugin {
   enabled: boolean;
   connectionId: ID | null;
   tools: PluginTool[];
+  /** Things in the app the bot can react to ("React to new email"). API mode only. */
+  triggers?: BotTrigger[];
+}
+
+/** One of a plugin's triggers for this bot. When on, its events come to the DM of whoever switched it on. */
+export interface BotTrigger {
+  name: string;
+  title: string;
+  description: string;
+  enabled: boolean;
+  subscriberId: ID | null;
+  /** Why the last check did nothing ("Paused: … needs reconnecting"), or null. */
+  problem: string | null;
 }
 
 export interface BotTools {

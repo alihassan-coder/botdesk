@@ -2,6 +2,24 @@
 
 A short history of BotDesk, newest first. For one checklist of what is done and what is next, see [ROADMAP.md](ROADMAP.md).
 
+## 2026-11-17: Gmail finished: write tools and "React to new email" (slices 6.2-6.4)
+
+[ADR 0011](adr/0011-gmail-plugin.md). Details: [backend guide](backend/README.md#gmail-tools-and-the-new-email-trigger), [owner's guide](self-hosting/google-oauth.md); manual test: [testing/gmail.md](testing/gmail.md).
+
+- **Write tools (6.2):** `gmail.add_labels`, `remove_labels`, `archive`, `create_draft` (write-external), `send` (external-send), `trash` (destructive), all on `gmail.modify`. Plain-text mail built with the standard `email` package; replies threaded (`threadId`, `In-Reply-To`, `References`); bare addresses only, at most 20 recipients, one-line subject, so header injection is refused before an approval card exists. Cards read "Send an email to sara@acme.dev (cc …; bcc …): “Subject”: start of the body". A send is one request, never retried.
+- **New-email trigger (6.3):** "React to new email" in a bot's Tools tab (`PUT /bots/{id}/tools/{plugin}/triggers/{trigger}`, table `trigger_subscriptions`, migration `e5a9c3f71d20`). The `poll_triggers` job (every minute) asks Gmail's history API for new inbox mail; each email posts "New email from …: …" in the subscriber's DM and starts a tainted run that reads it with `gmail.read_thread`. No backfill, own mail/promotions/social skipped, at most 10 a minute, an expired history id gives one "missed some new mail" note, a connection needing reconnect pauses it, one failing subscription never blocks the rest. SDK: `TriggerPollResult.notice`.
+- **Docs (6.4):** what bots can do with Gmail and how to switch on the trigger, and a step-by-step manual test.
+- **Later:** sending an existing draft by id (with its content on the card), HTML mail and attachments, label filters and a Gmail query per trigger, Pub/Sub push, a quarantined reader for email, the trigger's own security level.
+
+## 2026-11-17: MCP servers as bot tools (slice 7.2)
+
+[ADR 0012](adr/0012-mcp-servers.md), the lean version. Details: [backend guide](backend/README.md#mcp-servers); manual test: [testing/mcp.md](testing/mcp.md).
+
+- **API:** `mcp_servers` (migration `73107c948749`) and `/orgs/{id}/mcp-servers` (list for every member; add, refresh, remove for owners and admins). Adding connects through the SSRF guard (https, public addresses unless `ALLOW_PRIVATE_MCP_URLS=true`), lists the tools and saves a hash-pinned tool snapshot; an optional API key is sent in a named header and kept sealed. Each server is the plugin `mcp-<id>` with sanitised tool names, bindable per bot in the Tools tab.
+- **Safety:** every MCP tool is `external-send` with untrusted output (asks under Ask before acting; its result taints the run), annotations are ignored, calls are re-checked against the snapshot hash first ("This tool changed on the server; an admin must refresh it."), limited to 60 s and 256 KB of text; sampling and elicitation are refused.
+- **Web:** an MCP servers section on Connect apps with the Add server dialog, tool counts, Refresh and Remove; members read only; the demo says it needs the API.
+- **Later:** MCP OAuth (7.3), the review/drift screen with per-tool risk (7.4), the drift check at run start.
+
 ## 2026-11-16: bots hand off work, each bot's Tools, Gmail read, and reviews
 
 Built in parallel waves; every piece was independently reviewed and its findings fixed with tests before merging.

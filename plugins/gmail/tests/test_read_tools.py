@@ -57,7 +57,7 @@ def email_blocks(text: str) -> list[str]:
 
 def test_three_read_tools_where_mail_taints_the_run_and_all_need_only_read_access() -> None:
     manifest = validate_manifest(gmail_plugin())
-    tools = {tool.name: tool for tool in manifest.tools}
+    tools = {tool.name: tool for tool in manifest.tools if tool.risk == "read"}
     assert set(tools) == {"search", "read_thread", "list_labels"}
     for tool in tools.values():
         assert tool.risk == "read"

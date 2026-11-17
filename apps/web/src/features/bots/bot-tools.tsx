@@ -6,7 +6,7 @@ import { NativeSelect, NativeSelectOption } from "@/components/ui/native-select"
 import { Skeleton } from "@/components/ui/skeleton";
 import { Switch } from "@/components/ui/switch";
 import { actions, useAccountConnections, useBotTools, useCurrentUser } from "@/data/store";
-import type { AccountConnection, Bot, BotToolPlugin } from "@/data/types";
+import type { AccountConnection, Bot, BotToolPlugin, BotTrigger } from "@/data/types";
 import { ToolList } from "@/features/apps/tool-list";
 import { bindableConnections } from "@/lib/connections";
 
@@ -43,6 +43,12 @@ export function BotTools({ bot }: { bot: Bot }) {
     if (!result.ok) setError(result.error);
   }
 
+  async function switchTrigger(plugin: BotToolPlugin, trigger: BotTrigger, enabled: boolean) {
+    setError("");
+    const result = await actions.setBotTrigger(bot.id, plugin.pluginId, trigger.name, enabled);
+    if (!result.ok) setError(result.error);
+  }
+
   return (
     <div className="flex flex-col gap-3">
       <p className="text-xs text-muted-foreground">{bot.name} can use only the apps switched on here. Risky actions still wait for approval.</p>
@@ -54,6 +60,9 @@ export function BotTools({ bot }: { bot: Bot }) {
           plugin={plugin}
           choices={plugin.authType ? bindableConnections(accounts, plugin.pluginId, bot.id, me) : []}
           onChange={(patch) => void change(plugin, patch)}
+          botName={bot.name}
+          me={me}
+          onTrigger={(trigger, enabled) => void switchTrigger(plugin, trigger, enabled)}
         />
       ))}
     </div>
@@ -64,10 +73,16 @@ function PluginCard({
   plugin: p,
   choices,
   onChange,
+  botName,
+  me,
+  onTrigger,
 }: {
   plugin: BotToolPlugin;
   choices: AccountConnection[];
   onChange: (patch: Partial<Pick<BotToolPlugin, "enabled" | "connectionId">>) => void;
+  botName: string;
+  me: string;
+  onTrigger: (trigger: BotTrigger, enabled: boolean) => void;
 }) {
   // The account in use may be another member's (it isn't offered, but it's still shown).
   const current = p.connectionId && !choices.some((c) => c.id === p.connectionId) ? p.connectionId : null;
@@ -102,7 +117,29 @@ function PluginCard({
           )}
         </div>
       )}
+      {/* Triggers need the app on with an account: their runs read through it. */}
+      {p.enabled && p.connectionId && p.triggers?.map((t) => (
+        <TriggerRow key={t.name} id={`trigger-${p.pluginId}-${t.name}`} trigger={t} botName={botName} mine={t.subscriberId === me} onChange={(enabled) => onTrigger(t, enabled)} />
+      ))}
       {p.tools.length > 0 && <ToolList tools={p.tools.map((t) => ({ name: t.name, label: t.title, risk: t.risk }))} />}
     </article>
+  );
+}
+
+/** A plugin's trigger ("React to new email"): when on, each event comes to the DM of whoever switched it on, and the bot reads it there. */
+function TriggerRow({ id, trigger: t, botName, mine, onChange }: { id: string; trigger: BotTrigger; botName: string; mine: boolean; onChange: (enabled: boolean) => void }) {
+  return (
+    <div className="flex flex-col gap-1 rounded-lg bg-muted/50 p-2.5">
+      <div className="flex items-center justify-between gap-3">
+        <label htmlFor={id} className="text-sm font-medium">{t.title}</label>
+        <Switch id={id} checked={t.enabled} onCheckedChange={onChange} aria-label={t.title} />
+      </div>
+      <p className="text-xs text-muted-foreground">
+        {!t.enabled ? t.description
+        : mine ? `What it finds comes to your chat with ${botName}, checked about once a minute. Anything risky still asks you first.`
+        : "Switched on by another member: what it finds goes to their chat with this bot."}
+      </p>
+      {t.problem && <p role="status" className="text-xs text-destructive">{t.problem}</p>}
+    </div>
   );
 }

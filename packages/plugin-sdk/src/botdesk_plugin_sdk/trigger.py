@@ -1,8 +1,17 @@
 """Triggers: something in another app that starts a run ("a new email arrived").
 
-Declared in the manifest now so consent screens show them; BotDesk runs them as scheduled jobs
-on its job queue (ADR 0011, owner decision 2026-11-15). The poll handler's shape may still grow
-before the first trigger ships (roadmap slice 6.3).
+Declared in the manifest so consent screens show them; BotDesk polls each subscription from a
+scheduled job on its job queue (ADR 0011, owner decision 2026-11-15). The first trigger is
+Gmail's `new_email` (slice 6.3).
+
+    async def poll(ctx, cursor):          # ctx.http reaches the subscription's connection
+        if cursor is None:                # just switched on: remember "now", start nothing
+            return TriggerPollResult(events=(), cursor=current_position)
+        ...
+        return TriggerPollResult(events=new_things, cursor=next_position)
+
+BotDesk saves the returned cursor only after it has handled the events, and handles each
+`external_id` once.
 """
 
 from collections.abc import Awaitable, Callable
@@ -27,6 +36,9 @@ class TriggerPollResult:
 
     events: tuple[TriggerEvent, ...]
     cursor: str | None
+    # One line for the chat when something couldn't be handled event by event ("Some new mail
+    # was missed…", "12 more emails arrived…"). Shown to people, never starts a run.
+    notice: str | None = None
 
 
 TriggerPoll = Callable[[ToolContext, str | None], Awaitable[TriggerPollResult]]

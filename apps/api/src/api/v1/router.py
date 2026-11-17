@@ -10,6 +10,7 @@ from src.api.v1.routes import (
     connectors,
     health,
     invitations,
+    mcp_servers,
     memories,
     oauth,
     organizations,
@@ -38,3 +39,4 @@ api_router.include_router(oauth.router)
 api_router.include_router(routines.router)
 api_router.include_router(memories.router)
 api_router.include_router(usage.router)
+api_router.include_router(mcp_servers.router)

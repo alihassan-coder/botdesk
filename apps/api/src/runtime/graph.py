@@ -72,6 +72,7 @@ from src.runtime.token_batcher import BackgroundSender, TokenBatcher
 from src.runtime.tool_access import ToolAccessProvider
 from src.runtime.tool_pipeline import ToolCallRequest, finished_event
 from src.services import pricing, run_service, task_service, tool_execution_service, usage_service
+from src.services.mcp_server_service import McpRuntime
 from src.services.task_service import Refused
 from src.services.tool_execution_service import RunRef
 
@@ -166,6 +167,8 @@ class RunDeps:
     start_runs: Callable[[AsyncSession, list[Run]], Awaitable[None]]
     # Tools' `ctx.http` and `ctx.connection` (ADR 0010). None: tools get no web access.
     tool_access: ToolAccessProvider | None = None
+    # Talking to the organization's MCP servers (ADR 0012). None: MCP tools aren't offered.
+    mcp: McpRuntime | None = None
 
     @property
     def run_ref(self) -> RunRef:
@@ -176,7 +179,7 @@ async def _toolset(deps: RunDeps) -> toolset.Toolset:
     """The tools this run may use now, from the bot's bindings. Read fresh in every node that
     uses tools, so a tool unbound (or an account disconnected) mid-run is refused on resume."""
     async with deps.sessionmaker() as db:
-        return await toolset.load(db, deps.registry, deps.run_id)
+        return await toolset.load(db, deps.registry, deps.run_id, deps.mcp)
 
 
 def _memory_scope(state: RunState, deps: RunDeps) -> MemoryScope:

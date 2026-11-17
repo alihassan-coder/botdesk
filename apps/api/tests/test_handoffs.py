@@ -30,6 +30,7 @@ from src.core.database import utcnow
 from src.jobs.queue import JobEnv
 from src.jobs.tasks import expire_tasks
 from src.models import Message, Run, RunEvent, Task, ToolExecution, UsageRecord
+from src.runtime import toolset
 from src.runtime.chat_model import StandInModel
 from src.runtime.graph import build_graph
 from src.runtime.memory import MemoryScope, NoMemory
@@ -773,3 +774,149 @@ async def test_a_handoff_message_is_saved_once_per_pause(org: Org) -> None:
     assert [p["type"] for p in first.parts] == ["text", "handoff"] and first.parts[0]["text"] == "First."
     assert [p["type"] for p in second.parts] == ["text", "handoff"] and second.parts[0]["text"] == "Second."
     assert (await org.run(parent)).status == "succeeded"
+
+
+# A bot removed mid-wait
+
+
+async def _delete_bot(org: Org, handle: str) -> list[uuid.UUID]:
+    """Remove a bot (an admin, through the API); the runs that were stopped on the way."""
+    stopped: list[uuid.UUID] = []
+    stop = org.runs.stop
+
+    async def recording(run_id: uuid.UUID) -> None:
+        stopped.append(run_id)
+        await stop(run_id)
+
+    org.runs.stop = recording
+    try:
+        response = await org.client.delete(f"{org.path}/bots/{org.bots[handle]}")
+        assert response.status_code == 204, response.text
+        await org.runs.wait_until_idle()
+    finally:
+        org.runs.stop = stop
+    return stopped
+
+
+async def test_removing_the_parents_bot_mid_wait_stops_its_children(org: Org) -> None:
+    thread = await org.group("chief", "sales", "research")
+    org.hold_children()
+    org.model.plans["Chief"] = TWO_TASKS
+    parent = await org.send(thread, "@chief plan tonight's outreach")
+    assert (await org.run(parent)).status == "waiting_handoff"
+    children = list(org.held)
+
+    await _delete_bot(org, "chief")
+
+    # The group stays; Chief's runs and tasks go with it, and its children don't carry on.
+    assert [(await org.run(child.id)).status for child in children] == ["cancelled", "cancelled"]
+    for child in children:
+        await org.release(child.id)  # their jobs, had they been queued, do nothing now
+    authors = [(m["author"]["type"], m["author"]["id"]) for m in await org.messages(thread)]
+    assert authors == [("user", str(org.user_id)), ("bot", str(org.bots["chief"]))]  # no orphan replies
+    async with org.db() as db:
+        assert list(await db.scalars(select(Task))) == []
+
+
+async def test_removing_a_teammate_mid_wait_fails_its_task_and_the_parent_carries_on(org: Org) -> None:
+    thread = await org.dm("chief")
+    parent, (_sales, research) = await _waiting_with_held_children(org, thread)
+
+    await _delete_bot(org, "sales")
+
+    sales_task, research_task = await org.tasks(parent)
+    assert (sales_task.status, sales_task.error) == ("failed", "Sales was removed before it finished.")
+    assert (sales_task.to_bot_id, sales_task.child_run_id) == (None, None)  # the history stays
+    assert research_task.status == "queued"
+    assert (await org.run(parent)).status == "waiting_handoff"  # Research is still open
+    await org.release(research.id)
+
+    assert (await org.run(parent)).status == "succeeded"
+    results = org.model.prompts["Chief"][-1][-1].text
+    assert 'bot="Sales (@sales)" status="failed" error="Sales was removed before it finished."' in results
+    assert 'bot="Research (@research)" status="done"' in results
+    card = next(p for p in (await org.messages(thread))[1]["parts"] if p.get("taskId") == str(sales_task.id))
+    assert (card["status"], card["error"]) == ("failed", "Sales was removed before it finished.")
+
+
+async def test_removing_the_bot_whose_dm_holds_the_wait_stops_everything_in_that_chat(org: Org) -> None:
+    """Deleting a bot deletes its DMs: the waiting parent and its children (guests there) go too,
+    so they're stopped first rather than left running into a chat that no longer exists."""
+    thread = await org.dm("chief")
+    parent, children = await _waiting_with_held_children(org, thread)
+
+    stopped = await _delete_bot(org, "chief")
+
+    assert {parent, *(child.id for child in children)} <= set(stopped)
+    assert (await org.client.get(f"{thread}/messages")).status_code == 404
+    async with org.db() as db:
+        assert list(await db.scalars(select(Run))) == [] and list(await db.scalars(select(Task))) == []
+
+
+async def test_a_guest_hands_back_to_the_dms_own_bot_which_may_use_the_members_account_but_stays_capped(
+    org: Org,
+) -> None:
+    """Ali's DM with Sales; Chief, pulled in as a guest, reads the inbox (tainted) and hands the
+    reply to Sales. Sales's child works in Ali's own DM with Sales for Ali, so Ali's member
+    connection is usable there, but the child is still tainted and never looser than Chief."""
+    mine = await org.client.post(
+        f"{org.path}/connections",
+        json={"connectorId": "demo", "apiKey": "demo-key-TOPSECRET-0000000000001", "ownerKind": "member"},
+    )
+    assert mine.status_code == 201, mine.text
+    bound = await org.client.put(
+        f"{org.path}/bots/{org.bots['sales']}/tools",
+        json={"plugins": [{"pluginId": "demo", "enabled": True, "connectionId": mine.json()["id"]}]},
+    )
+    assert bound.status_code == 200, bound.text
+    await org.client.patch(f"{org.path}/bots/{org.bots['chief']}", json={"securityLevel": "read-only"})
+    org.model.plans["Chief"] = [("", [("demo.read_inbox", {})]), ("", [handoff("sales", "Reply to it")])]
+    org.model.plans["Sales"] = [("", [("demo.send_email", {"to": "sara@acme.dev", "subject": "Hi"})])]
+    thread = await org.dm("sales")
+
+    guest = await org.send(thread, "@chief read my inbox and get Sales to reply")
+
+    assert (await org.run(guest)).bot_id == org.bots["chief"]
+    (task,) = await org.tasks(guest)
+    child = await org.run(task.child_run_id)  # type: ignore[arg-type]
+    assert (child.bot_id, child.requester_id) == (org.bots["sales"], org.user_id)
+    async with org.db() as db:
+        tools = await toolset.load(db, org.runs.registry, child.id)
+        context = await run_service.run_context(db, child.id)
+        send = await db.scalar(select(ToolExecution).where(ToolExecution.run_id == child.id))
+    assert tools.connection_ids == {"demo": uuid.UUID(mine.json()["id"])}  # Ali's own DM with Sales
+    assert child.tainted is True  # Chief read the inbox before handing off
+    assert context.security_level == "read-only"  # Sales is autonomous, Chief read only
+    assert send is not None and (send.tool_name, send.decision) == ("demo.send_email", "deny")
+    assert (await org.run(guest)).status == "succeeded"
+
+
+async def test_a_grandchild_out_of_budget_fails_its_task_and_each_parent_carries_on(org: Org) -> None:
+    await org.client.patch(f"{org.path}/bots/{org.bots['research']}", json={"monthlyBudgetUsd": 1})
+    async with org.db() as db:
+        db.add(
+            UsageRecord(
+                org_id=org.org_id,
+                bot_id=org.bots["research"],
+                provider="anthropic",
+                model_id="anthropic:claude-sonnet-4-5",
+                input_tokens=1,
+                output_tokens=1,
+                cost_usd=5.0,
+                created_at=utcnow(),
+            )
+        )
+        await db.commit()
+    org.model.plans["Chief"] = [("", [handoff("sales", "Plan the outreach")])]
+    org.model.plans["Sales"] = [("", [handoff("research", "Find accounts")])]
+    thread = await org.dm("chief")
+
+    parent = await org.send(thread, "Go")
+
+    (chief_task,) = await org.tasks(parent)
+    (sales_task,) = await org.tasks(chief_task.child_run_id)  # type: ignore[arg-type]
+    assert (sales_task.status, sales_task.error_code) == ("failed", "budget")
+    grandchild = await org.run(sales_task.child_run_id)  # type: ignore[arg-type]
+    assert (grandchild.hop, grandchild.status) == (2, "failed")
+    assert f'bot="Research (@research)" status="failed" error="{sales_task.error}"' in org.prompt_text("Sales")
+    assert chief_task.status == "done" and (await org.run(parent)).status == "succeeded"

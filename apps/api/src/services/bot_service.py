@@ -4,12 +4,13 @@ import uuid
 from collections.abc import Iterable
 
 from botdesk_plugin_sdk import PluginManifest
-from sqlalchemy import select, update
+from sqlalchemy import or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.core.errors import NotFound
 from src.core.handles import handle_prefix, make_handle
-from src.models import Bot, Organization, Routine
+from src.models import Bot, Organization, Routine, Run, Thread
+from src.models.run import FINISHED_STATUSES
 from src.schemas.bot import BotIn, BotUpdate
 from src.services import binding_service
 
@@ -67,8 +68,22 @@ async def update_bot(db: AsyncSession, bot: Bot, changes: BotUpdate) -> Bot:
     return bot
 
 
+async def runs_going_with(db: AsyncSession, bot_id: uuid.UUID) -> list[uuid.UUID]:
+    """The live runs that removing this bot would delete: its own, and every run in its DMs
+    (guests' too). The caller stops them first, so none carries on into rows that are gone."""
+    in_its_dms = select(Thread.id).where(Thread.bot_id == bot_id)
+    query = (
+        select(Run.id)
+        .where(Run.status.not_in(FINISHED_STATUSES), or_(Run.bot_id == bot_id, Run.thread_id.in_(in_its_dms)))
+        .order_by(Run.created_at, Run.id)
+    )
+    return list(await db.scalars(query))
+
+
 async def delete_bot(db: AsyncSession, bot: Bot) -> None:
-    """Its DMs and runs go with it. Its routines stay, switched off, saying why."""
+    """Its DMs and runs go with it (stop them first: `runs_going_with`, and end its handoffs with
+    `task_service.bot_removed`). Tasks it was part of stay, without it. Its routines stay,
+    switched off, saying why."""
     await db.execute(
         update(Routine)
         .where(Routine.bot_id == bot.id)

@@ -10,7 +10,7 @@ request a tool makes through `ctx.http`. The plugin never sees it.
 """
 
 import uuid
-from collections.abc import Awaitable, Callable, Mapping
+from collections.abc import Awaitable, Callable, Iterable, Mapping
 from dataclasses import dataclass, field
 from typing import Literal
 
@@ -48,7 +48,11 @@ class OAuth2Auth:
     """Sign in with an OAuth 2 provider (authorization code with PKCE).
 
     `scope_sets` are the access levels people choose between when connecting ("read", "full"),
-    each the scopes to ask for. A tool's `scopes` must come from these sets."""
+    each the scopes to ask for. A tool's `scopes` must come from these sets.
+
+    `implied_scopes` says which scopes a broader one already gives, when the provider works that
+    way: Google's `gmail.modify` includes `gmail.readonly`, so `{MODIFY: (READONLY,)}` lets a tool
+    that needs `gmail.readonly` run on a connection granted only `gmail.modify`."""
 
     provider: str  # "google": which client id/secret the server uses
     authorize_url: str
@@ -57,6 +61,14 @@ class OAuth2Auth:
     revoke_url: str | None = None
     extra_authorize_params: Mapping[str, str] = field(default_factory=dict)
     account: AccountHandler | None = None
+    implied_scopes: Mapping[str, tuple[str, ...]] = field(default_factory=dict)
+
+    def effective_scopes(self, granted: Iterable[str]) -> frozenset[str]:
+        """What a connection granted `granted` can do: those scopes and the ones they imply."""
+        scopes = set(granted)
+        for scope in list(scopes):
+            scopes.update(self.implied_scopes.get(scope, ()))
+        return frozenset(scopes)
 
 
 Auth = ApiKeyAuth | OAuth2Auth

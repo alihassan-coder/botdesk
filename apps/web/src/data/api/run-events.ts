@@ -188,6 +188,8 @@ function reduce(chat: ChatSlice, event: ApiRunEvent): ChatSlice {
       return pauseRun(chat, event.runId, event.threadId, run?.botId, { status: "needs_attention", error: event.data.error });
 
     case "run_waiting_handoff":
+      // Already applied (a replay): the run may have resumed since, so don't pause it again.
+      if (run?.lastEventId !== undefined && event.id <= run.lastEventId) return chat;
       return pauseRun(chat, event.runId, event.threadId, run?.botId, { status: "waiting_handoff", error: undefined, taskIds: event.data.taskIds });
 
     case "task_updated": {

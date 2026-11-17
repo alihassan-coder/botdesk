@@ -10,9 +10,10 @@ from src.api.deps import Access
 from src.core.config import Settings
 from src.core.errors import Forbidden
 from src.plugins.registry import ToolRegistry
+from src.runtime.runner import RunManager
 from src.schemas.bot import BotIn, BotOut, BotUpdate
 from src.schemas.bot_tool import BotToolsIn, BotToolsOut
-from src.services import binding_service, bot_service, provider_service
+from src.services import binding_service, bot_service, provider_service, task_service
 from src.services.connection_service import Actor
 
 
@@ -61,8 +62,26 @@ async def update_bot(
     return BotOut.model_validate(bot)
 
 
-async def delete_bot(db: AsyncSession, access: Access, bot_id: uuid.UUID) -> None:
+async def delete_bot(db: AsyncSession, access: Access, runs: RunManager, bot_id: uuid.UUID) -> None:
+    """Nothing may wait for, or keep working for, a bot that's gone: its handoffs end first (a task
+    handed to it fails and its parent carries on; one handed by it is cancelled), each parent in a
+    short transaction of its own. Then the runs that go with it (its own, and all in its DMs) and
+    the children of those tasks are stopped, and only then is it deleted."""
     access.require_admin()
+    await bot_service.get_bot(db, access.org.id, bot_id)  # 404 for another organization's bot
+    aftermath = task_service.Aftermath()
+    for parent_id in await task_service.parents_with_open_tasks_of(db, bot_id):
+        ended = await task_service.bot_removed(db, bot_id, parent_id)
+        for parent in ended.resume:
+            await runs.resume(db, parent)
+        await db.commit()
+        aftermath += ended
+    going = await bot_service.runs_going_with(db, bot_id)
+    await db.commit()  # end the read before stopping: each stop has its own transaction
+    for parent in aftermath.resume:
+        runs.bus.announce(parent.thread_id)
+    for run_id in dict.fromkeys([*aftermath.stop, *going]):
+        await runs.stop(run_id)  # announces each run's chat (a task's child works in its parent's)
     await bot_service.delete_bot(db, await bot_service.get_bot(db, access.org.id, bot_id))
     await db.commit()
 

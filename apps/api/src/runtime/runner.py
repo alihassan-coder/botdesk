@@ -66,6 +66,7 @@ from src.services.oauth_flow import OAuth
 logger = logging.getLogger(__name__)
 
 RUN_BOT = "run_bot"  # the job that moves one run forward (src/jobs/tasks.py)
+RECONCILE_BATCH = 100  # parents `reconcile_tasks` looks at per pass
 SOMETHING_WENT_WRONG = "Something went wrong while replying. Try again."
 
 
@@ -120,8 +121,10 @@ class RunManager:
         # Tests set `tool_access.transport` to answer tools' requests without a network.
         vault = CredentialVault.from_settings(settings)
         # OAuth tokens are refreshed just before a tool uses them (services/oauth_flow.py).
+        oauth = OAuth(settings, vault, self.registry)
+        # In tests, GMAIL_API_BASE_URL points tool calls at a fake Gmail (ignored unless ENVIRONMENT=test).
         self.tool_access = ToolAccessProvider(
-            sessionmaker, self.registry, vault, oauth=OAuth(settings, vault, self.registry)
+            sessionmaker, self.registry, vault, oauth=oauth, rebase=oauth.test_hosts()
         )
         resolver = ModelResolver(settings, sessionmaker, secrets, catalog)
         # (org id, model id) → the chat model, with the org's keys. Tests swap in a fake model here.
@@ -193,19 +196,27 @@ class RunManager:
             await self.stop(child_id)
 
     async def reconcile_tasks(self) -> None:
-        """The handoffs' safety net (recovery): tasks whose child already ended are ended, the open
-        tasks of runs that already ended are cancelled, and parents whose tasks have all ended
-        resume (`task_service.reconcile`)."""
+        """The handoffs' safety net (recovery, every minute): tasks whose child already ended are
+        ended, the open tasks of runs that already ended are cancelled, children still going after
+        their task ended are stopped, and parents whose tasks have all ended resume. One short
+        transaction per parent, in a stable order and at most `RECONCILE_BATCH` per pass, so passes
+        on several workers (and `expire_tasks`) never hold many locks at once."""
         async with self.sessionmaker() as db:
-            aftermath = await task_service.reconcile(db)
-            for parent in aftermath.resume:
-                await self.resume(db, parent)
-            threads = {run.thread_id for run in aftermath.resume}
-            await db.commit()
-        for thread_id in threads:
-            self.bus.announce(thread_id)
-        for child_id in aftermath.stop:
-            await self.stop(child_id)
+            parents = await task_service.to_reconcile(db, limit=RECONCILE_BATCH)
+        for parent_id in parents:
+            try:
+                async with self.sessionmaker() as db:
+                    aftermath = await task_service.reconcile(db, parent_id)
+                    for parent in aftermath.resume:
+                        await self.resume(db, parent)
+                    parent_run = await db.get(Run, parent_id)  # already loaded by `reconcile`
+                    await db.commit()
+                if parent_run is not None:
+                    self.bus.announce(parent_run.thread_id)
+                for child_id in aftermath.stop:
+                    await self.stop(child_id)
+            except Exception:
+                logger.exception("Couldn't reconcile the tasks of run %s; the next pass tries again.", parent_id)
 
     async def stop_now(self, run_id: uuid.UUID) -> None:
         """Stop a running run straight away, not at its next step (its Stop flag is already

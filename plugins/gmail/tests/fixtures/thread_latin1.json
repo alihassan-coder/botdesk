@@ -1,0 +1,80 @@
+{
+  "id": "18f0e0",
+  "messages": [
+    {
+      "id": "18f0e1",
+      "threadId": "18f0e0",
+      "labelIds": [
+        "INBOX",
+        "UNREAD"
+      ],
+      "snippet": "",
+      "historyId": "48213",
+      "internalDate": "1762708321000",
+      "sizeEstimate": 4120,
+      "payload": {
+        "partId": "0",
+        "mimeType": "text/plain",
+        "filename": "",
+        "headers": [
+          {
+            "name": "Delivered-To",
+            "value": "ali@acme.dev"
+          },
+          {
+            "name": "Received",
+            "value": "by 2002:a05:6a10:1234 with SMTP id abc; Mon, 9 Nov 2026 09:12:01 -0800 (PST)"
+          },
+          {
+            "name": "Authentication-Results",
+            "value": "mx.google.com; dkim=pass header.i=@acme.dev; spf=pass"
+          },
+          {
+            "name": "DKIM-Signature",
+            "value": "v=1; a=rsa-sha256; d=acme.dev; s=google; b=AbCdEf0123"
+          },
+          {
+            "name": "X-Google-Smtp-Source",
+            "value": "AGHT+IFakeFakeFake"
+          },
+          {
+            "name": "Return-Path",
+            "value": "<sara@acme.dev>"
+          },
+          {
+            "name": "MIME-Version",
+            "value": "1.0"
+          },
+          {
+            "name": "From",
+            "value": "Zoë <zoe@example.fr>"
+          },
+          {
+            "name": "To",
+            "value": "ali@acme.dev"
+          },
+          {
+            "name": "Date",
+            "value": "Fri, 13 Nov 2026 09:00:00 +0100"
+          },
+          {
+            "name": "Subject",
+            "value": "Réunion"
+          },
+          {
+            "name": "Message-Id",
+            "value": "<l1@example.fr>"
+          },
+          {
+            "name": "Content-Type",
+            "value": "text/plain; charset=\"iso-8859-1\""
+          }
+        ],
+        "body": {
+          "size": 38,
+          "data": "Uul1bmlvbiDgIDEwaCwgZOlq4CBwcul2dWUuIMdhIG1hcmNoZT8"
+        }
+      }
+    }
+  ]
+}

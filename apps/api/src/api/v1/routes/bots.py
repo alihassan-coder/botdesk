@@ -56,9 +56,9 @@ async def update_bot(
 
 
 @router.delete("/{bot_id}", status_code=status.HTTP_204_NO_CONTENT)
-async def delete_bot(bot_id: uuid.UUID, access: OrgAccess, db: Db) -> None:
+async def delete_bot(bot_id: uuid.UUID, access: OrgAccess, db: Db, runs: Runs) -> None:
     """Remove a bot. Owners and admins only."""
-    await bot_controller.delete_bot(db, access, bot_id)
+    await bot_controller.delete_bot(db, access, runs, bot_id)
 
 
 @router.get("/{bot_id}/tools")

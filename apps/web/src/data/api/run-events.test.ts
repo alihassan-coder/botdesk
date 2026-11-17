@@ -453,6 +453,31 @@ describe("handoffs: cards that move on, a parent that waits, then a new answer",
     expect(chat.messages.map((m) => m.id)).toEqual(["m9"]);
   });
 
+  it("a run_waiting_handoff replayed after run_resumed doesn't pause the run again", () => {
+    const pausedAt = { ...waiting("k1"), id: 20_000 };
+    const resumedAt = { ...resumedAfterTasks(), id: 20_001 };
+    const chat = [pausedAt, resumedAt, pausedAt].reduce(applyRunEvent, play(started, delta("I'll ask Sales.")));
+    expect(chat.runs).toMatchObject([{ id: "r1", status: "running", taskIds: undefined }]);
+    expect(chat.messages.map((m) => [m.id, m.status])).toEqual([["m1", "complete"], ["typing-r1", "streaming"]]);
+  });
+
+  it("a chat reloaded mid-wait: an update before the saves still ends with the card done and the new answer", () => {
+    const loaded = { ...empty, messages: [toMessage(handoffMessage(card("k1", { status: "working" })))] };
+    const opened = withActiveRuns(loaded, "t1", [apiRun({ status: "waiting_handoff", replyMessageId: null })]);
+    const reply = apiMessage("m7", "Three drafts are ready.", { type: "bot", id: "b2" }, "2026-11-12T09:00:05Z");
+    const answer = apiMessage("m9", "Here's the plan.", { type: "bot", id: "b1" }, "2026-11-12T09:00:07Z");
+    const chat = [
+      updated(apiTask("k1", { status: "done", resultMessageId: "m7", resultPreview: "Three drafts are ready." })),
+      event({ kind: "message_saved", runId: "c-k1", data: { message: reply } }),
+      saved(handoffMessage(card("k1", { status: "working" }))), // the parent's older save, arriving late
+      resumedAfterTasks(),
+      event({ kind: "message_saved", data: { message: answer } }),
+    ].reduce(applyRunEvent, opened);
+    expect(cardsOf(chat)).toEqual([expect.objectContaining({ status: "done", resultMessageId: "m7" })]);
+    expect(chat.messages.map((m) => [m.id, m.status])).toEqual([["m1", "complete"], ["m7", "complete"], ["m9", "complete"]]);
+    expect(chat.runs).toMatchObject([{ id: "r1", status: "running" }]);
+  });
+
   it("withActiveRuns: a waiting_handoff run is paused, with no thinking dots", () => {
     const chat = withActiveRuns(empty, "t1", [apiRun({ status: "waiting_handoff" })]);
     expect(chat.runs).toEqual([{ id: "r1", threadId: "t1", botId: "b1", status: "waiting_handoff", error: undefined }]);

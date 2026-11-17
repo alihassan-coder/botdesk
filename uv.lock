@@ -348,6 +348,7 @@ version = "0.1.0"
 source = { editable = "plugins/gmail" }
 dependencies = [
     { name = "botdesk-plugin-sdk" },
+    { name = "pydantic" },
 ]
 
 [package.dev-dependencies]
@@ -359,7 +360,10 @@ dev = [
 ]
 
 [package.metadata]
-requires-dist = [{ name = "botdesk-plugin-sdk", editable = "packages/plugin-sdk" }]
+requires-dist = [
+    { name = "botdesk-plugin-sdk", editable = "packages/plugin-sdk" },
+    { name = "pydantic", specifier = ">=2.11" },
+]
 
 [package.metadata.requires-dev]
 dev = [

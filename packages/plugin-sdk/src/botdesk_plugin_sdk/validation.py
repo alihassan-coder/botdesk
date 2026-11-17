@@ -164,6 +164,12 @@ def _oauth_problems(auth: OAuth2Auth) -> list[str]:
     for level, scopes in auth.scope_sets.items():
         if not isinstance(scopes, tuple) or not scopes or not all(isinstance(s, str) and s for s in scopes):
             problems.append(f"auth scope set {level!r} must be a non-empty tuple of scopes")
+    known = {scope for scopes in auth.scope_sets.values() if isinstance(scopes, tuple) for scope in scopes}
+    for scope, implied in auth.implied_scopes.items():
+        if not isinstance(implied, tuple):
+            problems.append(f"auth implied scopes of {scope!r} must be a tuple of scopes")
+            continue
+        problems += [f"auth implied scope {s!r} is not in any scope set" for s in (scope, *implied) if s not in known]
     if auth.account is not None and not inspect.iscoroutinefunction(auth.account):
         problems.append("auth account must be an async function")
     return problems

@@ -146,6 +146,16 @@ def test_a_tool_whose_scopes_werent_granted_is_dropped(registry: ToolRegistry) -
     assert _names(registry, _mail(read_only)) == {"mail.search", "mail.labels"}
 
 
+def test_a_scope_the_plugin_says_a_granted_one_implies_counts_as_granted() -> None:
+    # Like Google's gmail.modify, which includes gmail.readonly.
+    auth = replace(MAIL.auth, implied_scopes={"mail.send": ("mail.read",)})  # type: ignore[type-var]
+    registry = ToolRegistry()
+    registry.register(replace(MAIL, auth=auth))
+    send_only = _connection("org", scopes=("mail.send",))
+    assert _names(registry, _mail(send_only)) == ALL_MAIL
+    assert _names(registry, _mail(_connection("org", scopes=("openid",)))) == {"mail.labels"}
+
+
 def test_a_binding_without_a_connection_keeps_its_tools_they_fail_with_connect_it_first(
     registry: ToolRegistry,
 ) -> None:

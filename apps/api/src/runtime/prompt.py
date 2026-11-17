@@ -97,11 +97,14 @@ def handoff_prompt(task: TaskBrief) -> str:
 
 
 def _escape_result(text: str) -> str:
-    return text.replace(TASK_RESULT_CLOSE, "&lt;/task-result>").replace(TASK_RESULT_OPEN, "&lt;task-result")
+    """A child's reply inside its `<task-result>`: every `<` is escaped, so it can't close its
+    wrapper (or `</task-results>`) or open a tag of its own."""
+    return text.replace("<", "&lt;")
 
 
 def _attribute(text: str) -> str:
-    return text.replace('"', "'").replace("\n", " ")
+    """Text inside an attribute's quotes: it can't end the quotes or the tag, or start a tag."""
+    return text.replace("<", "&lt;").replace(">", "&gt;").replace('"', "'").replace("\n", " ")
 
 
 def results_text(tasks: list[dict[str, Any]]) -> str:

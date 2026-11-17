@@ -17,10 +17,9 @@ def _auth() -> OAuth2Auth:
     return auth
 
 
-def test_the_manifest_is_valid_with_no_tools_yet() -> None:
+def test_the_manifest_is_valid() -> None:
     manifest = validate_manifest(gmail_plugin())
     assert manifest.id == "gmail"
-    assert manifest.tools == ()
     assert manifest.egress == ("gmail.googleapis.com",)
 
 

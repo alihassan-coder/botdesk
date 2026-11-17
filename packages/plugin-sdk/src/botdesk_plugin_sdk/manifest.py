@@ -109,6 +109,7 @@ def auth_json(auth: Auth | None) -> dict[str, Any] | None:
             "revokeUrl": auth.revoke_url,
             "scopeSets": {name: list(scopes) for name, scopes in auth.scope_sets.items()},
             "extraAuthorizeParams": dict(auth.extra_authorize_params),
+            "impliedScopes": {scope: list(implied) for scope, implied in auth.implied_scopes.items()},
         }
     return None
 

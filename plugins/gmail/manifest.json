@@ -6,6 +6,11 @@
       "include_granted_scopes": "true",
       "prompt": "consent"
     },
+    "impliedScopes": {
+      "https://www.googleapis.com/auth/gmail.modify": [
+        "https://www.googleapis.com/auth/gmail.readonly"
+      ]
+    },
     "provider": "google",
     "revokeUrl": "https://oauth2.googleapis.com/revoke",
     "scopeSets": {
@@ -20,7 +25,7 @@
     "type": "oauth2"
   },
   "botSettingsSchema": null,
-  "description": "Connect a Gmail account. Tools that read and send its email come in a later release.",
+  "description": "Search and read a connected Gmail account's email. Sending and organising come later.",
   "egress": [
     "gmail.googleapis.com"
   ],
@@ -29,7 +34,89 @@
   "name": "Gmail",
   "runtime": "builtin",
   "settingsSchema": null,
-  "tools": [],
+  "tools": [
+    {
+      "description": "List the connected Gmail mailbox's labels (system ones such as INBOX, and the user's own).",
+      "egress": "fixed",
+      "idempotent": true,
+      "inputSchema": {
+        "description": "The args model for a tool that takes no arguments.",
+        "properties": {},
+        "title": "NoArgs",
+        "type": "object"
+      },
+      "name": "list_labels",
+      "risk": "read",
+      "scopes": [
+        "https://www.googleapis.com/auth/gmail.readonly"
+      ],
+      "title": "List email labels",
+      "untrustedOutput": false
+    },
+    {
+      "description": "Read every message of one Gmail thread as plain text, with its main headers and its attachments' names (attachments themselves aren't read). Long threads are cut, oldest messages first.",
+      "egress": "fixed",
+      "idempotent": true,
+      "inputSchema": {
+        "properties": {
+          "thread_id": {
+            "description": "The thread's id (`threadId` from gmail.search).",
+            "pattern": "^[A-Za-z0-9_-]{1,64}$",
+            "title": "Thread Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "thread_id"
+        ],
+        "title": "ThreadArgs",
+        "type": "object"
+      },
+      "name": "read_thread",
+      "risk": "read",
+      "scopes": [
+        "https://www.googleapis.com/auth/gmail.readonly"
+      ],
+      "title": "Read an email thread",
+      "untrustedOutput": true
+    },
+    {
+      "description": "Search the connected Gmail mailbox with a Gmail query. Returns up to 25 messages: id, threadId, from, to, subject, date, labels and a short snippet. Use gmail.read_thread with a threadId to read the full conversation.",
+      "egress": "fixed",
+      "idempotent": true,
+      "inputSchema": {
+        "properties": {
+          "max_results": {
+            "default": 10,
+            "description": "How many messages, 1-25.",
+            "maximum": 25,
+            "minimum": 1,
+            "title": "Max Results",
+            "type": "integer"
+          },
+          "query": {
+            "description": "A Gmail search query, as typed in Gmail's search box: from:sara@acme.dev, to:me, subject:invoice, \"exact words\", newer_than:7d, after:2026/11/01, is:unread, label:Invoices, has:attachment, in:inbox. Combine with spaces (AND) or OR.",
+            "maxLength": 500,
+            "minLength": 1,
+            "title": "Query",
+            "type": "string"
+          }
+        },
+        "required": [
+          "query"
+        ],
+        "title": "SearchArgs",
+        "type": "object"
+      },
+      "name": "search",
+      "risk": "read",
+      "scopes": [
+        "https://www.googleapis.com/auth/gmail.readonly"
+      ],
+      "title": "Search email",
+      "untrustedOutput": true
+    }
+  ],
   "triggers": [],
   "version": "0.1.0"
 }

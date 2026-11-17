@@ -1,0 +1,40 @@
+{
+  "history": [
+    {
+      "id": "48301",
+      "messages": [{"id": "18f1a1", "threadId": "18f1a0"}],
+      "messagesAdded": [
+        {"message": {"id": "18f1a1", "threadId": "18f1a0", "labelIds": ["INBOX", "UNREAD", "CATEGORY_PERSONAL"]}}
+      ]
+    },
+    {
+      "id": "48302",
+      "messages": [{"id": "18f1b1", "threadId": "18f1b0"}],
+      "messagesAdded": [
+        {"message": {"id": "18f1b1", "threadId": "18f1b0", "labelIds": ["SENT", "INBOX"]}}
+      ]
+    },
+    {
+      "id": "48303",
+      "messages": [{"id": "18f1c1", "threadId": "18f1c0"}],
+      "messagesAdded": [
+        {"message": {"id": "18f1c1", "threadId": "18f1c0", "labelIds": ["INBOX", "UNREAD", "CATEGORY_PROMOTIONS"]}}
+      ]
+    },
+    {
+      "id": "48304",
+      "messages": [{"id": "18f1d1", "threadId": "18f1d0"}],
+      "messagesAdded": [
+        {"message": {"id": "18f1d1", "threadId": "18f1d0", "labelIds": ["DRAFT"]}}
+      ]
+    },
+    {
+      "id": "48305",
+      "messages": [{"id": "18f1a1", "threadId": "18f1a0"}],
+      "messagesAdded": [
+        {"message": {"id": "18f1a1", "threadId": "18f1a0", "labelIds": ["INBOX", "UNREAD", "CATEGORY_PERSONAL"]}}
+      ]
+    }
+  ],
+  "historyId": "48310"
+}

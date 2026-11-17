@@ -12,6 +12,7 @@ from datetime import timedelta
 from typing import Any
 
 from src.models import Run
+from src.models.bot import SecurityLevel
 from src.runtime import tool_pipeline, toolset
 from src.runtime.reporter import RunReporter
 from src.runtime.runner import RunManager
@@ -132,3 +133,103 @@ async def test_gmail_api_base_url_sends_tool_calls_to_a_fake_gmail_in_tests_only
         await _call(team, run, "gmail__list_labels", {})
         (labels,) = [r for r in team.google.requests if r.url.path == f"{ME}/labels"]
         assert (labels.url.scheme, labels.url.host) == ("https", "gmail.googleapis.com")
+
+
+# The write tools (slice 6.2): what the policy decides for each, on a full-access connection.
+
+MAIL: dict[str, Any] = {"to": ["sara@acme.dev"], "subject": "Launch review", "body": "Thursday at 3 PM works."}
+WRITES: dict[str, dict[str, Any]] = {
+    "gmail__add_labels": {"thread_id": "18f0a0", "label_ids": ["STARRED"]},
+    "gmail__remove_labels": {"thread_id": "18f0a0", "label_ids": ["UNREAD"]},
+    "gmail__archive": {"thread_id": "18f0a0"},
+    "gmail__create_draft": MAIL,
+    "gmail__send": MAIL,
+    "gmail__trash": {"thread_id": "18f0a0"},
+}
+
+
+async def _decide(team: Team, run: RunRef, tool: str, *, level: SecurityLevel, tainted: bool) -> str:
+    runs: RunManager = team.app.state.runs
+    async with runs.sessionmaker() as db:
+        tools = await toolset.load(db, runs.registry, run.run_id)
+    call = tool_pipeline.prepare(
+        tools,
+        ToolCallRequest("call-1", tool, WRITES[tool]),
+        level=level,
+        tainted=tainted,
+        connections=tools.connections,
+    )
+    return call.decision
+
+
+async def test_a_full_access_connection_offers_the_write_tools_and_a_read_only_one_does_not() -> None:
+    async with acme() as team:
+        run = await _inbox_dm(team)
+        runs: RunManager = team.app.state.runs
+        async with runs.sessionmaker() as db:
+            tools = await toolset.load(db, runs.registry, run.run_id)
+        names = {tool.name for tool in tools.tools()}
+        assert {name.replace("__", ".") for name in WRITES} <= names
+
+
+async def test_asking_before_acting_every_gmail_change_asks_and_read_only_refuses_them() -> None:
+    async with acme() as team:
+        run = await _inbox_dm(team)
+        for tool in WRITES:
+            assert await _decide(team, run, tool, level="ask-before-acting", tainted=False) == "ask", tool
+            assert await _decide(team, run, tool, level="read-only", tainted=False) == "deny", tool
+
+
+async def test_autonomous_labels_drafts_and_sends_but_always_asks_before_trashing() -> None:
+    async with acme() as team:
+        run = await _inbox_dm(team)
+        decisions = {tool: await _decide(team, run, tool, level="autonomous", tainted=False) for tool in WRITES}
+        assert decisions == {**dict.fromkeys(WRITES, "auto"), "gmail__trash": "ask"}
+
+
+async def test_after_reading_mail_even_an_autonomous_bot_asks_before_every_gmail_change() -> None:
+    async with acme() as team:
+        run = await _inbox_dm(team)
+        for tool in WRITES:
+            assert await _decide(team, run, tool, level="autonomous", tainted=True) == "ask", tool
+
+
+async def test_a_send_waiting_for_approval_shows_the_exact_email_and_sends_once_approved() -> None:
+    async with acme() as team:
+        team.google.gmail = {f"{ME}/messages/send": {"id": "18f0c1", "threadId": "18f0c0"}}
+        run = await _inbox_dm(team)
+        runs: RunManager = team.app.state.runs
+        async with runs.sessionmaker() as db:
+            tools = await toolset.load(db, runs.registry, run.run_id)
+        call = tool_pipeline.prepare(
+            tools,
+            ToolCallRequest("call-send", "gmail__send", MAIL),
+            level="ask-before-acting",
+            tainted=False,
+            connections=tools.connections,
+        )
+        async with runs.sessionmaker() as db:
+            recorded = await tool_pipeline.record(db, run, call, tainted=False, approval_expiry=timedelta(hours=1))
+            await db.commit()
+        assert recorded.approval is not None
+        assert recorded.approval.summary == ("Send an email to sara@acme.dev: “Launch review”: Thursday at 3 PM works.")
+        approval = recorded.approval.id
+
+        decided = await team.client.post(f"{team.org}/approvals/{approval}/decide", json={"decision": "approve"})
+        assert decided.status_code == 200, decided.text
+        reporter = RunReporter(runs.sessionmaker, runs.bus, run.org_id, run.thread_id, run.run_id)
+        deps = ExecuteDeps(
+            runs.sessionmaker,
+            tools,
+            reporter,
+            run,
+            timeout_seconds=5,
+            access=runs.tool_access,
+            connection_ids=tools.connection_ids,
+        )
+        outcome = await tool_pipeline.execute(deps, recorded.execution.id)
+
+        assert '"sent": true' in outcome.text and not outcome.tainted
+        (sent,) = team.google.to(f"{ME}/messages/send")
+        assert sent.method == "POST"
+        assert sent.headers["authorization"] == "Bearer ya29.ACCESS-1"

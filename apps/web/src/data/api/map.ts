@@ -1,7 +1,7 @@
-import type { AccountConnection, Approval, ArgsSchema, Bot, HandoffPart, Invitation, MemoryItem, MemoryStatus, Message, MessagePart, Model, ModelProvider, Org, Routine, Thread, UsageSummary, User } from "../types";
+import type { AccountConnection, Approval, ArgsSchema, Bot, HandoffPart, Invitation, McpServer, MemoryItem, MemoryStatus, Message, MessagePart, Model, ModelProvider, Org, Routine, Thread, UsageSummary, User } from "../types";
 import { describeCron } from "@/lib/schedule";
 import type { TaskChange } from "@/lib/tasks";
-import type { ApiApproval, ApiTask, ApiBot, ApiConnection, ApiBotInput, ApiInvitation, ApiMemory, ApiMemoryStatus, ApiMessage, ApiModel, ApiModelProvider, ApiOrg, ApiRole, ApiRoutine, ApiThread, ApiUsage, ApiUser } from "./types";
+import type { ApiApproval, ApiTask, ApiBot, ApiConnection, ApiBotInput, ApiInvitation, ApiMcpServer, ApiMemory, ApiMemoryStatus, ApiMessage, ApiModel, ApiModelProvider, ApiOrg, ApiRole, ApiRoutine, ApiThread, ApiUsage, ApiUser } from "./types";
 
 /**
  * Turns API answers into the web app's own types, so screens never see API shapes.
@@ -157,6 +157,15 @@ export function toAccountConnection(c: ApiConnection): AccountConnection {
   return {
     id, connectorId, ownerKind, ownerUserId, ownerBotId, authType, accountLabel, scopes, status, statusReason,
     createdAt: asUtc(c.createdAt), lastUsedAt: c.lastUsedAt ? asUtc(c.lastUsedAt) : null,
+  };
+}
+
+export function toMcpServer(s: ApiMcpServer): McpServer {
+  const { id, pluginId, name, url, authKind, authHeader, status, statusReason } = s;
+  return {
+    id, pluginId, name, url, authKind, authHeader, status, statusReason,
+    tools: s.tools.map(({ name, serverName, title, description }) => ({ name, serverName, title, description })),
+    lastCheckedAt: s.lastCheckedAt ? asUtc(s.lastCheckedAt) : null,
   };
 }
 

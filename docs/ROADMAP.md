@@ -85,8 +85,11 @@ When you finish something, tick it here in the same pull request.
 - [x] 5.3 OAuth connections and Connect apps on the API (token refresh with a lease, reconnect, revoke); `plugins/gmail` connects a Google account (no tools yet)
 
 ### Gmail (step 5)
-- [ ] Connect with your own Google client; read, label, draft, and send only after approval
+- [x] Connect with your own Google client; read, label, draft, and send only after approval
   - [x] 6.1 Read: `gmail.search`, `gmail.read_thread`, `gmail.list_labels` (plain text, capped, header filter, `<email>` blocks; mail results taint the run, the label list doesn't)
+  - [x] 6.2 Write: `gmail.add_labels`, `remove_labels`, `archive`, `create_draft` (write-external), `send` (external-send), `trash` (destructive); plain-text mail, replies threaded, header injection refused, approval cards show recipients, subject and body
+  - [x] 6.3 "React to new email" (bot Tools tab): history polling every minute on the job queue; each new email posts in the subscriber's DM and starts a tainted run; expired history → one notice
+  - [x] 6.4 Owner's guide ([Google setup and what bots can do](self-hosting/google-oauth.md), [manual test](testing/gmail.md))
 
 ### Multi-bot (from the 2026-11-14 test)
 - [x] Speaker names in group history, so a bot knows who said what
@@ -99,7 +102,8 @@ When you finish something, tick it here in the same pull request.
 - [x] Routines: bots work on a schedule (cron + time zone, Run now, recent runs; each run in the creator's DM, at the strictest of bot and routine level)
 
 ### MCP (step 8)
-- [ ] Connect a remote MCP server; its tools become bot tools
+- [x] Connect a remote MCP server; its tools become bot tools (slice 7.2: header-key auth, tool snapshot pinned by hash, every tool asks and taints)
+- [ ] MCP OAuth sign-in (7.3); review tools and their risk, drift diff and badge (7.4)
 
 ### Self-hosting
 - [x] Job queue and a separate worker process ([ADR 0005](adr/0005-job-queue-and-scaling.md), [ADR 0013](adr/0013-the-job-queue-lands.md)); approvals expire on a timer

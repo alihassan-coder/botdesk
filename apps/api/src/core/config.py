@@ -61,6 +61,9 @@ class Settings(BaseSettings):
     # by default everywhere; set to true on a machine whose model server is on its own network
     # (Ollama on localhost in development, a self-hosted vLLM next to the API).
     allow_private_model_urls: bool = False
+    # MCP servers (ADR 0012) on private, loopback or link-local addresses: its own switch, refused
+    # by default. Set to true in development to try an MCP server running on your own machine.
+    allow_private_mcp_urls: bool = False
 
     # Run limits (agents-and-plugins.md §4.2) and how many runs one bot may have going at once.
     run_max_steps: int = 25

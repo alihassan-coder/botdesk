@@ -338,6 +338,22 @@ export interface ApiPlugin {
 type ApiTool = { name: string; title: string; description: string; risk: ApiRiskClass };
 
 /** A plugin as Connect apps lists it (GET /orgs/{id}/connectors). */
+/** An MCP server (GET /orgs/{id}/mcp-servers). Never carries its header key. */
+export interface ApiMcpServer {
+  id: string;
+  pluginId: string;
+  name: string;
+  url: string;
+  authKind: "none" | "header";
+  authHeader: string | null;
+  status: "active" | "unreachable";
+  statusReason: string | null;
+  tools: { name: string; serverName: string; title: string | null; description: string | null; annotations: Record<string, unknown> }[];
+  lastCheckedAt: string | null;
+  createdAt: string;
+  createdBy: string | null;
+}
+
 export interface ApiConnector {
   id: string;
   name: string;
@@ -382,6 +398,7 @@ export interface ApiBotTools {
     enabled: boolean;
     connectionId: string | null;
     tools: ApiTool[];
+    triggers?: { name: string; title: string; description: string; enabled: boolean; subscriberId: string | null; problem: string | null }[];
   }[];
 }
 

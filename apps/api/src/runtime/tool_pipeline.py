@@ -33,6 +33,8 @@ from src.runtime.tool_access import NO_ACCESS, ToolAccess, ToolAccessProvider
 from src.runtime.toolset import ConnectionRow
 from src.services import approval_service
 from src.services import tool_execution_service as executions
+from src.services.mcp_server_service import CALL_TIMEOUT_SECONDS as MCP_CALL_TIMEOUT_SECONDS
+from src.services.mcp_server_service import is_mcp_plugin
 from src.services.tool_execution_service import ApprovalDraft, NewCall, Recorded, RunRef
 
 logger = logging.getLogger(__name__)
@@ -220,8 +222,10 @@ async def _run_tool(
         # The bot's account for this app changed after the call was decided: never run it on
         # an account nobody decided about.
         return None, ACCOUNT_CHANGED
+    # An MCP call (re-check its definition, then call) gets its own limit (ADR 0012 §6).
+    timeout = MCP_CALL_TIMEOUT_SECONDS if is_mcp_plugin(tool.plugin_id) else deps.timeout_seconds
     try:
-        async with asyncio.timeout(deps.timeout_seconds), _access(deps, tool, tool_call_id) as access:
+        async with asyncio.timeout(timeout), _access(deps, tool, tool_call_id) as access:
             # `http` reaches only the plugin's hosts and adds the connection's credential itself:
             # the tool never sees it (ADR 0010 §8).
             context = ToolContext(
@@ -236,7 +240,7 @@ async def _run_tool(
             )
             result = await tool.spec.handler(tool.spec.args_model.model_validate(args), context)
     except TimeoutError:
-        return None, f"It took longer than {deps.timeout_seconds:g} seconds."
+        return None, f"It took longer than {timeout:g} seconds."
     except Exception as error:
         logger.exception("Tool %s failed in run %s", tool.name, deps.run.run_id)
         return None, str(error) or type(error).__name__

@@ -9,6 +9,21 @@ from src.schemas.common import ApiModel
 from src.schemas.plugin import PluginToolOut
 
 
+class BotTriggerOut(ApiModel):
+    """One of the plugin's triggers (slice 6.3), and whether this bot reacts to it."""
+
+    name: str  # "new_email"
+    title: str  # "React to new email"
+    description: str
+    enabled: bool
+    subscriber_id: uuid.UUID | None  # who switched it on: its events go to their DM with the bot
+    problem: str | None  # why the last poll did nothing ("Paused: … needs reconnecting")
+
+
+class BotTriggerIn(ApiModel):
+    enabled: bool
+
+
 class BotToolOut(ApiModel):
     plugin_id: str
     name: str
@@ -17,6 +32,7 @@ class BotToolOut(ApiModel):
     enabled: bool  # false for a plugin the bot has no binding for
     connection_id: uuid.UUID | None
     tools: list[PluginToolOut]
+    triggers: list[BotTriggerOut] = Field(default_factory=list)
 
 
 class BotToolsOut(ApiModel):

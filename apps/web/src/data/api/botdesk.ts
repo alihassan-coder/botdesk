@@ -11,6 +11,7 @@ import {
   type ApiConnectionOwner,
   type ApiConnector,
   type ApiInvitation,
+  type ApiMcpServer,
   type ApiMemory,
   type ApiMemoryStatus,
   type ApiMe,
@@ -181,6 +182,22 @@ export const connectionApi = {
   /** Only the plugins sent change. */
   setBotTools: (orgId: string, botId: string, plugins: { pluginId: string; enabled: boolean; connectionId: string | null }[]) =>
     apiFetch<ApiBotTools>(`/api/v1/orgs/${orgId}/bots/${botId}/tools`, { method: "PUT", body: { plugins } }),
+  /** Switch a plugin's trigger ("new_email") on for you, or off. Returns the bot's tools. */
+  setBotTrigger: (orgId: string, botId: string, pluginId: string, trigger: string, enabled: boolean) =>
+    apiFetch<ApiBotTools>(`/api/v1/orgs/${orgId}/bots/${botId}/tools/${pluginId}/triggers/${trigger}`, { method: "PUT", body: { enabled } }),
+};
+
+/** An organization's MCP servers (ADR 0012). Every member lists; owners and admins change. */
+export const mcpApi = {
+  list: (orgId: string) => apiFetch<ApiMcpServer[]>(`/api/v1/orgs/${orgId}/mcp-servers`),
+  /** Connects, lists the tools and saves them. The key goes in once and never comes back out. */
+  add: (orgId: string, input: { name: string; url: string; apiKeyHeader?: string; apiKeyValue?: string }) =>
+    apiFetch<ApiMcpServer>(`/api/v1/orgs/${orgId}/mcp-servers`, { method: "POST", body: input }),
+  /** Lists the tools again and trusts them as they are now. */
+  refresh: (orgId: string, serverId: string) =>
+    apiFetch<ApiMcpServer>(`/api/v1/orgs/${orgId}/mcp-servers/${serverId}/refresh`, { method: "POST" }),
+  remove: (orgId: string, serverId: string) =>
+    apiFetch<void>(`/api/v1/orgs/${orgId}/mcp-servers/${serverId}`, { method: "DELETE" }),
 };
 
 export const usageApi = {

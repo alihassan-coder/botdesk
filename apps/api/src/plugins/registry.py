@@ -64,6 +64,14 @@ class ToolRegistry:
         self._plugins[plugin.id] = plugin
         self._tools.update({tool.name: tool for tool in tools})
 
+    def extended(self, plugins: list[PluginManifest]) -> "ToolRegistry":
+        """A copy with these plugins added (an organization's MCP servers); this one is unchanged."""
+        copy = ToolRegistry()
+        copy._tools, copy._plugins = dict(self._tools), dict(self._plugins)
+        for plugin in plugins:
+            copy.register(plugin)
+        return copy
+
     def unregister(self, plugin_id: str) -> None:
         """For tests. A running server never unloads code; organizations switch plugins off as data."""
         self._plugins.pop(plugin_id, None)

@@ -11,6 +11,8 @@
   children are stopped, and parents whose last task that was resume (ADR 0014).
 - `fire_routines` (every minute): each routine that is due starts a run in its creator's DM
   (`routine_service`).
+- `poll_triggers` (every minute): each bot trigger that is on ("React to new email") is polled;
+  new events post a message in the subscriber's DM and start a tainted run (`trigger_service`).
 - `prune_routine_runs` (daily): routine runs older than 90 days, or beyond each routine's
   newest 200, are forgotten.
 
@@ -28,7 +30,8 @@ from src.core.database import utcnow
 from src.jobs.queue import JobEnv, JobRegistry
 from src.models import Run, Task
 from src.runtime.runner import RUN_BOT, run_job
-from src.services import approval_service, routine_service, run_event_service, task_service
+from src.services import approval_service, routine_service, run_event_service, task_service, trigger_service
+from src.services.trigger_service import Target
 
 JOBS = JobRegistry()
 log = logging.getLogger(__name__)
@@ -120,6 +123,43 @@ async def fire_routines(env: JobEnv, timestamp: int) -> None:
             continue
         if fired.thread_id is not None:
             env.runs.bus.announce(fired.thread_id)
+
+
+@JOBS.task("poll_triggers", cron="* * * * *")
+async def poll_triggers(env: JobEnv, timestamp: int) -> None:
+    """Each subscription on its own: one whose account needs reconnecting, or whose app said no,
+    keeps its cursor and says why (`problem`); the others carry on."""
+    now = datetime.fromtimestamp(timestamp, UTC)
+    async with env.sessionmaker() as db:
+        subscriptions = await trigger_service.all_ids(db)
+    for subscription_id in subscriptions:
+        try:
+            await _poll_trigger(env, subscription_id, now)
+        except Exception:
+            log.exception("Trigger subscription %s failed to poll; the others carry on.", subscription_id)
+
+
+async def _poll_trigger(env: JobEnv, subscription_id: uuid.UUID, now: datetime) -> None:
+    async with env.sessionmaker() as db:
+        target = await trigger_service.prepare(db, env.runs.registry, subscription_id)
+        await db.commit()
+    if not isinstance(target, Target):
+        return
+    try:
+        result = await trigger_service.poll_plugin(env.runs.tool_access, target)
+    except Exception as error:  # the plugin's errors are written to be shown (GmailError, HttpError)
+        log.warning("Trigger subscription %s: %s", subscription_id, error)
+        async with env.sessionmaker() as db:
+            await trigger_service.save_problem(db, subscription_id, str(error) or type(error).__name__)
+            await db.commit()
+        return
+    async with env.sessionmaker() as db:
+        thread, runs = await trigger_service.record(db, target, result, settings=env.settings, now=now)
+        thread_id = thread.id if thread is not None else None
+        await env.runs.start(db, runs)
+        await db.commit()
+    if thread_id is not None:
+        env.runs.bus.announce(thread_id)
 
 
 @JOBS.task("prune_routine_runs", cron="17 3 * * *")

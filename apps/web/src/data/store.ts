@@ -24,16 +24,16 @@ import { parseMentions } from "@/lib/mentions";
 import { HOP_LIMIT, chainStoppedText, routeMessage, type BotReply, type ChatBots } from "@/lib/mention-routing";
 import { previewFromArgs } from "@/lib/args-form";
 import { browser } from "@/lib/navigate";
-import { approvalApi, authApi, botApi, connectionApi, inviteApi, memoryApi, modelApi, orgApi, pluginApi, routineApi, runApi, threadApi, usageApi } from "./api/botdesk";
+import { approvalApi, authApi, botApi, connectionApi, inviteApi, mcpApi, memoryApi, modelApi, orgApi, pluginApi, routineApi, runApi, threadApi, usageApi } from "./api/botdesk";
 import { ApiError, apiBaseUrl } from "./api/client";
-import { toAccountConnection, toApiBot, toApproval, toBot, toInvitation, toMemory, toMemoryStatus, toMessage, toModel, toModelProvider, toOrg, toRoutine, toThread, toUsage, toUser } from "./api/map";
+import { toAccountConnection, toApiBot, toApproval, toBot, toInvitation, toMcpServer, toMemory, toMemoryStatus, toMessage, toModel, toModelProvider, toOrg, toRoutine, toThread, toUsage, toUser } from "./api/map";
 import { applyRunEvent, typingId, upsertApproval, withActiveRuns, withPreview, withWaitingApprovals, type ActiveRun } from "./api/run-events";
 import type { ApiMe, ApiRunEvent, ApiThread, ApiThreadRuns } from "./api/types";
 import { isTaskOpen, taskPreview, withTaskChangeIn, type TaskChange } from "@/lib/tasks";
 import * as chiefDemo from "./mock/chief-demo";
 import * as mock from "./mock/fixtures";
 import type {
-  AccountConnection, AccountConnectionList, Approval, ApprovalStatus, Bot, BotToolChange, BotTools, ConnectionOwner, Invitation, MemoryItem, MemoryList, MemoryStatus, Membership, Message, Model, ModelListProblem, ModelProvider, Org,
+  AccountConnection, AccountConnectionList, Approval, ApprovalStatus, Bot, BotToolChange, BotTools, ConnectionOwner, Invitation, McpServerInput, McpServerList, MemoryItem, MemoryList, MemoryStatus, Membership, Message, Model, ModelListProblem, ModelProvider, Org,
   Participant, PluginList, Routine, SecurityLevel, ServerConnectorList, Thread, UsageSummary, User,
 } from "./types";
 
@@ -120,6 +120,8 @@ interface State {
   serverConnectors: ServerConnectorList;
   /** Accounts connected to connectors, as the API shows them (the demo: Ali's Gmail). */
   accounts: AccountConnectionList;
+  /** The organization's MCP servers (API only; the demo has none). */
+  mcpServers: McpServerList;
   /** Each bot's Tools tab (which plugins it uses, through which account), by bot id. */
   botTools: Record<string, BotTools>;
   routines: typeof mock.routines;
@@ -174,6 +176,7 @@ function seed(): State {
     connections: mock.connections,
     serverConnectors: { status: "ready", items: [] },
     accounts: { status: "ready", items: mock.accountConnections },
+    mcpServers: { status: "ready", items: [] },
     botTools: {},
     routines: mock.routines,
     routinesLoading: false,
@@ -214,6 +217,7 @@ function apiSeed(): State {
     plugins: { status: "loading", items: [] },
     serverConnectors: { status: "loading", items: [] },
     accounts: { status: "loading", items: [] },
+    mcpServers: { status: "loading", items: [] },
     botTools: {},
     memories: [],
     memoryStatus: null,
@@ -368,6 +372,7 @@ function enterOrg(org: Membership) {
     plugins: { status: "loading", items: [] },
     serverConnectors: { status: "loading", items: [] },
     accounts: { status: "loading", items: [] },
+    mcpServers: { status: "loading", items: [] },
     botTools: {},
     memories: [],
     memoryLists: {},
@@ -1746,6 +1751,60 @@ export const actions = {
     return { ok: true };
   },
 
+  /** Connect apps: the organization's MCP servers. The demo has none (it can't add any). */
+  async loadMcpServers(): Promise<void> {
+    if (isDemoMode()) return;
+    const orgId = state.org.id;
+    const servers = await mcpApi.list(orgId).catch(() => null);
+    set((st) =>
+      st.org.id !== orgId ? st
+      : { ...st, mcpServers: servers ? { status: "ready", items: servers.map(toMcpServer) } : { ...st.mcpServers, status: "error" } },
+    );
+  },
+
+  /** Owners and admins: add an MCP server. The API connects and lists its tools before saving. */
+  async addMcpServer(input: McpServerInput): Promise<ActionResult> {
+    if (isDemoMode()) return { ok: false, error: "Adding MCP servers works once botdesk is connected to its API." };
+    const orgId = state.org.id;
+    try {
+      const saved = toMcpServer(await mcpApi.add(orgId, input));
+      // Bots' Tools tabs now have one more plugin: they load again when next opened.
+      set((st) => (st.org.id !== orgId ? st : { ...st, mcpServers: { status: "ready", items: [...st.mcpServers.items, saved] }, botTools: {} }));
+      return { ok: true };
+    } catch (error) {
+      return failure(error);
+    }
+  },
+
+  /** Owners and admins: list the server's tools again and trust them as they are now. */
+  async refreshMcpServer(serverId: string): Promise<ActionResult> {
+    if (isDemoMode()) return { ok: false, error: "MCP servers work once botdesk is connected to its API." };
+    const orgId = state.org.id;
+    try {
+      const saved = toMcpServer(await mcpApi.refresh(orgId, serverId));
+      set((st) =>
+        st.org.id !== orgId ? st
+        : { ...st, mcpServers: { ...st.mcpServers, items: st.mcpServers.items.map((s) => (s.id === serverId ? saved : s)) }, botTools: {} },
+      );
+      return saved.status === "unreachable" ? { ok: false, error: saved.statusReason ?? "Couldn't reach the server." } : { ok: true };
+    } catch (error) {
+      return failure(error);
+    }
+  },
+
+  /** Owners and admins: remove the server; every bot loses its tools. */
+  async removeMcpServer(serverId: string): Promise<ActionResult> {
+    if (isDemoMode()) return { ok: false, error: "MCP servers work once botdesk is connected to its API." };
+    const orgId = state.org.id;
+    try {
+      await mcpApi.remove(orgId, serverId);
+    } catch (error) {
+      return failure(error);
+    }
+    set((st) => (st.org.id !== orgId ? st : { ...st, mcpServers: { ...st.mcpServers, items: st.mcpServers.items.filter((s) => s.id !== serverId) }, botTools: {} }));
+    return { ok: true };
+  },
+
   /** A bot's Tools tab. MOCK in the demo: every bot starts with the demo tools on. */
   async loadBotTools(botId: string): Promise<void> {
     if (isDemoMode()) {
@@ -1778,6 +1837,19 @@ export const actions = {
     const orgId = state.org.id;
     try {
       const saved = await connectionApi.setBotTools(orgId, botId, changes);
+      if (state.org.id === orgId) setBotTools(botId, { status: "ready", plugins: saved.plugins });
+      return { ok: true };
+    } catch (error) {
+      return failure(error);
+    }
+  },
+
+  /** Switch a plugin's trigger on (its events come to your DM with the bot) or off. API mode only. */
+  async setBotTrigger(botId: string, pluginId: string, trigger: string, enabled: boolean): Promise<ActionResult> {
+    if (isDemoMode()) return { ok: false, error: "Triggers work once botdesk is connected to its API." };
+    const orgId = state.org.id;
+    try {
+      const saved = await connectionApi.setBotTrigger(orgId, botId, pluginId, trigger, enabled);
       if (state.org.id === orgId) setBotTools(botId, { status: "ready", plugins: saved.plugins });
       return { ok: true };
     } catch (error) {
@@ -2247,6 +2319,8 @@ export const usePlugins = () => useStore(useCallback((s: State) => s.plugins, []
 export const useConnections = () => useStore(useCallback((s: State) => s.connections, []));
 /** Connect apps on the API: the server's connectors, as last loaded with `actions.loadConnections`. */
 export const useServerConnectors = () => useStore(useCallback((s: State) => s.serverConnectors, []));
+/** Connect apps: the organization's MCP servers, as last loaded with `actions.loadMcpServers`. */
+export const useMcpServers = () => useStore(useCallback((s: State) => s.mcpServers, []));
 /** Accounts connected to connectors that you may see (yours, the bots', the organization's). */
 export const useAccountConnections = () => useStore(useCallback((s: State) => s.accounts, []));
 /** A bot's Tools tab, as last loaded with `actions.loadBotTools`; undefined until then. */

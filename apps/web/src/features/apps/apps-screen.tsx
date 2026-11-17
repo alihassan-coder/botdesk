@@ -7,6 +7,7 @@ import { actions, useConnections, useConnectors, useIsDemo, useServerConnectors 
 import type { Connector } from "@/data/types";
 import { PageHeader } from "@/features/shell/page-header";
 import { ConnectDialog } from "./connect-dialog";
+import { McpServers } from "./mcp-servers";
 import { ServerConnectors } from "./server-connectors";
 import { ToolList } from "./tool-list";
 
@@ -47,6 +48,8 @@ export function AppsScreen() {
           ) : (
             <ServerConnectors />
           )}
+
+          <McpServers />
 
           <section aria-label="Coming soon">
             <h3 className="mb-3 text-sm font-semibold">Coming soon</h3>

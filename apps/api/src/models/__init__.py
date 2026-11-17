@@ -6,6 +6,7 @@ from src.models.bot import Bot
 from src.models.bot_tool import BotTool
 from src.models.connection import AuditEntry, Connection
 from src.models.invitation import Invitation
+from src.models.mcp_server import McpServer
 from src.models.oauth_flow import OAuthFlow
 from src.models.organization import Membership, Organization
 from src.models.provider_credential import ProviderCredential
@@ -13,6 +14,7 @@ from src.models.routine import Routine, RoutineRun
 from src.models.run import Run, RunEvent, ToolExecution
 from src.models.task import Task
 from src.models.thread import Message, Thread, ThreadParticipant
+from src.models.trigger_subscription import TriggerSubscription
 from src.models.usage import UsageRecord
 from src.models.user import PasswordResetToken, Session, User
 
@@ -23,6 +25,7 @@ __all__ = [
     "BotTool",
     "Connection",
     "Invitation",
+    "McpServer",
     "Membership",
     "Message",
     "OAuthFlow",
@@ -38,6 +41,7 @@ __all__ = [
     "Thread",
     "ThreadParticipant",
     "ToolExecution",
+    "TriggerSubscription",
     "UsageRecord",
     "User",
 ]

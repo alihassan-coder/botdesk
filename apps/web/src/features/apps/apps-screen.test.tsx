@@ -2,7 +2,7 @@ import { screen, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { browser } from "@/lib/navigate";
 import { renderUI } from "@/test/render";
-import { signInOnApi, withFakeApi } from "@/test/fake-api";
+import { apiMe, apiOrg, signInOnApi, withFakeApi } from "@/test/fake-api";
 import { AppsScreen } from "./apps-screen";
 
 
@@ -10,6 +10,7 @@ describe("Connect apps in the demo", () => {
   it("shows the demo's connections and lets you connect Gmail", () => {
     renderUI(<AppsScreen />);
     expect(screen.getByRole("heading", { name: "Connected" })).toBeInTheDocument();
+    expect(within(screen.getByRole("region", { name: "MCP servers" })).getByText(/Connect botdesk to its API to add MCP servers/)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Connect Gmail" })).toBeEnabled();
     expect(screen.queryByRole("region", { name: "Your connections" })).not.toBeInTheDocument();
   });
@@ -20,6 +21,7 @@ describe("Connect apps on the API", () => {
   let leave: ReturnType<typeof vi.spyOn>;
   beforeEach(() => {
     leave = vi.spyOn(browser, "leaveFor").mockImplementation(() => {});
+    api.routes["GET /api/v1/orgs/o1/mcp-servers"] = { status: 200, body: [] };
   });
   afterEach(() => leave.mockRestore());
   const tools = [
@@ -127,5 +129,91 @@ describe("Connect apps on the API", () => {
     serve([demo]);
     await user.click(screen.getByRole("button", { name: "Try again" }));
     expect(await screen.findByRole("article", { name: "Demo" })).toBeInTheDocument();
+  });
+});
+
+describe("MCP servers on Connect apps", () => {
+  const api = withFakeApi();
+  const tracker = {
+    id: "m1", pluginId: "mcp-1a2b3c4d", name: "Tracker", url: "https://mcp.example.com/mcp", authKind: "header", authHeader: "X-API-Key",
+    status: "active", statusReason: null, lastCheckedAt: "2026-11-17T08:00:00Z", createdAt: "2026-11-17T08:00:00Z", createdBy: "u1",
+    tools: [
+      { name: "mcp-1a2b3c4d.search_issues", serverName: "search_issues", title: "Search issues", description: "Finds issues.", annotations: {} },
+      { name: "mcp-1a2b3c4d.create_issue", serverName: "create_issue", title: null, description: "Creates one.", annotations: {} },
+    ],
+  };
+  beforeEach(() => {
+    api.routes["GET /api/v1/orgs/o1/connectors"] = { status: 200, body: [] };
+    api.routes["GET /api/v1/orgs/o1/connections"] = { status: 200, body: [] };
+  });
+
+  it("an owner adds a server with a header key; it's listed with its tool count, and the key isn't kept", async () => {
+    api.routes["GET /api/v1/orgs/o1/mcp-servers"] = { status: 200, body: [] };
+    api.routes["POST /api/v1/orgs/o1/mcp-servers"] = { status: 201, body: tracker };
+    await signInOnApi();
+    const { user } = renderUI(<AppsScreen />);
+
+    const section = await screen.findByRole("region", { name: "MCP servers" });
+    expect(await within(section).findByText(/No MCP servers yet. Add one/)).toBeInTheDocument();
+    await user.click(within(section).getByRole("button", { name: "Add server" }));
+    const dialog = screen.getByRole("dialog");
+    await user.type(within(dialog).getByLabelText("Name"), "Tracker");
+    await user.type(within(dialog).getByLabelText("Server URL"), "https://mcp.example.com/mcp");
+    await user.type(within(dialog).getByLabelText("Header name"), "X-API-Key");
+    expect(within(dialog).getByRole("button", { name: "Add server" })).toBeDisabled(); // a header needs its key
+    await user.type(within(dialog).getByLabelText("Header value"), "sk-secret");
+    await user.click(within(dialog).getByRole("button", { name: "Add server" }));
+
+    const row = await within(section).findByRole("listitem", { name: "Tracker" });
+    expect(within(row).getByText(/2 tools/)).toBeInTheDocument();
+    expect(api.sent.find((r) => r.key === "POST /api/v1/orgs/o1/mcp-servers")?.body).toEqual({
+      name: "Tracker", url: "https://mcp.example.com/mcp", apiKeyHeader: "X-API-Key", apiKeyValue: "sk-secret",
+    });
+    expect(screen.queryByText("sk-secret")).not.toBeInTheDocument();
+  });
+
+  it("shows the API's refusal in the dialog (a private address, say)", async () => {
+    api.routes["GET /api/v1/orgs/o1/mcp-servers"] = { status: 200, body: [] };
+    api.routes["POST /api/v1/orgs/o1/mcp-servers"] = { status: 400, body: { detail: "That address is on a private network." } };
+    await signInOnApi();
+    const { user } = renderUI(<AppsScreen />);
+
+    await user.click(await screen.findByRole("button", { name: "Add server" }));
+    await user.type(screen.getByLabelText("Name"), "Local");
+    await user.type(screen.getByLabelText("Server URL"), "https://127.0.0.1/mcp");
+    await user.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Add server" }));
+
+    expect(await screen.findByText("That address is on a private network.")).toBeInTheDocument();
+    expect(screen.getByRole("dialog")).toBeInTheDocument(); // stays open to fix the address
+  });
+
+  it("an owner refreshes and removes a server", async () => {
+    api.routes["GET /api/v1/orgs/o1/mcp-servers"] = { status: 200, body: [tracker] };
+    api.routes["POST /api/v1/orgs/o1/mcp-servers/m1/refresh"] = { status: 200, body: { ...tracker, tools: tracker.tools.slice(0, 1) } };
+    api.routes["DELETE /api/v1/orgs/o1/mcp-servers/m1"] = { status: 204 };
+    await signInOnApi();
+    const { user } = renderUI(<AppsScreen />);
+
+    const row = await screen.findByRole("listitem", { name: "Tracker" });
+    await user.click(within(row).getByRole("button", { name: "Refresh Tracker" }));
+    expect(await within(row).findByText(/1 tool$/)).toBeInTheDocument();
+
+    await user.click(within(row).getByRole("button", { name: "Remove" }));
+    await user.click(within(screen.getByRole("alertdialog")).getByRole("button", { name: "Remove" }));
+    await vi.waitFor(() => expect(screen.queryByRole("listitem", { name: "Tracker" })).not.toBeInTheDocument());
+    expect(api.sent.some((r) => r.key === "DELETE /api/v1/orgs/o1/mcp-servers/m1")).toBe(true);
+  });
+
+  it("members see the servers but can't add, refresh or remove them", async () => {
+    api.routes["GET /api/v1/orgs/o1/mcp-servers"] = { status: 200, body: [tracker] };
+    api.routes["POST /api/v1/auth/sign-in"] = { status: 200, body: { ...apiMe, organizations: [{ ...apiOrg, role: "member" }] } };
+    api.routes["GET /api/v1/orgs/o1/members"] = { status: 200, body: [{ ...apiMe.user, role: "member" }] };
+    await signInOnApi();
+    renderUI(<AppsScreen />);
+
+    const row = await screen.findByRole("listitem", { name: "Tracker" });
+    expect(within(row).queryByRole("button", { name: /Refresh/ })).not.toBeInTheDocument();
+    expect(within(row).queryByRole("button", { name: "Remove" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Add server" })).not.toBeInTheDocument();
   });
 });

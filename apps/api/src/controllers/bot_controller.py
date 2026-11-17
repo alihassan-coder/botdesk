@@ -9,12 +9,21 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src.api.deps import Access
 from src.core.config import Settings
 from src.core.errors import Forbidden
+from src.models import BotTool
 from src.plugins.registry import ToolRegistry
 from src.runtime.runner import RunManager
 from src.schemas.bot import BotIn, BotOut, BotUpdate
-from src.schemas.bot_tool import BotToolsIn, BotToolsOut
-from src.services import binding_service, bot_service, provider_service, task_service
+from src.schemas.bot_tool import BotToolsIn, BotToolsOut, BotTriggerIn
+from src.services import (
+    binding_service,
+    bot_service,
+    mcp_server_service,
+    provider_service,
+    task_service,
+    trigger_service,
+)
 from src.services.connection_service import Actor
+from src.services.mcp_server_service import McpRuntime
 
 
 async def list_bots(db: AsyncSession, access: Access) -> list[BotOut]:
@@ -90,16 +99,49 @@ async def delete_bot(db: AsyncSession, access: Access, runs: RunManager, bot_id:
 # choosing an account follows who may use it (binding_service).
 
 
-async def get_tools(db: AsyncSession, access: Access, bot_id: uuid.UUID, registry: ToolRegistry) -> BotToolsOut:
+async def get_tools(
+    db: AsyncSession, access: Access, bot_id: uuid.UUID, registry: ToolRegistry, mcp: McpRuntime | None = None
+) -> BotToolsOut:
     bot = await bot_service.get_bot(db, access.org.id, bot_id)
-    return binding_service.tools_out(registry, await binding_service.bindings_of(db, bot.id))
+    registry = await mcp_server_service.org_registry(db, registry, access.org.id, mcp)  # + the org's MCP servers
+    return await _tools_out(db, registry, await binding_service.bindings_of(db, bot.id))
+
+
+async def _tools_out(db: AsyncSession, registry: ToolRegistry, bindings: dict[str, BotTool]) -> BotToolsOut:
+    subscriptions = await trigger_service.subscriptions_of(db, [binding.id for binding in bindings.values()])
+    return binding_service.tools_out(registry, bindings, subscriptions)
 
 
 async def set_tools(
-    db: AsyncSession, access: Access, bot_id: uuid.UUID, body: BotToolsIn, registry: ToolRegistry
+    db: AsyncSession,
+    access: Access,
+    bot_id: uuid.UUID,
+    body: BotToolsIn,
+    registry: ToolRegistry,
+    mcp: McpRuntime | None = None,
 ) -> BotToolsOut:
     bot = await bot_service.get_bot(db, access.org.id, bot_id)
+    registry = await mcp_server_service.org_registry(db, registry, access.org.id, mcp)
     actor = Actor(org_id=access.org.id, user_id=access.user.id, role=access.role)
     bindings = await binding_service.update_bindings(db, actor, bot, registry, body.plugins)
     await db.commit()
-    return binding_service.tools_out(registry, bindings)
+    return await _tools_out(db, registry, bindings)
+
+
+async def set_trigger(
+    db: AsyncSession,
+    access: Access,
+    bot_id: uuid.UUID,
+    plugin_id: str,
+    trigger: str,
+    body: BotTriggerIn,
+    registry: ToolRegistry,
+    mcp: McpRuntime | None = None,
+) -> BotToolsOut:
+    """Switch a bot's trigger on (you become its subscriber) or off (slice 6.3)."""
+    bot = await bot_service.get_bot(db, access.org.id, bot_id)
+    registry = await mcp_server_service.org_registry(db, registry, access.org.id, mcp)
+    actor = Actor(org_id=access.org.id, user_id=access.user.id, role=access.role)
+    await trigger_service.set_trigger(db, actor, bot, registry, plugin_id, trigger, enabled=body.enabled)
+    await db.commit()
+    return await _tools_out(db, registry, await binding_service.bindings_of(db, bot.id))

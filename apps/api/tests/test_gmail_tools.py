@@ -145,6 +145,7 @@ WRITES: dict[str, dict[str, Any]] = {
     "gmail__create_draft": MAIL,
     "gmail__send": MAIL,
     "gmail__trash": {"thread_id": "18f0a0"},
+    "gmail__send_draft": {"draft_id": "r-5512", "to": ["sara@acme.dev"], "subject": "Launch review"},
 }
 
 
@@ -192,6 +193,27 @@ async def test_after_reading_mail_even_an_autonomous_bot_asks_before_every_gmail
         run = await _inbox_dm(team)
         for tool in WRITES:
             assert await _decide(team, run, tool, level="autonomous", tainted=True) == "ask", tool
+
+
+async def test_sending_a_draft_asks_with_its_recipients_and_subject_on_the_card() -> None:
+    async with acme() as team:
+        run = await _inbox_dm(team)
+        runs: RunManager = team.app.state.runs
+        async with runs.sessionmaker() as db:
+            tools = await toolset.load(db, runs.registry, run.run_id)
+        call = tool_pipeline.prepare(
+            tools,
+            ToolCallRequest("call-draft", "gmail__send_draft", WRITES["gmail__send_draft"]),
+            level="ask-before-acting",
+            tainted=True,
+            connections=tools.connections,
+        )
+        assert call.decision == "ask" and call.risk == "external-send"
+        async with runs.sessionmaker() as db:
+            recorded = await tool_pipeline.record(db, run, call, tainted=True, approval_expiry=timedelta(hours=1))
+            await db.commit()
+        assert recorded.approval is not None
+        assert recorded.approval.summary == "Send draft r-5512 to sara@acme.dev: “Launch review”"
 
 
 async def test_a_send_waiting_for_approval_shows_the_exact_email_and_sends_once_approved() -> None:

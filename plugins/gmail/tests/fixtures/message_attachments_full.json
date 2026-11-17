@@ -1,0 +1,161 @@
+{
+  "id": "18f1b1",
+  "threadId": "18f1b0",
+  "labelIds": [
+    "INBOX"
+  ],
+  "snippet": "Numbers and notes attached.",
+  "payload": {
+    "partId": "",
+    "mimeType": "multipart/mixed",
+    "filename": "",
+    "body": {
+      "size": 0
+    },
+    "headers": [
+      {
+        "name": "From",
+        "value": "Sara Lee <sara@acme.dev>"
+      },
+      {
+        "name": "To",
+        "value": "ali@acme.dev"
+      },
+      {
+        "name": "Subject",
+        "value": "Q3 numbers"
+      }
+    ],
+    "parts": [
+      {
+        "partId": "0",
+        "mimeType": "text/plain",
+        "filename": "",
+        "headers": [
+          {
+            "name": "Content-Type",
+            "value": "text/plain; charset=\"utf-8\""
+          }
+        ],
+        "body": {
+          "size": 27,
+          "data": "TnVtYmVycyBhbmQgbm90ZXMgYXR0YWNoZWQu"
+        }
+      },
+      {
+        "partId": "1",
+        "mimeType": "text/csv",
+        "filename": "q3.csv",
+        "headers": [
+          {
+            "name": "Content-Type",
+            "value": "text/csv; name=\"q3.csv\""
+          },
+          {
+            "name": "Content-Disposition",
+            "value": "attachment; filename=\"q3.csv\""
+          }
+        ],
+        "body": {
+          "attachmentId": "ANGjdJ-csv-fresh",
+          "size": 61
+        }
+      },
+      {
+        "partId": "2",
+        "mimeType": "text/plain",
+        "filename": "notes.txt",
+        "headers": [
+          {
+            "name": "Content-Type",
+            "value": "text/plain; charset=\"iso-8859-1\"; name=\"notes.txt\""
+          },
+          {
+            "name": "Content-Disposition",
+            "value": "attachment; filename=\"notes.txt\""
+          }
+        ],
+        "body": {
+          "attachmentId": "ANGjdJ-txt-fresh",
+          "size": 33
+        }
+      },
+      {
+        "partId": "3",
+        "mimeType": "application/pdf",
+        "filename": "contract.pdf",
+        "headers": [
+          {
+            "name": "Content-Type",
+            "value": "application/pdf; name=\"contract.pdf\""
+          },
+          {
+            "name": "Content-Disposition",
+            "value": "attachment; filename=\"contract.pdf\""
+          }
+        ],
+        "body": {
+          "attachmentId": "ANGjdJ-pdf-fresh",
+          "size": 48213
+        }
+      },
+      {
+        "partId": "4",
+        "mimeType": "image/png",
+        "filename": "logo.png",
+        "headers": [
+          {
+            "name": "Content-Type",
+            "value": "image/png; name=\"logo.png\""
+          },
+          {
+            "name": "Content-Disposition",
+            "value": "attachment; filename=\"logo.png\""
+          }
+        ],
+        "body": {
+          "attachmentId": "ANGjdJ-png-fresh",
+          "size": 1024
+        }
+      },
+      {
+        "partId": "5",
+        "mimeType": "text/plain",
+        "filename": "server.log",
+        "headers": [
+          {
+            "name": "Content-Type",
+            "value": "text/plain; name=\"server.log\""
+          },
+          {
+            "name": "Content-Disposition",
+            "value": "attachment; filename=\"server.log\""
+          }
+        ],
+        "body": {
+          "attachmentId": "ANGjdJ-log-fresh",
+          "size": 30000000
+        }
+      },
+      {
+        "partId": "6",
+        "mimeType": "application/octet-stream",
+        "filename": "export.csv",
+        "headers": [
+          {
+            "name": "Content-Type",
+            "value": "application/octet-stream; name=\"export.csv\""
+          },
+          {
+            "name": "Content-Disposition",
+            "value": "attachment; filename=\"export.csv\""
+          }
+        ],
+        "body": {
+          "attachmentId": "ANGjdJ-oct-fresh",
+          "size": 20
+        }
+      }
+    ]
+  }
+}

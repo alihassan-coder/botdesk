@@ -48,6 +48,8 @@ BotDesk is an open-source (MIT) team of always-on AI bots that work in your apps
 | [adr/0013-the-job-queue-lands.md](adr/0013-the-job-queue-lands.md) | ADR 0013: runs are jobs on procrastinate; worker embedded or separate; restarts resume runs; approvals expire on a timer |
 | [adr/0008-free-and-open-source.md](adr/0008-free-and-open-source.md) | ADR 0008: free and open source forever, no paid plans or hosted service |
 | [adr/0009-bots-working-together.md](adr/0009-bots-working-together.md) | ADR 0009: bots @mention each other (hop limit 3), guests in DMs, a lead bot per group |
+| [adr/0014-handoffs-and-tasks.md](adr/0014-handoffs-and-tasks.md) | ADR 0014: handoffs and tasks; the parent waits for results |
+| [adr/0015-gmail-attachments-formatting-and-drafts.md](adr/0015-gmail-attachments-formatting-and-drafts.md) | ADR 0015: Gmail reads text attachments, sends formatted mail from Markdown, sends saved drafts only if they still match |
 | [backend/README.md](backend/README.md) | Backend guide: run it, folders, request flow, routes, security |
 
 ## Building

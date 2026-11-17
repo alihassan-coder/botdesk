@@ -20,6 +20,7 @@ from src.core.secrets import build_secret_box
 from src.core.url_guard import GuardedTransport
 from src.jobs.background import background
 from src.runtime.memory import build_memory
+from src.services import mcp_server_service
 from src.services.credential_vault import CredentialVault
 from src.services.email_service import build_email_sender
 from src.services.model_catalog import ModelCatalog
@@ -74,6 +75,11 @@ def create_app(settings: Settings | None = None, *, outbound: httpx.AsyncBaseTra
                 app.state.runs = jobs.runs
                 # Signing in with OAuth apps (ADR 0010 §5): the same plugins and vault as the runs.
                 app.state.oauth = OAuth(settings, app.state.vault, jobs.runs.registry, transport=outbound)
+                # MCP servers' sign-ins come back to the same callback (slice 7.3); read `runs.mcp`
+                # when they do, so a test's network swap applies.
+                app.state.oauth.mcp_finish = lambda db, flow, code, iss, user: mcp_server_service.finish_sign_in(
+                    db, app.state.runs.mcp, flow, code, iss, user
+                )
                 yield
         await engine.dispose()
 

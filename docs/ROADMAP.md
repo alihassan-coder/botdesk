@@ -90,6 +90,7 @@ When you finish something, tick it here in the same pull request.
   - [x] 6.2 Write: `gmail.add_labels`, `remove_labels`, `archive`, `create_draft` (write-external), `send` (external-send), `trash` (destructive); plain-text mail, replies threaded, header injection refused, approval cards show recipients, subject and body
   - [x] 6.3 "React to new email" (bot Tools tab): history polling every minute on the job queue; each new email posts in the subscriber's DM and starts a tainted run; expired history → one notice
   - [x] 6.4 Owner's guide ([Google setup and what bots can do](self-hosting/google-oauth.md), [manual test](testing/gmail.md))
+  - [x] 6.5 Extras: easier-to-read HTML mail (numbered lists, table rows, quotes; quoted earlier mail at the end of a reply left out), `gmail.read_attachment` (text, CSV, JSON; not PDFs), Markdown mail (plain + HTML we generate), `gmail.list_drafts` and `gmail.send_draft` (card shows the draft's recipients and subject, checked before sending)
 
 ### Multi-bot (from the 2026-11-14 test)
 - [x] Speaker names in group history, so a bot knows who said what
@@ -113,9 +114,13 @@ When you finish something, tick it here in the same pull request.
 - [x] Rate limits on sign-in, sign-up, forgot password and reset password (in-process; per address, and per email for sign-in and forgot password)
 - [ ] Your own email domain in Brevo
 
+### Onboarding
+- [x] First-time setup at `/welcome` for the owner of a new organization (no bots yet): name it, add an AI key, hire Chief (or another bot), connect Gmail; every step skippable, Finish opens the first bot's DM with its welcome; never shown to invited members, the demo, or again after finishing or skipping
+
 ### Later
 - [x] Usage and budgets on the API
-- [ ] Model prices (`apps/api/src/services/pricing.py`): on **2026-12-01** Gemini 4 Carbon and Argon double, and gemini-2.5-pro / 2.5-flash switch models (remove them); on **2027-01-01** gemini-3.8-flash doubles
-- [ ] Unread counts in the chat list
+- [x] Model prices (`apps/api/src/services/pricing.py`) are effective-dated, so they switch by themselves: on **2026-12-01** Gemini 4 Carbon and Argon double, and gemini-2.5-pro / 2.5-flash switch models (no price from then); on **2027-01-01** gemini-3.8-flash doubles
+- [x] Unread counts in the chat list (per person, marked read when you look at the chat)
+- [x] Manage a group: rename it, add and remove people and bots (its creator, owners and admins)
 - [ ] Bot computers (live screen, take over) and routine recording
 - [ ] Desktop app, then mobile

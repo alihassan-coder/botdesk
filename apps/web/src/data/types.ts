@@ -333,12 +333,33 @@ export interface ServerConnector {
   tools: PluginTool[];
 }
 
-/** One tool of an MCP server, as its snapshot pinned it. `name` is BotDesk's ("mcp-1a2b3c4d.search_issues"). */
+/**
+ * One tool of an MCP server, as its snapshot pinned it. `name` is BotDesk's ("mcp-1a2b3c4d.search_issues").
+ * `state`: approved (offered when `enabled`), changed / pending (waits for an admin's review), removed.
+ */
 export interface McpTool {
   name: string;
   serverName: string;
   title: string | null;
   description: string | null;
+  inputSchema: Record<string, unknown>;
+  /** The server's own claims (readOnlyHint…): shown, never trusted. */
+  annotations: Record<string, unknown>;
+  state: "approved" | "changed" | "pending" | "removed";
+  enabled: boolean;
+  risk: McpToolRisk;
+  /** For a changed tool: what an admin approved before. */
+  previous: { title: string | null; description: string | null; inputSchema: Record<string, unknown> | null } | null;
+}
+
+/** The risks an admin may give an MCP tool on the review screen (never below read). */
+export type McpToolRisk = "read" | "write-internal" | "write-external" | "external-send" | "destructive";
+
+/** One tool's choice on the review screen. */
+export interface McpToolChoice {
+  serverName: string;
+  enabled: boolean;
+  risk: McpToolRisk;
 }
 
 /**
@@ -350,11 +371,15 @@ export interface McpServer {
   pluginId: string;
   name: string;
   url: string;
-  authKind: "none" | "header";
+  authKind: "none" | "header" | "oauth";
   authHeader: string | null;
-  status: "active" | "unreachable";
+  status: "active" | "unreachable" | "needs_sign_in" | "needs_reconnect";
   statusReason: string | null;
   tools: McpTool[];
+  /** Sent back with the review, so a change in between isn't approved unseen. */
+  toolsHash: string;
+  /** Changed, new or removed tools waiting for the review ("Tools changed"). */
+  toolsChanged: number;
   lastCheckedAt: string | null;
 }
 
@@ -363,12 +388,15 @@ export interface McpServerList {
   items: McpServer[];
 }
 
-/** Adding an MCP server: an API key is optional, sent once in the named header. */
+/** Adding an MCP server: an API key (sent once in the named header), or OAuth sign-in with an optional pre-registered client. */
 export interface McpServerInput {
   name: string;
   url: string;
   apiKeyHeader?: string;
   apiKeyValue?: string;
+  signIn?: boolean;
+  oauthClientId?: string;
+  oauthClientSecret?: string;
 }
 
 export interface ServerConnectorList {
@@ -596,4 +624,6 @@ export interface Template {
   installs: number;
   connectors: ID[];
   category: string;
+  /** What the hired bot is told to do; empty when the template has none. */
+  instructions?: string;
 }

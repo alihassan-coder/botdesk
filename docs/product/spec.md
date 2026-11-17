@@ -61,7 +61,7 @@ Layout: bot sidebar (left) · thread (centre) · bot details pane (right, collap
 
 **Done**
 
-- Web app (`apps/web`): screens 2, 3 and 5–10 above, on demo data or on the API. Not built yet: onboarding, the computer full view and an `@mention` picker. Which screens are still mock in API mode: [docs/frontend](../frontend/README.md#talking-to-the-api).
+- Web app (`apps/web`): screens 1–3 and 5–10 above, on demo data or on the API. Onboarding is `/welcome` (first-time setup for a new organization's owner). Not built yet: the computer full view and an `@mention` picker. Which screens are still mock in API mode: [docs/frontend](../frontend/README.md#talking-to-the-api).
 - API (`apps/api`): accounts, organizations, invitations, bots, direct and group chats, bot replies streamed live, tools with approvals (demo plugin), plugin SDK, models and keys, memory, usage and budgets. Details: [docs/backend](../backend/README.md).
 - Docs: this spec, vision, ADRs 0001–0008, architecture, research, glossary, logo.
 

@@ -130,7 +130,10 @@ class RunManager:
         )
         # The organization's MCP servers (ADR 0012): their header keys and where we may connect.
         # Tests swap in a network that reaches a local test server.
-        self.mcp = McpRuntime(vault, McpNetwork(allow_private=settings.allow_private_mcp_urls))
+        # OAuth servers (slice 7.3) sign in through the same OAuth service and refresh lease.
+        self.mcp = McpRuntime(
+            vault, McpNetwork(allow_private=settings.allow_private_mcp_urls), oauth=oauth, sessionmaker=sessionmaker
+        )
         resolver = ModelResolver(settings, sessionmaker, secrets, catalog)
         # (org id, model id) → the chat model, with the org's keys. Tests swap in a fake model here.
         self.model_for: Callable[[uuid.UUID, str], Awaitable[BaseChatModel]] = resolver

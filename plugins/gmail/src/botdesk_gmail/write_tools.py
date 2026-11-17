@@ -12,23 +12,26 @@ retried here (the app's `tool_executions` record makes sure a started send isn't
 | `trash` | `threads.trash` | `destructive` |
 
 Mail is plain text, built with the standard library's `email` package and sent base64url-encoded
-(`raw`). Recipients are bare addresses and the subject is one line: anything that could add a
+(`raw`). With `format="markdown"` it is `multipart/alternative`: the body as written, and HTML that
+`markdown.py` generates from it (the model's own markup is escaped, never sent as HTML).
+Recipients are bare addresses and the subject is one line: anything that could add a
 header (a line break, a second address in one entry, a display name) is refused by the args
 model, before an approval card is even shown. A reply is threaded with `threadId`, `In-Reply-To`
-and `References` taken from the thread's newest message. Sending an existing draft by id isn't
-offered: an approval card couldn't show what such a send contains.
+and `References` taken from the thread's newest message. Sending an existing draft by id is
+`drafts.py` (`send_draft`).
 """
 
 import base64
 import email.policy
 import re
 from email.message import EmailMessage
-from typing import Any
+from typing import Any, Literal
 
 from botdesk_plugin_sdk import ToolContext, ToolResult, ToolSpec
 from pydantic import BaseModel, Field, field_validator, model_validator
 
 from botdesk_gmail import api
+from botdesk_gmail.markdown import markdown_to_html
 from botdesk_gmail.tools import ID_PATTERN
 
 MODIFY_SCOPE = "https://www.googleapis.com/auth/gmail.modify"
@@ -83,7 +86,9 @@ class ThreadArgs(BaseModel):
     thread_id: str = Field(pattern=ID_PATTERN, description="The thread's id (`threadId` from gmail.search).")
 
 
-class MailArgs(BaseModel):
+class Recipients(BaseModel):
+    """Who an email goes to and its subject: what an approval card shows, safe as headers."""
+
     to: list[str] = Field(min_length=1, max_length=MAX_RECIPIENTS, description="Recipients: plain addresses.")
     cc: list[str] = Field(default_factory=list, max_length=MAX_RECIPIENTS, description="Cc: plain addresses.")
     bcc: list[str] = Field(default_factory=list, max_length=MAX_RECIPIENTS, description="Bcc: plain addresses.")
@@ -93,12 +98,6 @@ class MailArgs(BaseModel):
         description=(
             "One line. For a reply, the thread's subject with 'Re: ' in front, so Gmail keeps it in the thread."
         ),
-    )
-    body: str = Field(min_length=1, max_length=MAX_BODY, description="The message, as plain text.")
-    reply_to_thread_id: str | None = Field(
-        default=None,
-        pattern=ID_PATTERN,
-        description="To reply in a thread: its threadId. The reply answers the thread's newest message.",
     )
 
     _to = field_validator("to")(_addresses)
@@ -113,10 +112,27 @@ class MailArgs(BaseModel):
         return value
 
     @model_validator(mode="after")
-    def _not_too_many(self) -> "MailArgs":
+    def _not_too_many(self) -> "Recipients":
         if len(self.to) + len(self.cc) + len(self.bcc) > MAX_RECIPIENTS:
             raise ValueError(f"An email can have at most {MAX_RECIPIENTS} recipients in To, Cc and Bcc together.")
         return self
+
+
+class MailArgs(Recipients):
+    body: str = Field(min_length=1, max_length=MAX_BODY, description="The message, as plain text or Markdown.")
+    format: Literal["plain", "markdown"] = Field(
+        default="plain",
+        description=(
+            "plain (the default): the body is sent as written. markdown: also send it formatted, from "
+            "simple Markdown only (# headings, - and 1. lists, **bold**, *italic*, `code`, [text](https://…)). "
+            "HTML in the body is sent as text, never as HTML."
+        ),
+    )
+    reply_to_thread_id: str | None = Field(
+        default=None,
+        pattern=ID_PATTERN,
+        description="To reply in a thread: its threadId. The reply answers the thread's newest message.",
+    )
 
 
 def _account(ctx: ToolContext) -> str | None:
@@ -194,6 +210,8 @@ async def _raw_mail(args: MailArgs, ctx: ToolContext) -> dict[str, Any]:
     for name, value in threading.items():
         mail[name] = value
     mail.set_content(args.body)
+    if args.format == "markdown":  # plain text first, then the HTML we generate: mail apps show the last they can
+        mail.add_alternative(markdown_to_html(args.body), subtype="html")
     message: dict[str, Any] = {"raw": base64.urlsafe_b64encode(mail.as_bytes()).decode("ascii")}
     if args.reply_to_thread_id:
         message["threadId"] = args.reply_to_thread_id
@@ -234,14 +252,19 @@ def _labels_summary(verb: str, preposition: str) -> Any:
     return summarize
 
 
+def recipients_line(args: Recipients) -> str:
+    """ "sara@acme.dev (cc omar@acme.dev; bcc boss@acme.dev)": every recipient, for a card."""
+    copies = [f"cc {', '.join(args.cc)}"] * bool(args.cc) + [f"bcc {', '.join(args.bcc)}"] * bool(args.bcc)
+    return ", ".join(args.to) + (f" ({'; '.join(copies)})" if copies else "")
+
+
 def _mail_summary(draft: bool) -> Any:
     def summarize(args: MailArgs) -> str:
         if args.reply_to_thread_id:
             action = f"{'Draft a reply' if draft else 'Reply'} in email thread {args.reply_to_thread_id} to"
         else:
             action = f"{'Draft' if draft else 'Send'} an email to"
-        copies = [f"cc {', '.join(args.cc)}"] * bool(args.cc) + [f"bcc {', '.join(args.bcc)}"] * bool(args.bcc)
-        recipients = ", ".join(args.to) + (f" ({'; '.join(copies)})" if copies else "")
+        recipients = recipients_line(args)
         body = " ".join(args.body.split())
         preview = body if len(body) <= PREVIEW else body[:PREVIEW].rstrip() + "…"
         return f"{action} {recipients}: “{args.subject}”: {preview}"

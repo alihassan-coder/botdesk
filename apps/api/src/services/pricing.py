@@ -6,19 +6,37 @@ Where prices come from:
   Prices change: edit the table when they do, and update `PRICES_CHECKED`.
 - **Custom servers** have no price.
 
+Prices are effective-dated. A model's entry is either its price (in effect since before
+`PRICES_CHECKED`), or a list of `(effective_from, price)` steps, oldest first: the price used is
+the last step whose date (midnight UTC) is at or before the call's time, so an announced change
+switches by itself on the day. A step with no price (None) means the model stops being priced:
+the provider retires it or routes it to another model.
+
 A model missing from the table has an unknown price: its calls record tokens and no dollars, and
 the web shows "price unknown" rather than a guess. Budgets can't stop what has no price.
 """
 
 import re
+from datetime import UTC, date, datetime
 
 from src.model_providers import Pricing
 
 PRICES_CHECKED = "2026-11-13"
 
+# A model's price over time: `(effective_from, price)` steps, oldest first. None = no price from then.
+PriceSteps = list[tuple[date, Pricing | None]]
+
+# Changes the providers announced, as recorded in docs/ROADMAP.md (checked 2026-11-13 with the rest):
+# Gemini 4 Carbon and Argon double on 2026-12-01; gemini-2.5-pro and gemini-2.5-flash are routed to
+# other models on 2026-12-01 (to 3.8 Flash and 3.5 Flash-Lite), so we stop pricing them rather than
+# guess how the provider bills the switched calls; gemini-3.8-flash doubles on 2027-01-01. Only the
+# doubling and removal the roadmap states are applied; no other price is assumed.
+DECEMBER_2026 = date(2026, 12, 1)
+JANUARY_2027 = date(2027, 1, 1)
+
 # US dollars per million tokens (input, output), standard rates without caching or batch
 # discounts. Keys are the provider's model id without a date suffix (see `_base_model`).
-PRICE_TABLE: dict[str, dict[str, Pricing]] = {
+PRICE_TABLE: dict[str, dict[str, Pricing | PriceSteps]] = {
     # https://platform.claude.com/docs/en/about-claude/pricing
     "anthropic": {
         "claude-fable-5-2": Pricing(8.0, 40.0),
@@ -61,15 +79,17 @@ PRICE_TABLE: dict[str, dict[str, Pricing]] = {
     },
     # https://ai.google.dev/gemini-api/docs/pricing (now served at aistudio.google.com/docs/pricing)
     "gemini": {
-        "gemini-4-carbon": Pricing(2.0, 10.0),  # rises to $4 / $20 on 2026-12-01
-        "gemini-4-argon": Pricing(2.0, 10.0),  # rises to $4 / $20 on 2026-12-01
+        "gemini-4-carbon": [(date.min, Pricing(2.0, 10.0)), (DECEMBER_2026, Pricing(4.0, 20.0))],
+        "gemini-4-argon": [(date.min, Pricing(2.0, 10.0)), (DECEMBER_2026, Pricing(4.0, 20.0))],
         "gemini-4-hydrogen": Pricing(1.50, 7.50),
-        "gemini-3.8-flash": Pricing(0.75, 3.75),  # rises to $1.50 / $7.50 on 2027-01-01
+        "gemini-3.8-flash": [(date.min, Pricing(0.75, 3.75)), (JANUARY_2027, Pricing(1.50, 7.50))],
         "gemini-3.5-flash-lite": Pricing(0.30, 2.50),
         "gemini-3.1-pro-preview": Pricing(2.0, 12.0),  # prompts up to 200K tokens
         "gemini-3.1-flash-lite": Pricing(0.25, 1.50),  # text, image and video input
-        "gemini-2.5-pro": Pricing(1.25, 10.0),  # prompts up to 200K; deprecated, routes to 3.8 Flash on 2026-12-01
-        "gemini-2.5-flash": Pricing(0.30, 2.50),  # deprecated, routes to 3.5 Flash-Lite on 2026-12-01
+        # Prompts up to 200K. Deprecated: routes to 3.8 Flash from 2026-12-01.
+        "gemini-2.5-pro": [(date.min, Pricing(1.25, 10.0)), (DECEMBER_2026, None)],
+        # Deprecated: routes to 3.5 Flash-Lite from 2026-12-01.
+        "gemini-2.5-flash": [(date.min, Pricing(0.30, 2.50)), (DECEMBER_2026, None)],
         "gemini-2.5-flash-lite": Pricing(0.10, 0.40),
     },
     # https://console.groq.com/docs/models (groq.com/pricing links here for per-model prices)
@@ -92,10 +112,16 @@ def _base_model(model: str) -> str:
     return _DATE_SUFFIX.sub("", model.removeprefix("models/"))
 
 
-def table_price(provider_kind: str, model: str) -> Pricing | None:
-    """The price from `PRICE_TABLE`, or None when the model isn't in it (an unknown price).
-    Only an exact match (after dropping a date suffix) counts: "gpt-4o" never prices "gpt-4o-mini"."""
-    return PRICE_TABLE.get(provider_kind, {}).get(_base_model(model))
+def table_price(provider_kind: str, model: str, *, at: datetime | None = None) -> Pricing | None:
+    """The price from `PRICE_TABLE` in effect at `at` (default: now), or None when the model isn't
+    in it or has no price then (an unknown price). Only an exact match (after dropping a date
+    suffix) counts: "gpt-4o" never prices "gpt-4o-mini"."""
+    entry = PRICE_TABLE.get(provider_kind, {}).get(_base_model(model))
+    if entry is None or isinstance(entry, Pricing):
+        return entry
+    day = (at or datetime.now(UTC)).astimezone(UTC).date()
+    in_effect = [price for effective_from, price in entry if effective_from <= day]
+    return in_effect[-1] if in_effect else None
 
 
 def cost_usd(pricing: Pricing | None, input_tokens: int, output_tokens: int) -> float | None:

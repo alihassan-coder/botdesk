@@ -44,10 +44,10 @@ export function toApiBot(bot: Partial<Bot>): Partial<ApiBotInput> {
   return fields;
 }
 
-/** The API doesn't count unread messages yet, so every chat starts read. */
-export function toThread({ id, kind, title, botId, leadBotId, createdBy, participants, lastMessageAt, lastMessagePreview }: ApiThread): Thread {
+/** A chat. `unread` is yours; a live `thread_updated` has none, so it reads as 0 there (the store keeps its own). */
+export function toThread({ id, kind, title, botId, leadBotId, createdBy, participants, lastMessageAt, lastMessagePreview, unread }: ApiThread): Thread {
   return {
-    id, kind, title, participants, lastMessagePreview, lastMessageAt: asUtc(lastMessageAt), unread: 0,
+    id, kind, title, participants, lastMessagePreview, lastMessageAt: asUtc(lastMessageAt), unread: unread ?? 0,
     ...(botId ? { botId } : {}),
     ...(leadBotId ? { leadBotId } : {}),
     ...(createdBy ? { createdBy } : {}),
@@ -161,10 +161,12 @@ export function toAccountConnection(c: ApiConnection): AccountConnection {
 }
 
 export function toMcpServer(s: ApiMcpServer): McpServer {
-  const { id, pluginId, name, url, authKind, authHeader, status, statusReason } = s;
+  const { id, pluginId, name, url, authKind, authHeader, status, statusReason, toolsHash, toolsChanged } = s;
   return {
-    id, pluginId, name, url, authKind, authHeader, status, statusReason,
-    tools: s.tools.map(({ name, serverName, title, description }) => ({ name, serverName, title, description })),
+    id, pluginId, name, url, authKind, authHeader, status, statusReason, toolsHash, toolsChanged,
+    tools: s.tools.map(({ name, serverName, title, description, annotations, inputSchema, state, enabled, risk, previous }) => ({
+      name, serverName, title, description, annotations, inputSchema, state, enabled, risk, previous,
+    })),
     lastCheckedAt: s.lastCheckedAt ? asUtc(s.lastCheckedAt) : null,
   };
 }

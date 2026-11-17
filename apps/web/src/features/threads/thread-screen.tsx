@@ -26,8 +26,8 @@ export function ThreadScreen({ threadId }: { threadId: string }) {
   const [paneWidth, setPaneWidth] = useStoredState("botdesk.detailsPane.width", 340);
   const [sheetOpen, setSheetOpen] = useState(false);
 
-  // Opening a chat means you've seen it.
-  useEffect(() => actions.markRead(threadId), [threadId]);
+  // Looking at a chat means you've read it: now, when you come back to the tab, and as messages arrive.
+  useEffect(() => actions.viewThread(threadId), [threadId]);
 
   // Load its messages and follow new ones while it's open (on the API; the mock has them already).
   // Waits for the chat list, so a reload straight into a chat works too.

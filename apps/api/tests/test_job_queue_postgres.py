@@ -127,7 +127,8 @@ async def test_a_separate_worker_runs_the_reply_and_its_events_reach_the_apis_st
         try:
             _org, thread = await _bot_chat(client)
             thread_id = uuid.UUID(thread.rsplit("/", 1)[1])
-            stream = thread_controller.follow_events(_runs(app), thread_id, after_id=0, follow=True)
+            me = uuid.UUID((await client.get("/api/v1/auth/me")).json()["user"]["id"])
+            stream = thread_controller.follow_events(_runs(app), thread_id, user_id=me, after_id=0, follow=True)
             await _send(client, thread, "Hi Scout")
             # The bot's reply is saved before the run is marked finished (a separate transaction),
             # so wait for run_finished, which is saved together with the run's new status.

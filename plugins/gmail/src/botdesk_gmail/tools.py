@@ -134,6 +134,8 @@ async def read_thread(args: ThreadArgs, ctx: ToolContext) -> ToolResult:
         }
         if left_out:
             entry["cut"] = f"[cut: {left_out} more characters not shown]"
+        if body.quoted:
+            entry["quoted"] = f"[quoted earlier mail not shown: {body.quoted} characters]"
         shown.append(entry)
     return {
         "account": account,
@@ -175,7 +177,8 @@ TOOLS = (
         title="Read an email thread",
         description=(
             "Read every message of one Gmail thread as plain text, with its main headers and its "
-            "attachments' names (attachments themselves aren't read). Long threads are cut, oldest "
+            "attachments (name, type, size and part: read a text one with gmail.read_attachment). "
+            "Quoted earlier mail at the end of a reply is left out. Long threads are cut, oldest "
             "messages first."
         ),
         args_model=ThreadArgs,

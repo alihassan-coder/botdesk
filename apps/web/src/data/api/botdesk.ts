@@ -12,6 +12,9 @@ import {
   type ApiConnector,
   type ApiInvitation,
   type ApiMcpServer,
+  type ApiMcpServerAdded,
+  type ApiMcpServerInput,
+  type ApiMcpToolChoice,
   type ApiMemory,
   type ApiMemoryStatus,
   type ApiMe,
@@ -107,6 +110,17 @@ export const threadApi = {
   /** Change a group's lead (one of its bots), or clear it with null. Its creator, owners and admins may. */
   setLead: (orgId: string, threadId: string, botId: string | null) =>
     apiFetch<ApiThread>(`/api/v1/orgs/${orgId}/threads/${threadId}/lead`, { method: "PUT", body: { botId } }),
+  /** Rename a group (its creator, owners and admins). */
+  rename: (orgId: string, threadId: string, title: string) =>
+    apiFetch<ApiThread>(`/api/v1/orgs/${orgId}/threads/${threadId}`, { method: "PATCH", body: { title } }),
+  /** Add people and bots of the org to a group (its creator, owners and admins). */
+  addParticipants: (orgId: string, threadId: string, add: { userIds: string[]; botIds: string[] }) =>
+    apiFetch<ApiThread>(`/api/v1/orgs/${orgId}/threads/${threadId}/participants`, { method: "POST", body: add }),
+  /** Remove a person or a bot from a group. Removing the lead bot clears the lead. */
+  removeParticipant: (orgId: string, threadId: string, type: "user" | "bot", id: string) =>
+    apiFetch<ApiThread>(`/api/v1/orgs/${orgId}/threads/${threadId}/participants/${type}/${id}`, { method: "DELETE" }),
+  /** You've read the chat up to now: its unread count drops to 0. */
+  markRead: (orgId: string, threadId: string) => apiFetch<void>(`/api/v1/orgs/${orgId}/threads/${threadId}/read`, { method: "POST" }),
   /** Oldest first. For older ones, pass the first message's createdAt as `before`. */
   messages: (orgId: string, threadId: string, { limit, before }: { limit: number; before?: string }) => {
     const query = new URLSearchParams({ limit: String(limit), ...(before ? { before } : {}) });
@@ -190,12 +204,19 @@ export const connectionApi = {
 /** An organization's MCP servers (ADR 0012). Every member lists; owners and admins change. */
 export const mcpApi = {
   list: (orgId: string) => apiFetch<ApiMcpServer[]>(`/api/v1/orgs/${orgId}/mcp-servers`),
-  /** Connects, lists the tools and saves them. The key goes in once and never comes back out. */
-  add: (orgId: string, input: { name: string; url: string; apiKeyHeader?: string; apiKeyValue?: string }) =>
-    apiFetch<ApiMcpServer>(`/api/v1/orgs/${orgId}/mcp-servers`, { method: "POST", body: input }),
-  /** Lists the tools again and trusts them as they are now. */
+  /** Connects, lists the tools and saves them. Keys and client secrets go in once and never come back out.
+   * A server that wants a sign-in comes back with `authorizeUrl`. */
+  add: (orgId: string, input: ApiMcpServerInput) =>
+    apiFetch<ApiMcpServerAdded>(`/api/v1/orgs/${orgId}/mcp-servers`, { method: "POST", body: input }),
+  /** Lists the tools again; changed and new ones wait for the review. */
   refresh: (orgId: string, serverId: string) =>
     apiFetch<ApiMcpServer>(`/api/v1/orgs/${orgId}/mcp-servers/${serverId}/refresh`, { method: "POST" }),
+  /** The review screen's save: approve these tools as they are, on or off, at these risks. 409 if they changed since `toolsHash`. */
+  reviewTools: (orgId: string, serverId: string, body: { toolsHash: string; tools: ApiMcpToolChoice[] }) =>
+    apiFetch<ApiMcpServer>(`/api/v1/orgs/${orgId}/mcp-servers/${serverId}/tools`, { method: "PUT", body }),
+  /** Sign in (or reconnect) the organization's OAuth sign-in: where to send the browser. */
+  signIn: (orgId: string, serverId: string) =>
+    apiFetch<{ authorizeUrl: string }>(`/api/v1/orgs/${orgId}/mcp-servers/${serverId}/sign-in`, { method: "POST" }),
   remove: (orgId: string, serverId: string) =>
     apiFetch<void>(`/api/v1/orgs/${orgId}/mcp-servers/${serverId}`, { method: "DELETE" }),
 };

@@ -32,6 +32,7 @@ import logging
 import re
 import secrets
 import uuid
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from typing import Any, Literal, cast
@@ -178,6 +179,17 @@ class _TokenRefused(Exception):
         self.error = error
 
 
+# What an MCP server's sign-in does after the shared callback consumed its flow (slice 7.3;
+# `services/mcp_server_service.finish_sign_in`, set in main.py): (db, flow, code, iss, user).
+McpFinish = Callable[[AsyncSession, "_Flow", str | None, str | None, User], Awaitable[Connection]]
+# A token request that renews one connection's access token, given its refresh token: the token
+# answer, `_TokenRefused`, or None when it can't be tried now (no client configured).
+Renew = Callable[[SecretStr], Awaitable["_Tokens | None"]]
+ConsumedFlow = _Flow
+Tokens = _Tokens
+TokenRefused = _TokenRefused
+
+
 class OAuth:
     """One per app (`app.state.oauth`) and one per run manager (for refresh). `transport`
     replaces the network (tests); `registry` is the loaded plugins."""
@@ -194,6 +206,8 @@ class OAuth:
         self.vault = vault
         self.registry = registry
         self.transport = transport
+        # MCP servers' sign-ins come back to the same callback (slice 7.3); main.py sets this.
+        self.mcp_finish: McpFinish | None = None
 
     def __repr__(self) -> str:
         return "OAuth(<hidden>)"
@@ -217,10 +231,27 @@ class OAuth:
         if access is None or access not in auth.scope_sets:
             raise BadRequest(f"{connector.name} has no access level called {body.access!r}.")
         owner = await connection_service.owner_for_create(db, actor, body.owner_kind, body.bot_id)
+        scopes = list(auth.scope_sets[access])
+        state, challenge = await self.begin_flow(db, actor, connector.id, owner, access, scopes)
+        params = {
+            **auth.extra_authorize_params,
+            "response_type": "code",
+            "client_id": client.client_id,
+            "redirect_uri": self.redirect_uri,
+            "scope": " ".join(scopes),
+            "state": state,
+            "code_challenge": challenge,
+            "code_challenge_method": "S256",
+        }
+        return f"{self._endpoint(auth, auth.authorize_url)}?{urlencode(params)}"
 
+    async def begin_flow(
+        self, db: AsyncSession, actor: Actor, connector_id: str, owner: Owner, access: str, scopes: list[str]
+    ) -> tuple[str, str]:
+        """Save one `oauth_flows` row and return its state and PKCE S256 challenge (Google's start
+        and MCP servers' sign-in share this). The caller commits."""
         state = secrets.token_urlsafe(32)
         verifier = secrets.token_urlsafe(48)
-        scopes = list(auth.scope_sets[access])
         now = utcnow()
         await db.execute(delete(FlowRow).where(FlowRow.expires_at < now))  # tidy up abandoned ones
         db.add(
@@ -229,7 +260,7 @@ class OAuth:
                 user_id=actor.user_id,
                 state_hash=_sha256(state),
                 code_verifier_encrypted=self.vault.seal(verifier),
-                connector_id=connector.id,
+                connector_id=connector_id,
                 owner_kind=owner.kind,
                 owner_bot_id=owner.bot_id,
                 access=access,
@@ -237,17 +268,7 @@ class OAuth:
                 expires_at=now + FLOW_LIFETIME,
             )
         )
-        params = {
-            **auth.extra_authorize_params,
-            "response_type": "code",
-            "client_id": client.client_id,
-            "redirect_uri": self.redirect_uri,
-            "scope": " ".join(scopes),
-            "state": state,
-            "code_challenge": _challenge(verifier),
-            "code_challenge_method": "S256",
-        }
-        return f"{self._endpoint(auth, auth.authorize_url)}?{urlencode(params)}"
+        return state, _challenge(verifier)
 
     # Finish
 
@@ -275,6 +296,10 @@ class OAuth:
             raise FlowFailed("signed-out")
         if flow is None or as_utc(flow.expires_at) <= utcnow():
             raise FlowFailed("expired")
+        if flow.connector_id.startswith("mcp-"):  # an MCP server's sign-in (slice 7.3)
+            if self.mcp_finish is None:
+                raise FlowFailed("failed", "MCP sign-in isn't wired up")
+            return await self.mcp_finish(db, flow, code, iss, session_user)
         connector = self.registry.plugin(flow.connector_id)
         auth = connector.auth if connector is not None else None
         if connector is None or not isinstance(auth, OAuth2Auth):
@@ -377,6 +402,10 @@ class OAuth:
             raise FlowFailed("failed", "the account lookup returned no account")
         return identity
 
+    def save_tokens(self, connection: Connection, tokens: _Tokens) -> None:
+        """Put a token answer into the row through the vault (MCP sign-ins use it too)."""
+        self._save_tokens(connection, tokens)
+
     def _save_tokens(self, connection: Connection, tokens: _Tokens) -> None:
         """Into the row through the vault. No new refresh token (Google often sends none on a
         refresh, sometimes on a reconnect): keep the one it had."""
@@ -412,7 +441,39 @@ class OAuth:
           every caller goes on with the token it has (still valid for up to a minute);
         - anything else (a bug, the database, a cancellation): cleared at once, then re-raised."""
         auth = connector.auth
-        if not isinstance(auth, OAuth2Auth) or connection.status != "active" or not needs_refresh(connection):
+        if not isinstance(auth, OAuth2Auth):
+            return connection
+
+        async def renew(refresh_token: SecretStr) -> _Tokens | None:
+            client = client_for(self.settings, auth.provider)
+            if client is None:
+                logger.warning("Can't refresh a %s token: the server has no %s client.", connector.id, auth.provider)
+                return None
+            form = {
+                "grant_type": "refresh_token",
+                "refresh_token": refresh_token.get_secret_value(),
+                "client_id": client.client_id,
+                "client_secret": client.client_secret.get_secret_value(),
+            }
+            return await self._token_call(auth, form, transport=transport)
+
+        reason = (
+            f"{connector.name} stopped accepting this sign-in (it was revoked, the password changed, or "
+            "the server's Google app is still in Testing). Reconnect it in Connect apps."
+        )
+        return await self.refresh_with(sessionmaker, connection, connector.id, reason, renew)
+
+    async def refresh_with(
+        self,
+        sessionmaker: async_sessionmaker[AsyncSession],
+        connection: Connection,
+        connector_id: str,
+        reason: str,
+        renew: Renew,
+    ) -> Connection:
+        """`refresh` for any token endpoint (MCP servers use it too): the same lease, backoff and
+        `needs_reconnect` (with `reason`, which people read), with `renew` making the request."""
+        if connection.status != "active" or not needs_refresh(connection):
             return connection
         now = utcnow()
         async with sessionmaker() as db:
@@ -435,7 +496,7 @@ class OAuth:
         if won.rowcount != 1:
             return await self._wait_for_refresh(sessionmaker, connection.id, connection)
         try:
-            return await self._refresh_holding_lease(sessionmaker, current or connection, connector, auth, transport)
+            return await self._refresh_holding_lease(sessionmaker, current or connection, connector_id, reason, renew)
         except BaseException:
             await self._release_after_crash(sessionmaker, connection.id)
             raise
@@ -444,36 +505,28 @@ class OAuth:
         self,
         sessionmaker: async_sessionmaker[AsyncSession],
         connection: Connection,
-        connector: PluginManifest,
-        auth: OAuth2Auth,
-        transport: httpx.AsyncBaseTransport | None,
+        connector_id: str,
+        reason: str,
+        renew: Renew,
     ) -> Connection:
         if connection.status != "active" or not needs_refresh(connection):
             return await self._release(sessionmaker, connection.id, connection)
-        client = client_for(self.settings, auth.provider)
         refresh_token = self.vault.refresh_token(connection)
         if refresh_token is None:
-            return await self._needs_reconnect(sessionmaker, connection, connector, "no refresh token")
-        if client is None:
-            logger.warning("Can't refresh a %s token: the server has no %s client.", connector.id, auth.provider)
-            return await self._release(sessionmaker, connection.id, connection)
-        form = {
-            "grant_type": "refresh_token",
-            "refresh_token": refresh_token.get_secret_value(),
-            "client_id": client.client_id,
-            "client_secret": client.client_secret.get_secret_value(),
-        }
+            return await self._needs_reconnect(sessionmaker, connection, connector_id, reason, "no refresh token")
         try:
             async with asyncio.timeout(TOKEN_CALL_BUDGET.total_seconds()):
-                tokens = await self._token_call(auth, form, transport=transport)
+                tokens = await renew(refresh_token)
         except _TokenRefused as refused:
             if refused.error == "invalid_grant":
-                return await self._needs_reconnect(sessionmaker, connection, connector, "invalid_grant")
-            logger.warning("Refreshing a %s token failed (%s).", connector.id, _describe(refused))
+                return await self._needs_reconnect(sessionmaker, connection, connector_id, reason, "invalid_grant")
+            logger.warning("Refreshing a %s token failed (%s).", connector_id, _describe(refused))
             return await self._back_off(sessionmaker, connection)
         except (httpx.HTTPError, AppError, ValueError, TimeoutError) as failed:
-            logger.warning("Refreshing a %s token failed (%s).", connector.id, _describe(failed))
+            logger.warning("Refreshing a %s token failed (%s).", connector_id, _describe(failed))
             return await self._back_off(sessionmaker, connection)
+        if tokens is None:  # nothing to refresh with right now
+            return await self._release(sessionmaker, connection.id, connection)
         return await self._save_refreshed(sessionmaker, connection, tokens)
 
     async def _save_refreshed(
@@ -567,15 +620,12 @@ class OAuth:
         self,
         sessionmaker: async_sessionmaker[AsyncSession],
         connection: Connection,
-        connector: PluginManifest,
+        connector_id: str,
+        reason: str,
         why: str,
     ) -> Connection:
         """The provider won't renew this sign-in (revoked at the provider, password changed, or a
         Google app left in Testing for 7 days). Someone has to connect it again."""
-        reason = (
-            f"{connector.name} stopped accepting this sign-in (it was revoked, the password changed, or "
-            "the server's Google app is still in Testing). Reconnect it in Connect apps."
-        )
         async with sessionmaker() as db:
             await db.execute(
                 update(Connection)
@@ -588,11 +638,11 @@ class OAuth:
                 None,
                 "connection.needs_reconnect",
                 connection.id,
-                {"connector": connector.id, "reason": why},
+                {"connector": connector_id, "reason": why},
             )
             await db.commit()
             row = await db.get(Connection, connection.id, populate_existing=True)
-        logger.warning("A %s connection needs reconnecting (%s).", connector.id, why)
+        logger.warning("A %s connection needs reconnecting (%s).", connector_id, why)
         return row or connection
 
     # Revoke
@@ -626,24 +676,7 @@ class OAuth:
             response = await client.post(
                 self._endpoint(auth, auth.token_url), data=form, headers={"Accept": "application/json"}
             )
-        try:
-            body = response.json()
-        except ValueError:
-            body = None
-        if response.status_code != 200:
-            error = body.get("error") if isinstance(body, dict) else None
-            safe = error if isinstance(error, str) and _ERROR_CODE.match(error) else ""
-            raise _TokenRefused(response.status_code, safe)
-        if not isinstance(body, dict) or not isinstance(body.get("access_token"), str) or not body["access_token"]:
-            raise ValueError("the answer has no access token")
-        refresh, expires, scope = body.get("refresh_token"), body.get("expires_in"), body.get("scope")
-        return _Tokens(
-            access_token=body["access_token"],
-            refresh_token=refresh if isinstance(refresh, str) and refresh else None,
-            token_type=str(body.get("token_type") or "Bearer"),
-            expires_in=_lifetime(expires),
-            scope=scope if isinstance(scope, str) and scope.strip() else None,
-        )
+        return read_tokens(response)
 
     def _client(self, transport: httpx.AsyncBaseTransport | None = None) -> httpx.AsyncClient:
         inner = transport or self.transport or GuardedTransport(allow_private=bool(self._fake_base()))
@@ -681,6 +714,29 @@ class OAuth:
             return None
         fake = self._test_setting(self.settings.google_oauth_base_url) if auth.provider == GOOGLE else ""
         return fake or issuer
+
+
+def read_tokens(response: httpx.Response) -> _Tokens:
+    """A token endpoint's answer. Raises `_TokenRefused` (with its OAuth error code only) or
+    `ValueError` (an answer that isn't a token). MCP servers' token endpoints use it too."""
+    try:
+        body = response.json()
+    except ValueError:
+        body = None
+    if response.status_code != 200:
+        error = body.get("error") if isinstance(body, dict) else None
+        safe = error if isinstance(error, str) and _ERROR_CODE.match(error) else ""
+        raise _TokenRefused(response.status_code, safe)
+    if not isinstance(body, dict) or not isinstance(body.get("access_token"), str) or not body["access_token"]:
+        raise ValueError("the answer has no access token")
+    refresh, expires, scope = body.get("refresh_token"), body.get("expires_in"), body.get("scope")
+    return _Tokens(
+        access_token=body["access_token"],
+        refresh_token=refresh if isinstance(refresh, str) and refresh else None,
+        token_type=str(body.get("token_type") or "Bearer"),
+        expires_in=_lifetime(expires),
+        scope=scope if isinstance(scope, str) and scope.strip() else None,
+    )
 
 
 def _lifetime(expires: object) -> int:

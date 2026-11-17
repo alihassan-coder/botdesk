@@ -28,6 +28,20 @@ const failed = event({ kind: "run_failed", data: { status: "failed", error: "The
 const cancelled = event({ kind: "run_finished", data: { status: "cancelled" } });
 
 describe("a chat's live updates", () => {
+  it("thread_updated renames a group and changes who's in it, keeping your unread count", () => {
+    const group: Thread = { ...thread, id: "g1", kind: "group", title: "Launch", botId: undefined, leadBotId: "b1", unread: 2, participants: [{ type: "bot", id: "b1" }] };
+    const changed = {
+      id: "g1", kind: "group" as const, title: "Launch week", botId: null, leadBotId: null, createdBy: "u1",
+      participants: [{ type: "user" as const, id: "u1" }, { type: "bot" as const, id: "b2" }],
+      lastMessageAt: "2026-11-12T09:00:00Z", lastMessagePreview: "",
+    };
+    const chat = applyRunEvent({ ...start, threads: [thread, group] }, event({ kind: "thread_updated", runId: null, data: { thread: changed } }));
+    const updated = chat.threads.find((t) => t.id === "g1");
+    expect(updated).toMatchObject({ title: "Launch week", unread: 2, participants: changed.participants });
+    expect(updated?.leadBotId).toBeUndefined();
+    expect(chat.threads[0]).toBe(thread);
+  });
+
   it("run_started shows the bot thinking, with no words yet", () => {
     const chat = play(started);
     expect(only(chat)).toMatchObject({ id: "typing-r1", status: "streaming", error: undefined, parts: [{ type: "text", text: "" }] });

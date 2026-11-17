@@ -116,7 +116,7 @@
             "type": "array"
           },
           "body": {
-            "description": "The message, as plain text.",
+            "description": "The message, as plain text or Markdown.",
             "maxLength": 50000,
             "minLength": 1,
             "title": "Body",
@@ -130,6 +130,16 @@
             "maxItems": 20,
             "title": "Cc",
             "type": "array"
+          },
+          "format": {
+            "default": "plain",
+            "description": "plain (the default): the body is sent as written. markdown: also send it formatted, from simple Markdown only (# headings, - and 1. lists, **bold**, *italic*, `code`, [text](https://…)). HTML in the body is sent as text, never as HTML.",
+            "enum": [
+              "plain",
+              "markdown"
+            ],
+            "title": "Format",
+            "type": "string"
           },
           "reply_to_thread_id": {
             "anyOf": [
@@ -180,6 +190,32 @@
       "untrustedOutput": false
     },
     {
+      "description": "List the drafts in the connected Gmail mailbox, newest first: draftId, to, cc, bcc, subject and a snippet. Use them with gmail.send_draft.",
+      "egress": "fixed",
+      "idempotent": true,
+      "inputSchema": {
+        "properties": {
+          "max_results": {
+            "default": 10,
+            "description": "How many drafts, 1-25.",
+            "maximum": 25,
+            "minimum": 1,
+            "title": "Max Results",
+            "type": "integer"
+          }
+        },
+        "title": "ListDraftsArgs",
+        "type": "object"
+      },
+      "name": "list_drafts",
+      "risk": "read",
+      "scopes": [
+        "https://www.googleapis.com/auth/gmail.readonly"
+      ],
+      "title": "List email drafts",
+      "untrustedOutput": true
+    },
+    {
       "description": "List the connected Gmail mailbox's labels (system ones such as INBOX, and the user's own).",
       "egress": "fixed",
       "idempotent": true,
@@ -198,7 +234,41 @@
       "untrustedOutput": false
     },
     {
-      "description": "Read every message of one Gmail thread as plain text, with its main headers and its attachments' names (attachments themselves aren't read). Long threads are cut, oldest messages first.",
+      "description": "Read one attachment of a Gmail message as text: plain text, CSV, JSON, XML or HTML, up to 100 000 characters. Give the message id and the attachment's `part` from gmail.read_thread. PDFs, images and Office files can't be read.",
+      "egress": "fixed",
+      "idempotent": true,
+      "inputSchema": {
+        "properties": {
+          "message_id": {
+            "description": "The message's id (`id` of a message in gmail.read_thread).",
+            "pattern": "^[A-Za-z0-9_-]{1,64}$",
+            "title": "Message Id",
+            "type": "string"
+          },
+          "part": {
+            "description": "The attachment's `part` as gmail.read_thread lists it, like 1 or 0.2.",
+            "pattern": "^[0-9]{1,4}(\\.[0-9]{1,4}){0,9}$",
+            "title": "Part",
+            "type": "string"
+          }
+        },
+        "required": [
+          "message_id",
+          "part"
+        ],
+        "title": "AttachmentArgs",
+        "type": "object"
+      },
+      "name": "read_attachment",
+      "risk": "read",
+      "scopes": [
+        "https://www.googleapis.com/auth/gmail.readonly"
+      ],
+      "title": "Read an email attachment",
+      "untrustedOutput": true
+    },
+    {
+      "description": "Read every message of one Gmail thread as plain text, with its main headers and its attachments (name, type, size and part: read a text one with gmail.read_attachment). Quoted earlier mail at the end of a reply is left out. Long threads are cut, oldest messages first.",
       "egress": "fixed",
       "idempotent": true,
       "inputSchema": {
@@ -314,7 +384,7 @@
             "type": "array"
           },
           "body": {
-            "description": "The message, as plain text.",
+            "description": "The message, as plain text or Markdown.",
             "maxLength": 50000,
             "minLength": 1,
             "title": "Body",
@@ -328,6 +398,16 @@
             "maxItems": 20,
             "title": "Cc",
             "type": "array"
+          },
+          "format": {
+            "default": "plain",
+            "description": "plain (the default): the body is sent as written. markdown: also send it formatted, from simple Markdown only (# headings, - and 1. lists, **bold**, *italic*, `code`, [text](https://…)). HTML in the body is sent as text, never as HTML.",
+            "enum": [
+              "plain",
+              "markdown"
+            ],
+            "title": "Format",
+            "type": "string"
           },
           "reply_to_thread_id": {
             "anyOf": [
@@ -375,6 +455,70 @@
         "https://www.googleapis.com/auth/gmail.modify"
       ],
       "title": "Send an email",
+      "untrustedOutput": false
+    },
+    {
+      "description": "Send a draft that is already in Gmail. Give its draftId and, exactly as gmail.list_drafts shows them, its recipients (plain addresses) and subject: the person approves those, and nothing is sent if the draft doesn't match.",
+      "egress": "fixed",
+      "idempotent": false,
+      "inputSchema": {
+        "properties": {
+          "bcc": {
+            "description": "Bcc: plain addresses.",
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 20,
+            "title": "Bcc",
+            "type": "array"
+          },
+          "cc": {
+            "description": "Cc: plain addresses.",
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 20,
+            "title": "Cc",
+            "type": "array"
+          },
+          "draft_id": {
+            "description": "The draft's id (`draftId` from gmail.list_drafts).",
+            "pattern": "^[A-Za-z0-9_-]{1,64}$",
+            "title": "Draft Id",
+            "type": "string"
+          },
+          "subject": {
+            "description": "The draft's subject, as gmail.list_drafts shows it.",
+            "maxLength": 250,
+            "minLength": 1,
+            "title": "Subject",
+            "type": "string"
+          },
+          "to": {
+            "description": "Recipients: plain addresses.",
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 20,
+            "minItems": 1,
+            "title": "To",
+            "type": "array"
+          }
+        },
+        "required": [
+          "to",
+          "subject",
+          "draft_id"
+        ],
+        "title": "SendDraftArgs",
+        "type": "object"
+      },
+      "name": "send_draft",
+      "risk": "external-send",
+      "scopes": [
+        "https://www.googleapis.com/auth/gmail.modify"
+      ],
+      "title": "Send an email draft",
       "untrustedOutput": false
     },
     {

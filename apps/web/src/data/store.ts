@@ -28,12 +28,12 @@ import { approvalApi, authApi, botApi, connectionApi, inviteApi, mcpApi, memoryA
 import { ApiError, apiBaseUrl } from "./api/client";
 import { toAccountConnection, toApiBot, toApproval, toBot, toInvitation, toMcpServer, toMemory, toMemoryStatus, toMessage, toModel, toModelProvider, toOrg, toRoutine, toThread, toUsage, toUser } from "./api/map";
 import { applyRunEvent, typingId, upsertApproval, withActiveRuns, withPreview, withWaitingApprovals, type ActiveRun } from "./api/run-events";
-import type { ApiMe, ApiRunEvent, ApiThread, ApiThreadRuns } from "./api/types";
+import type { ApiMe, ApiMessage, ApiRunEvent, ApiThread, ApiThreadRuns } from "./api/types";
 import { isTaskOpen, taskPreview, withTaskChangeIn, type TaskChange } from "@/lib/tasks";
 import * as chiefDemo from "./mock/chief-demo";
 import * as mock from "./mock/fixtures";
 import type {
-  AccountConnection, AccountConnectionList, Approval, ApprovalStatus, Bot, BotToolChange, BotTools, ConnectionOwner, Invitation, McpServerInput, McpServerList, MemoryItem, MemoryList, MemoryStatus, Membership, Message, Model, ModelListProblem, ModelProvider, Org,
+  AccountConnection, AccountConnectionList, Approval, ApprovalStatus, Bot, BotToolChange, BotTools, ConnectionOwner, Invitation, McpServerInput, McpServerList, McpToolChoice, MemoryItem, MemoryList, MemoryStatus, Membership, Message, Model, ModelListProblem, ModelProvider, Org,
   Participant, PluginList, Routine, SecurityLevel, ServerConnectorList, Thread, UsageSummary, User,
 } from "./types";
 
@@ -727,10 +727,40 @@ function followChat(orgId: string, threadId: string, after?: number): () => void
 }
 
 function onRunEvent(orgId: string, event: ApiRunEvent) {
+  const unread = event.kind === "message_saved" && isNewFromSomeoneElse(event.threadId, event.data.message);
   set((st) => (st.org.id === orgId ? withRunStatus({ ...st, ...applyRunEvent(st, event) }) : st));
+  if (unread) countUnread(event.threadId);
+  if (event.kind === "thread_updated" && !event.data.thread.participants.some((p) => p.type === "user" && p.id === state.currentUserId)) {
+    // You were removed from the group: it leaves your list (the API ends the stream too).
+    set((st) => ({ ...st, threads: st.threads.filter((t) => t.id !== event.threadId) }));
+  }
   if (event.kind === "run_finished" || event.kind === "run_failed") scheduleUsageRefresh(orgId);
   // Someone asked or decided: the sidebar count may be behind on other chats too.
   if (event.kind === "approval_requested" || event.kind === "approval_decided") void approvalActions.refreshPendingApprovals();
+}
+
+/* ---------- Unread counts ----------
+ * The API counts what you haven't read (`unread` on each chat). The chat you're looking at, in a
+ * visible tab, is read: opening it, coming back to the tab and each new message there tell the
+ * API. Elsewhere, a new message heard on a stream adds one; `refreshChats` (polled by the shell)
+ * brings in the rest, since only open chats have a stream.
+ */
+let viewedThreadId: string | null = null;
+
+const isLookingAt = (threadId: string) => viewedThreadId === threadId && document.visibilityState === "visible";
+
+/** A saved message we haven't counted yet (a replay or your own doesn't count). A streamed reply is
+ *  already in the store while it's written, so only a saved copy means it was seen before. While a
+ *  chat loads, its stream replays messages the page is about to bring, so nothing counts then. */
+function isNewFromSomeoneElse(threadId: string, message: ApiMessage) {
+  if (state.threadLoads[threadId]?.status === "loading") return false;
+  const mine = message.author.type === "user" && message.author.id === state.currentUserId;
+  return !mine && !state.messages.some((m) => m.id === message.id && m.status !== "streaming");
+}
+
+function countUnread(threadId: string) {
+  if (isLookingAt(threadId)) return actions.markRead(threadId);
+  set((st) => ({ ...st, threads: st.threads.map((t) => (t.id === threadId ? { ...t, unread: t.unread + 1 } : t)) }));
 }
 
 /** NEEDS_ATTENTION marks the "error" status this file set, so it can be cleared again. */
@@ -819,6 +849,72 @@ function keepBesidePage(st: State, message: Message, page: Message[]): boolean {
 }
 
 const chatActions = {
+  /**
+   * Call when a chat is on screen; call what it returns when it leaves. The chat is marked read
+   * now, whenever the tab becomes visible again, and as messages arrive while you look at it.
+   */
+  viewThread(threadId: string): () => void {
+    viewedThreadId = threadId;
+    actions.markRead(threadId);
+    const onVisible = () => {
+      if (isLookingAt(threadId)) actions.markRead(threadId);
+    };
+    document.addEventListener("visibilitychange", onVisible);
+    return () => {
+      document.removeEventListener("visibilitychange", onVisible);
+      if (viewedThreadId === threadId) viewedThreadId = null;
+    };
+  },
+
+  /** Your chats again from the API: new counts, previews, groups you were added to or removed from. */
+  async refreshChats(): Promise<void> {
+    if (isDemoMode() || state.authStatus !== "signed-in") return;
+    const orgId = state.org.id;
+    const apiThreads = await threadApi.list(orgId).catch(() => null);
+    if (!apiThreads) return;
+    set((st) => {
+      if (st.org.id !== orgId) return st;
+      const threads = apiThreads.map((t) => {
+        const thread = withBotName(toThread(t), st.bots);
+        return isLookingAt(thread.id) ? { ...thread, unread: 0 } : thread;
+      });
+      return { ...st, threads };
+    });
+  },
+
+  /** Rename a group. Its creator, owners and admins may (`useCanChangeLead`, the same rule). */
+  async renameGroup(threadId: string, title: string): Promise<ActionResult> {
+    const name = title.trim();
+    if (!name) return { ok: false, error: "Give the group a name." };
+    if (isDemoMode()) return putGroup(threadId, (t) => ({ ...t, title: name }));
+    return saveGroup(() => threadApi.rename(state.org.id, threadId, name));
+  },
+
+  /** Add people and bots to a group. Ones already in it are left as they are. */
+  async addToGroup(threadId: string, add: { userIds: string[]; botIds: string[] }): Promise<ActionResult> {
+    if (isDemoMode()) {
+      return putGroup(threadId, (t) => {
+        const added = [...add.userIds.map((id) => ({ type: "user" as const, id })), ...add.botIds.map((id) => ({ type: "bot" as const, id }))];
+        const fresh = added.filter((p) => !t.participants.some((q) => q.type === p.type && q.id === p.id));
+        return { ...t, participants: [...t.participants, ...fresh] };
+      });
+    }
+    return saveGroup(() => threadApi.addParticipants(state.org.id, threadId, add));
+  },
+
+  /** Take a person or a bot out of a group. Removing the lead bot leaves it without a lead. */
+  async removeFromGroup(threadId: string, who: Participant): Promise<ActionResult> {
+    if (isDemoMode()) {
+      const people = state.threads.find((t) => t.id === threadId)?.participants.filter((p) => p.type === "user") ?? [];
+      if (who.type === "user" && people.length === 1) return { ok: false, error: "A group needs at least one person." };
+      return putGroup(threadId, (t) => ({
+        ...t,
+        participants: t.participants.filter((p) => !(p.type === who.type && p.id === who.id)),
+        leadBotId: who.type === "bot" && t.leadBotId === who.id ? undefined : t.leadBotId,
+      }));
+    }
+    return saveGroup(() => threadApi.removeParticipant(state.org.id, threadId, who.type, who.id));
+  },
   /**
    * Call when a chat opens; call what it returns when it closes. On the API this loads the
    * chat's messages and follows its live updates. The mock has everything already.
@@ -953,6 +1049,26 @@ const chatActions = {
     }
   },
 };
+
+/** MOCK: change a group in the store. */
+function putGroup(threadId: string, change: (thread: Thread) => Thread): ActionResult {
+  set((st) => ({ ...st, threads: st.threads.map((t) => (t.id === threadId ? change(t) : t)) }));
+  return { ok: true };
+}
+
+/** Save a change to a group on the API, and show the group as it answers (your unread count stays). */
+async function saveGroup(save: () => Promise<ApiThread>): Promise<ActionResult> {
+  const orgId = state.org.id;
+  try {
+    const saved = toThread(await save());
+    set((st) =>
+      st.org.id !== orgId ? st : { ...st, threads: st.threads.map((t) => (t.id === saved.id ? { ...saved, unread: t.unread, pinned: t.pinned } : t)) },
+    );
+    return { ok: true };
+  } catch (error) {
+    return failure(error);
+  }
+}
 
 /**
  * Shows your message at once, then sends it. The API answers with the saved message and the
@@ -1450,8 +1566,10 @@ export const actions = {
     if (threadId && !isDemoMode()) actions.sendMessage(threadId, answer);
   },
 
+  /** You've seen this chat: its count drops to 0 here and, on the API, for your other devices too. */
   markRead(threadId: string) {
-    set((st) => ({ ...st, threads: st.threads.map((t) => (t.id === threadId ? { ...t, unread: 0 } : t)) }));
+    set((st) => ({ ...st, threads: st.threads.map((t) => (t.id === threadId && t.unread !== 0 ? { ...t, unread: 0 } : t)) }));
+    if (!isDemoMode() && state.authStatus === "signed-in") void threadApi.markRead(state.org.id, threadId).catch(() => {});
   },
 
   updateBot(botId: string, patch: Partial<Bot>) {
@@ -1574,7 +1692,7 @@ export const actions = {
     return actions.createBot({
       name: t.name, role: t.role, description: t.description, avatarColor: t.avatarColor,
       modelId: isDemoMode() ? "m_claude" : "", securityLevel: state.org.defaultSecurityLevel, computerMode: "own",
-      instructions: "", monthlyBudgetUsd: 20,
+      instructions: t.instructions ?? "", monthlyBudgetUsd: 20,
     });
   },
 
@@ -1767,16 +1885,19 @@ export const actions = {
     if (isDemoMode()) return { ok: false, error: "Adding MCP servers works once botdesk is connected to its API." };
     const orgId = state.org.id;
     try {
-      const saved = toMcpServer(await mcpApi.add(orgId, input));
+      const added = await mcpApi.add(orgId, input);
+      const saved = toMcpServer(added);
       // Bots' Tools tabs now have one more plugin: they load again when next opened.
       set((st) => (st.org.id !== orgId ? st : { ...st, mcpServers: { status: "ready", items: [...st.mcpServers.items, saved] }, botTools: {} }));
+      // It wants a sign-in (it answered 401, or you said so): off to its sign-in page, back on /apps/callback.
+      if (added.authorizeUrl) browser.leaveFor(added.authorizeUrl);
       return { ok: true };
     } catch (error) {
       return failure(error);
     }
   },
 
-  /** Owners and admins: list the server's tools again and trust them as they are now. */
+  /** Owners and admins: list the server's tools again. Changed and new ones wait for the review. */
   async refreshMcpServer(serverId: string): Promise<ActionResult> {
     if (isDemoMode()) return { ok: false, error: "MCP servers work once botdesk is connected to its API." };
     const orgId = state.org.id;
@@ -1787,6 +1908,34 @@ export const actions = {
         : { ...st, mcpServers: { ...st.mcpServers, items: st.mcpServers.items.map((s) => (s.id === serverId ? saved : s)) }, botTools: {} },
       );
       return saved.status === "unreachable" ? { ok: false, error: saved.statusReason ?? "Couldn't reach the server." } : { ok: true };
+    } catch (error) {
+      return failure(error);
+    }
+  },
+
+  /** Owners and admins: approve tools as they are now, on or off for bots, at these risks (Review tools). */
+  async reviewMcpTools(serverId: string, toolsHash: string, tools: McpToolChoice[]): Promise<ActionResult> {
+    if (isDemoMode()) return { ok: false, error: "MCP servers work once botdesk is connected to its API." };
+    const orgId = state.org.id;
+    try {
+      const saved = toMcpServer(await mcpApi.reviewTools(orgId, serverId, { toolsHash, tools }));
+      set((st) =>
+        st.org.id !== orgId ? st
+        : { ...st, mcpServers: { ...st.mcpServers, items: st.mcpServers.items.map((s) => (s.id === serverId ? saved : s)) }, botTools: {} },
+      );
+      return { ok: true };
+    } catch (error) {
+      return failure(error);
+    }
+  },
+
+  /** Owners and admins: sign in to an OAuth MCP server again (Reconnect). The tab leaves for its sign-in page. */
+  async signInMcpServer(serverId: string): Promise<ActionResult> {
+    if (isDemoMode()) return { ok: false, error: "MCP servers work once botdesk is connected to its API." };
+    try {
+      const { authorizeUrl } = await mcpApi.signIn(state.org.id, serverId);
+      browser.leaveFor(authorizeUrl);
+      return { ok: true };
     } catch (error) {
       return failure(error);
     }

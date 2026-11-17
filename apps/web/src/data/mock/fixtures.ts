@@ -359,4 +359,10 @@ export const templates: Template[] = [
   { id: "tpl_exp", name: "Expense Clerk", role: "Finance", description: "Receipts in, reports out.", avatarColor: "amber", installs: 4_870, connectors: ["gmail"], category: "Finance" },
   { id: "tpl_qa", name: "QA Tester", role: "Engineering", description: "Clicks through your app every night and files what breaks.", avatarColor: "rose", installs: 3_990, connectors: [], category: "Engineering" },
   { id: "tpl_research", name: "Researcher", role: "Research", description: "Deep multi-source research with cited reports.", avatarColor: "orange", installs: 9_760, connectors: [], category: "Research" },
+  { id: "tpl_chief", name: "Chief", role: "Chief of staff", description: "Plans the work, hands tasks to teammates and keeps you posted.", avatarColor: "indigo", installs: 15_300, connectors: [], category: "Productivity",
+    instructions:
+      "You are the team's chief of staff. When someone asks for something, work out what needs doing and who on the team is best at each part. " +
+      "Hand each part to that teammate with the team.handoff tool, with a clear task and what a good result looks like, then wait for their results. " +
+      "Do small things yourself. When the results are back, give the person one short summary: what was done, what is waiting for their approval, and anything you need from them. " +
+      "Ask before guessing when a request is unclear." },
 ];

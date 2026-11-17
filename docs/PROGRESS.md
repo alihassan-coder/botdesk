@@ -2,6 +2,34 @@
 
 A short history of BotDesk, newest first. For one checklist of what is done and what is next, see [ROADMAP.md](ROADMAP.md).
 
+## 2026-11-17: Unread counts, managing groups, dated model prices
+
+Details: [backend guide](backend/README.md#unread-counts), [frontend guide](frontend/README.md#talking-to-the-api).
+
+- **Unread counts:** `thread_participants.last_read_at` (migration `4c1e9b7d2a80`, existing rows start read). The chat list returns `unread` per chat for you (messages after your mark by someone else; bots and system notices count, yours don't) in one grouped query. `POST /threads/{id}/read` marks a chat read; the web calls it when a chat is on screen in a visible tab (open, back to the tab, each new message), adds one live for messages heard elsewhere, and refreshes the list every 20 s while visible.
+- **Managing a group:** `PATCH /threads/{id}` (rename), `POST /threads/{id}/participants`, `DELETE /threads/{id}/participants/{type}/{id}`, for the group's creator, owners and admins (the lead's rule). Removing the lead bot clears it; a removed person can't open the group and their open stream ends; the last person stays; a DM can't be changed. Changes (and lead changes) go out live as `thread_updated`. Web: a rename pencil, "Add people or bots" and Remove buttons in the group's details pane.
+- **Dated prices:** `PRICE_TABLE` entries can be `(effective_from, price)` steps; the price in effect at the call's time is used. The Gemini changes on 2026-12-01 and 2027-01-01 are in, so nothing needs editing on the day.
+- **Later:** an org-wide event stream (unread counts for chats not open come from the 20 s refresh); "leave group" for members; a confirm before removing a person.
+
+## 2026-11-17: Onboarding (first-time setup)
+
+Details: [frontend guide](frontend/README.md#routes).
+
+- **Who sees it:** after sign-up, the owner of an organization with no bots goes from `/` to `/welcome` (`lib/onboarding.ts`, `onboarding/use-onboarding-redirect.ts`; `/welcome` itself sends members and the demo home). Invited members, admins, teams with bots and the demo never do. Finishing or skipping is remembered per organization in this browser (`botdesk.onboarding.done.<orgId>`), so it never nags; no new API field.
+- **Steps** (`features/onboarding/`, outside the app shell, progress bars and Skip on each): name the organization (prefilled, `PATCH /orgs/{id}` only if changed); add an AI key (the Models & keys dialog; "Skip — bots will use a stand-in reply"); hire Chief (a new marketplace template) or Inbox Zero, or leave to create one from scratch; connect Gmail (the Connect apps dialog; a server without a Google client says so and links the guide). Finish opens the first hired bot's DM.
+- **Welcome message:** an empty DM now opens with the bot introducing itself (`threads/dm-welcome.tsx`, `lib/bot-welcome.ts`), so a new bot's chat never starts blank on the API either.
+- **Later:** after Google sign-in the browser lands on `/apps/callback`, not back in the bot's DM; the store has no "bots failed to load" state, so an owner whose bot list fails to load is offered setup (Skip setup gets out); Chief is a template with no chief-of-staff instructions yet.
+
+## 2026-11-17: Gmail extras: easier HTML mail, attachments, Markdown mail, drafts
+
+Details: [plugin README](../plugins/gmail/README.md); manual test: [testing/gmail.md](testing/gmail.md#5-extras-attachments-markdown-mail-and-drafts). Owner-approved additions to [ADR 0011](adr/0011-gmail-plugin.md) §3 ("not in v1": attachments, HTML compose); its email rules (§4) are unchanged.
+
+- **Reading HTML mail:** numbered lists (`1.`), table cells as `a | b` one row per line, quotes as `> ` lines, no zero-width preview filler, no bare links from images. Quoted earlier mail at the end of a reply ("On … wrote:" and the `> ` lines) is left out, with a `quoted` note outside the email block; forwards and quote-only messages stay whole. Fixtures: a newsletter and a reply chain.
+- **`gmail.read_attachment`** (read, taints the run): by message id and the attachment's `part`, which `gmail.read_thread` now lists (Gmail's attachment ids change between reads, so the tool looks the part up again). Text, CSV, JSON, XML and HTML only, up to 100 000 characters in an `<email>` block; PDFs, images and Office files aren't downloaded and the result says why; at most 10 MB.
+- **Markdown mail:** `gmail.send` and `create_draft` take `format: "markdown"` and send `multipart/alternative`: the body as written plus HTML we generate (`markdown.py`: headings, lists, bold, italic, code, http(s)/mailto links). The model's own HTML is escaped. Plain text stays the default.
+- **Drafts:** `gmail.list_drafts` (read, taints: reply drafts quote outside mail) and `gmail.send_draft` (external-send). The call carries the draft's recipients and subject, so the card reads "Send draft r-5512 to sara@acme.dev (cc …; bcc …): “Subject”"; right before sending the tool fetches the draft and sends nothing if they differ.
+- **Later:** PDF text, the draft's body on the send-draft card, signatures trimmed, quotes in other languages ("a écrit", "schrieb"), images' alt text, attachments on outgoing mail.
+
 ## 2026-11-17: Gmail finished: write tools and "React to new email" (slices 6.2-6.4)
 
 [ADR 0011](adr/0011-gmail-plugin.md). Details: [backend guide](backend/README.md#gmail-tools-and-the-new-email-trigger), [owner's guide](self-hosting/google-oauth.md); manual test: [testing/gmail.md](testing/gmail.md).

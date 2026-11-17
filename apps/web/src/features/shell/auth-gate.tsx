@@ -3,6 +3,7 @@ import { useRouter } from "next/navigation";
 import { actions, useAuthStatus } from "@/data/store";
 import { BotdeskMark } from "./logo";
 import { useApprovalsPolling } from "./use-approvals-polling";
+import { useChatListPolling } from "./use-chat-list-polling";
 
 /**
  * Shows the app only to signed-in people. On first load it checks for a saved session;
@@ -20,6 +21,7 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
   const wasSignedIn = useRef(false);
   const signedIn = status === "signed-in";
   useApprovalsPolling();
+  useChatListPolling();
 
   useEffect(() => {
     if (status === "unknown") actions.restoreSession();

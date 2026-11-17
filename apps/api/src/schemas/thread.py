@@ -4,7 +4,9 @@ from typing import Any
 
 from pydantic import Field
 
-from src.models.thread import AuthorType, MessageStatus, ParticipantType, ThreadKind
+# ParticipantType is re-exported for the routes (a path parameter), which don't import models.
+from src.models.thread import AuthorType, MessageStatus, ThreadKind
+from src.models.thread import ParticipantType as ParticipantType
 from src.schemas.common import ApiModel
 
 
@@ -25,6 +27,9 @@ class ThreadOut(ApiModel):
     participants: list[ParticipantOut]
     last_message_at: datetime
     last_message_preview: str
+    # Messages you haven't read: after you last read the chat, by someone else. 0 where not asked for
+    # (a live update to everyone in the chat).
+    unread: int = 0
 
 
 class OpenDmIn(ApiModel):
@@ -43,6 +48,19 @@ class LeadIn(ApiModel):
     """A group's new lead: one of its bots, or null for no lead."""
 
     bot_id: uuid.UUID | None
+
+
+class GroupPatchIn(ApiModel):
+    """A group's new name."""
+
+    title: str = Field(min_length=1, max_length=120)
+
+
+class ParticipantsIn(ApiModel):
+    """People and bots to add to a group. Ones already in it are left as they are."""
+
+    bot_ids: list[uuid.UUID] = Field(default_factory=list, max_length=20)
+    user_ids: list[uuid.UUID] = Field(default_factory=list, max_length=50)
 
 
 class AuthorOut(ApiModel):

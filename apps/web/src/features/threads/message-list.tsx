@@ -9,6 +9,7 @@ import {
 import { Spinner } from "@/components/ui/spinner";
 import { useThreadLoad, useThreadMessages } from "@/data/store";
 import type { Thread } from "@/data/types";
+import { DmWelcome } from "./dm-welcome";
 import { LoadOlderMessages } from "./load-older-messages";
 import { MessageItem } from "./message-item";
 import { RunAttentionNotices } from "./run-attention-notice";
@@ -35,6 +36,8 @@ export function MessageList({ thread }: { thread: Thread }) {
       </div>
     );
   }
+
+  if (messages.length === 0 && thread.kind === "dm" && thread.botId) return <DmWelcome botId={thread.botId} title={thread.title} />;
 
   if (messages.length === 0) {
     return (

@@ -224,12 +224,15 @@ async def test_connectors_say_how_each_app_connects_and_whether_it_is_set_up(tea
         ("gmail.search", "read"),
         ("gmail.read_thread", "read"),
         ("gmail.list_labels", "read"),
+        ("gmail.read_attachment", "read"),
         ("gmail.add_labels", "write-external"),
         ("gmail.remove_labels", "write-external"),
         ("gmail.archive", "write-external"),
         ("gmail.create_draft", "write-external"),
         ("gmail.send", "external-send"),
         ("gmail.trash", "destructive"),
+        ("gmail.list_drafts", "read"),
+        ("gmail.send_draft", "external-send"),
     ]
     assert gmail["name"] == "Gmail" and gmail["version"] == "0.1.0"
     assert demo["authType"] == "api_key" and demo["setup"] == "ready"

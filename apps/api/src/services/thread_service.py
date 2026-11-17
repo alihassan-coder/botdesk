@@ -8,17 +8,19 @@ import uuid
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import func, select
+from sqlalchemy import and_, delete, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.core.database import utcnow
 from src.core.errors import BadRequest, Forbidden, NotFound
 from src.models import Bot, Membership, Message, Thread, ThreadParticipant
+from src.models.thread import ParticipantType
 from src.schemas.thread import AuthorOut, MessageOut, ParticipantOut, ThreadOut
 
 PREVIEW_LENGTH = 80
 NOT_FOUND = "This chat doesn't exist."
 LEAD_NOT_IN_GROUP = "The lead must be one of the group's bots."
+NOT_IN_ORG = "Some of those people or bots aren't in this organization."
 
 
 def text_part(text: str) -> dict[str, str]:
@@ -43,13 +45,14 @@ def message_out(message: Message) -> MessageOut:
     )
 
 
-async def thread_outs(db: AsyncSession, threads: list[Thread]) -> list[ThreadOut]:
-    """Threads as the API shows them. Three queries in total, however many threads: everyone
-    in them, each thread's last message, and the names of the DMs' bots. A DM is titled with
-    its bot's current name, so renaming a bot renames its chats."""
+async def thread_outs(db: AsyncSession, threads: list[Thread], *, user_id: uuid.UUID | None = None) -> list[ThreadOut]:
+    """Threads as the API shows them. Up to four queries in total, however many threads: everyone
+    in them, each thread's last message, the names of the DMs' bots, and (for `user_id`) their
+    unread counts. A DM is titled with its bot's current name, so renaming a bot renames its chats."""
     if not threads:
         return []
     ids = [thread.id for thread in threads]
+    unread = await _unread_counts(db, ids, user_id) if user_id else {}
     participants: dict[uuid.UUID, list[ParticipantOut]] = {thread_id: [] for thread_id in ids}
     for thread_id, kind, participant_id in await db.execute(
         select(ThreadParticipant.thread_id, ThreadParticipant.participant_type, ThreadParticipant.participant_id).where(
@@ -76,14 +79,48 @@ async def thread_outs(db: AsyncSession, threads: list[Thread]) -> list[ThreadOut
                 "participants": participants[thread.id],
                 "last_message_at": thread.last_message_at,
                 "last_message_preview": previews.get(thread.id, ""),
+                "unread": unread.get(thread.id, 0),
             }
         )
         for thread in threads
     ]
 
 
-async def thread_out(db: AsyncSession, thread: Thread) -> ThreadOut:
-    return (await thread_outs(db, [thread]))[0]
+async def thread_out(db: AsyncSession, thread: Thread, *, user_id: uuid.UUID | None = None) -> ThreadOut:
+    return (await thread_outs(db, [thread], user_id=user_id))[0]
+
+
+async def _unread_counts(db: AsyncSession, thread_ids: list[uuid.UUID], user_id: uuid.UUID) -> dict[uuid.UUID, int]:
+    """For each thread, the messages after the person last read it that someone else wrote, in
+    one query. It walks the (thread_id, created_at) index from each thread's read mark."""
+    rows = await db.execute(
+        select(ThreadParticipant.thread_id, func.count(Message.id))
+        .join(
+            Message,
+            and_(Message.thread_id == ThreadParticipant.thread_id, Message.created_at > ThreadParticipant.last_read_at),
+        )
+        .where(
+            ThreadParticipant.thread_id.in_(thread_ids),
+            ThreadParticipant.participant_type == "user",
+            ThreadParticipant.participant_id == user_id,
+            or_(Message.author_type != "user", Message.author_id.is_(None), Message.author_id != user_id),
+        )
+        .group_by(ThreadParticipant.thread_id)
+    )
+    return {thread_id: count for thread_id, count in rows}
+
+
+async def mark_read(db: AsyncSession, thread: Thread, *, user_id: uuid.UUID) -> None:
+    """The person has read the chat up to now. The caller commits."""
+    await db.execute(
+        update(ThreadParticipant)
+        .where(
+            ThreadParticipant.thread_id == thread.id,
+            ThreadParticipant.participant_type == "user",
+            ThreadParticipant.participant_id == user_id,
+        )
+        .values(last_read_at=utcnow())
+    )
 
 
 async def _last_message_previews(db: AsyncSession, thread_ids: list[uuid.UUID]) -> dict[uuid.UUID, str]:
@@ -135,6 +172,22 @@ def _add_participants(db: AsyncSession, thread: Thread, *, users: set[uuid.UUID]
         db.add(ThreadParticipant(thread_id=thread.id, participant_type="bot", participant_id=bot_id))
 
 
+async def _check_in_org(db: AsyncSession, org_id: uuid.UUID, *, users: set[uuid.UUID], bots: set[uuid.UUID]) -> None:
+    """Every one of these people and bots belongs to the organization, or 404."""
+    members = (
+        set(
+            await db.scalars(
+                select(Membership.user_id).where(Membership.org_id == org_id, Membership.user_id.in_(users))
+            )
+        )
+        if users
+        else set()
+    )
+    org_bots = set(await db.scalars(select(Bot.id).where(Bot.org_id == org_id, Bot.id.in_(bots)))) if bots else set()
+    if members != users or org_bots != bots:
+        raise NotFound(NOT_IN_ORG)
+
+
 async def open_dm(db: AsyncSession, *, org_id: uuid.UUID, user_id: uuid.UUID, bot_id: uuid.UUID) -> Thread:
     """Your DM with a bot: the existing one, or a new one."""
     bot = await db.get(Bot, bot_id)
@@ -174,13 +227,8 @@ async def create_group(
     if lead_bot_id is not None and lead_bot_id not in bot_ids:
         raise BadRequest(LEAD_NOT_IN_GROUP)
     users = {creator_id, *user_ids}
-    members = set(
-        await db.scalars(select(Membership.user_id).where(Membership.org_id == org_id, Membership.user_id.in_(users)))
-    )
     bots = set(bot_ids)
-    org_bots = set(await db.scalars(select(Bot.id).where(Bot.org_id == org_id, Bot.id.in_(bots)))) if bots else set()
-    if members != users or org_bots != bots:
-        raise NotFound("Some of those people or bots aren't in this organization.")
+    await _check_in_org(db, org_id, users=users, bots=bots)
 
     lead = lead_bot_id or (bot_ids[0] if bot_ids else None)
     thread = Thread(
@@ -215,6 +263,103 @@ async def set_lead(
     thread.lead_bot_id = bot_id
     await db.flush()
     return thread
+
+
+def _check_can_manage(thread: Thread, *, user_id: uuid.UUID, role: str) -> None:
+    """A group (never a DM) whose creator, or an owner or admin of the organization, is asking.
+    The caller already checked they're in it (ADR 0009's rule for the lead)."""
+    if thread.kind != "group":
+        raise BadRequest("Only a group can be changed.")
+    if thread.created_by != user_id and role not in ("owner", "admin"):
+        raise Forbidden("Only the group's creator, owners and admins can change it.")
+
+
+async def rename_group(db: AsyncSession, thread: Thread, *, user_id: uuid.UUID, role: str, title: str) -> Thread:
+    """The caller commits."""
+    _check_can_manage(thread, user_id=user_id, role=role)
+    name = title.strip()
+    if not name:
+        raise BadRequest("Give the group a name.")
+    thread.title = name
+    await db.flush()
+    return thread
+
+
+async def add_participants(
+    db: AsyncSession,
+    thread: Thread,
+    *,
+    user_id: uuid.UUID,
+    role: str,
+    user_ids: list[uuid.UUID],
+    bot_ids: list[uuid.UUID],
+) -> Thread:
+    """Add people and bots of the organization; ones already in the group are skipped. A person
+    added starts with nothing unread. The caller commits."""
+    _check_can_manage(thread, user_id=user_id, role=role)
+    users, bots = set(user_ids), set(bot_ids)
+    await _check_in_org(db, thread.org_id, users=users, bots=bots)
+    already = set(
+        await db.execute(
+            select(ThreadParticipant.participant_type, ThreadParticipant.participant_id).where(
+                ThreadParticipant.thread_id == thread.id
+            )
+        )
+    )
+    _add_participants(
+        db,
+        thread,
+        users={u for u in users if ("user", u) not in already},
+        bots={b for b in bots if ("bot", b) not in already},
+    )
+    await db.flush()
+    return thread
+
+
+async def remove_participant(
+    db: AsyncSession,
+    thread: Thread,
+    *,
+    user_id: uuid.UUID,
+    role: str,
+    kind: ParticipantType,
+    participant_id: uuid.UUID,
+) -> Thread:
+    """Take a person or a bot out of the group. A person removed can't see it any more; removing
+    the lead bot leaves the group without a lead. The last person stays. The caller commits."""
+    _check_can_manage(thread, user_id=user_id, role=role)
+    in_group = ThreadParticipant.thread_id == thread.id
+    people = list(
+        await db.scalars(
+            select(ThreadParticipant.participant_id).where(in_group, ThreadParticipant.participant_type == "user")
+        )
+    )
+    if kind == "user" and participant_id in people and len(people) == 1:
+        raise BadRequest("A group needs at least one person.")
+    removed = await db.execute(
+        delete(ThreadParticipant).where(
+            in_group,
+            ThreadParticipant.participant_type == kind,
+            ThreadParticipant.participant_id == participant_id,
+        )
+    )
+    if removed.rowcount == 0:  # type: ignore[attr-defined]
+        raise NotFound("They aren't in this group.")
+    if kind == "bot" and thread.lead_bot_id == participant_id:
+        thread.lead_bot_id = None
+    await db.flush()
+    return thread
+
+
+async def is_participant(db: AsyncSession, thread_id: uuid.UUID, user_id: uuid.UUID) -> bool:
+    found = await db.scalar(
+        select(ThreadParticipant.participant_id).where(
+            ThreadParticipant.thread_id == thread_id,
+            ThreadParticipant.participant_type == "user",
+            ThreadParticipant.participant_id == user_id,
+        )
+    )
+    return found is not None
 
 
 async def list_messages(

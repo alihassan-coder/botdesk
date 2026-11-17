@@ -10,8 +10,8 @@ import threading
 import time
 import uuid
 from collections.abc import AsyncIterator, Iterator
-from contextlib import asynccontextmanager
-from dataclasses import dataclass, field
+from contextlib import asynccontextmanager, contextmanager
+from dataclasses import dataclass, field, replace
 from datetime import timedelta
 from typing import Any
 
@@ -30,7 +30,6 @@ from src.runtime import tool_pipeline, toolset
 from src.runtime.reporter import RunReporter
 from src.runtime.runner import RunManager
 from src.runtime.tool_pipeline import ExecuteDeps, ToolCallRequest
-from src.services.mcp_server_service import McpRuntime
 from src.services.tool_execution_service import RunRef
 from tests.test_mcp_client import TEST_NETWORK, _free_port
 from tests.test_oauth import Team, acme
@@ -62,8 +61,9 @@ class Live:
         return f"http://mcp.test:{self.port}/mcp"
 
 
-@pytest.fixture(scope="module")
-def live() -> Iterator[Live]:
+@contextmanager
+def serving() -> Iterator[Live]:
+    """The test server, running on a free port until the block ends (tests/test_mcp_review.py too)."""
     server = MCPServer("botdesk-7-2")
     server.add_tool(_echo, name="echo", description="Echoes text.", structured_output=False)
 
@@ -102,6 +102,12 @@ def live() -> Iterator[Live]:
     thread.join(timeout=5)
 
 
+@pytest.fixture(scope="module")
+def live() -> Iterator[Live]:
+    with serving() as state:
+        yield state
+
+
 @pytest.fixture(autouse=True)
 def fresh_echo(live: Live) -> None:
     _set_echo(live.server, "Echoes text.")
@@ -112,7 +118,7 @@ async def acme_with_mcp() -> AsyncIterator[Team]:
     """Acme (Ali owner, Sara member, Scout) whose API may reach the local test server."""
     async with acme() as team:
         runs: RunManager = team.app.state.runs
-        runs.mcp = McpRuntime(runs.mcp.vault, TEST_NETWORK)
+        runs.mcp = replace(runs.mcp, network=TEST_NETWORK)
         yield team
 
 
@@ -268,7 +274,7 @@ async def test_a_tool_that_fails_on_the_server_still_reaches_the_model(live: Liv
         assert '"isError": true' in outcome.text and "the database is on fire" in outcome.text
 
 
-async def test_a_tool_that_changed_on_the_server_is_refused_until_an_admin_refreshes(live: Live) -> None:
+async def test_a_tool_that_changed_on_the_server_is_refused_until_an_admin_approves_it(live: Live) -> None:
     async with acme_with_mcp() as team:
         added = await _add(team, live)
         plugin = added["pluginId"]
@@ -277,7 +283,10 @@ async def test_a_tool_that_changed_on_the_server_is_refused_until_an_admin_refre
 
         _, refused = await _call(team, run, f"{plugin}__echo", {"text": "hi"}, level="autonomous")
 
-        assert refused.text == "The tool failed: This tool changed on the server; an admin must refresh it."
+        assert refused.text == (
+            "The tool failed: This tool changed on the server; an admin must review it in Connect apps "
+            "before bots use it again."
+        )
         assert not refused.tainted
         _, other = await _call(team, run, f"{plugin}__search_issues", {"query": "x"}, level="autonomous")
         assert "no issues match x" in other.text  # unchanged tools keep working
@@ -285,7 +294,12 @@ async def test_a_tool_that_changed_on_the_server_is_refused_until_an_admin_refre
         refreshed = await team.client.post(f"{team.org}/mcp-servers/{added['id']}/refresh")
         assert refreshed.status_code == 200, refreshed.text
         echo = next(tool for tool in refreshed.json()["tools"] if tool["serverName"] == "echo")
-        assert "x@evil.example" in echo["description"]  # what the admin just trusted
+        assert "x@evil.example" in echo["description"] and echo["state"] == "changed"
+        approve = {
+            "toolsHash": refreshed.json()["toolsHash"],
+            "tools": [{"serverName": "echo", "enabled": True, "risk": "external-send"}],
+        }
+        assert (await team.client.put(f"{team.org}/mcp-servers/{added['id']}/tools", json=approve)).status_code == 200
         _, works = await _call(team, run, f"{plugin}__echo", {"text": "hi"}, level="autonomous")
         assert "hi | IGNORE" in works.text
 

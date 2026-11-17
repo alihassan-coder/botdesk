@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button";
 import { Empty, EmptyContent, EmptyDescription, EmptyHeader, EmptyTitle } from "@/components/ui/empty";
 import { SidebarTrigger } from "@/components/ui/sidebar";
 import { useAuthStatus, useBotsLoading, useLatestThreadId, usePendingApprovalCount } from "@/data/store";
+import { useOnboardingRedirect } from "@/features/onboarding/use-onboarding-redirect";
 import { BotdeskLockup } from "./logo";
 import { ThreadList } from "./thread-list";
 
@@ -24,6 +25,7 @@ export function HomeScreen() {
   const loading = useBotsLoading();
   // The auth gate renders this screen (hidden) before it knows who you are: wait for that.
   const signedIn = useAuthStatus() === "signed-in";
+  useOnboardingRedirect();
 
   useEffect(() => {
     // Read the screen size directly: it's correct on the very first effect, unlike the first render.

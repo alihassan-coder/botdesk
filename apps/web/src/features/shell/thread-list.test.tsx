@@ -1,4 +1,4 @@
-import { screen, within } from "@testing-library/react";
+import { act, screen, within } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { actions, getStoreSnapshot } from "@/data/store";
 import { renderUI } from "@/test/render";
@@ -28,6 +28,14 @@ describe("ThreadList", () => {
     const row = await screen.findByRole("link", { name: /Inbox Manager/ });
     expect(within(row).getByText("2 replies waiting for you")).toBeInTheDocument();
     expect(within(row).getByText("2")).toBeInTheDocument();
+  });
+
+  it("the unread badge follows the store, and goes once the chat is read", async () => {
+    renderUI(<ThreadList />);
+    const row = await screen.findByRole("link", { name: /Inbox Manager/ });
+    expect(within(row).getByText("2")).toBeInTheDocument();
+    act(() => actions.markRead("t_inbox"));
+    expect(within(row).queryByText("2")).not.toBeInTheDocument();
   });
 
   it("filters by search and says when nothing matches", async () => {

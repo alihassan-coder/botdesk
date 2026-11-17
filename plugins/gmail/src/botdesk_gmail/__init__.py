@@ -13,11 +13,15 @@
 - Slice 6.2: the write tools `add_labels`, `remove_labels`, `archive`, `create_draft`, `send` and
   `trash` (`write_tools.py`), all needing `gmail.modify`.
 - Slice 6.3: the `new_email` trigger (`trigger.py`), polled every minute by BotDesk's job queue.
+- Extras: `read_attachment` (`attachments.py`), `list_drafts` and `send_draft` (`drafts.py`), and
+  Markdown mail (`format="markdown"`, `markdown.py`).
 """
 
 from botdesk_plugin_sdk import AccountIdentity, HttpClient, OAuth2Auth, PluginManifest
 
 from botdesk_gmail.api import GMAIL_API, GMAIL_HOST, GmailError
+from botdesk_gmail.attachments import ATTACHMENT_TOOLS
+from botdesk_gmail.drafts import DRAFT_TOOLS
 from botdesk_gmail.tools import READ_SCOPE, TOOLS
 from botdesk_gmail.trigger import NEW_EMAIL
 from botdesk_gmail.write_tools import MODIFY_SCOPE, WRITE_TOOLS
@@ -55,7 +59,7 @@ def gmail_plugin() -> PluginManifest:
         name="Gmail",
         version="0.1.0",
         description="Search, read, label, archive, draft, send and trash email in a connected Gmail account.",
-        tools=TOOLS + WRITE_TOOLS,
+        tools=TOOLS + ATTACHMENT_TOOLS + WRITE_TOOLS + DRAFT_TOOLS,
         auth=GOOGLE,
         egress=(GMAIL_HOST,),
         triggers=(NEW_EMAIL,),

@@ -21,6 +21,7 @@ from botdesk_plugin_sdk.testing import FakeHttp, call_tool, make_context
 from pydantic import ValidationError
 
 from botdesk_gmail import GMAIL_API, MODIFY_SCOPE, GmailError, gmail_plugin
+from botdesk_gmail.markdown import markdown_to_html
 
 FIXTURES = Path(__file__).parent / "fixtures"
 USERS_ME = f"{GMAIL_API}/gmail/v1/users/me"
@@ -70,13 +71,14 @@ def test_the_write_tools_need_gmail_modify_and_declare_their_risk() -> None:
         "create_draft": "write-external",
         "send": "external-send",
         "trash": "destructive",
+        "send_draft": "external-send",
     }
     for name in risks:
         assert tools[name].scopes == (MODIFY_SCOPE,)
         assert not tools[name].untrusted_output
     # Changing labels again changes nothing more; a second draft or send is a second email.
     assert tools["add_labels"].idempotent and tools["archive"].idempotent and tools["trash"].idempotent
-    assert not tools["send"].idempotent and not tools["create_draft"].idempotent
+    assert not tools["send"].idempotent and not tools["create_draft"].idempotent and not tools["send_draft"].idempotent
 
 
 def test_the_generated_manifest_json_is_up_to_date() -> None:
@@ -165,6 +167,54 @@ async def test_send_sends_one_plain_text_email_built_from_the_arguments() -> Non
     assert mail.get_content_type() == "text/plain"
     assert mail.get_content() == "Hi Sara,\r\n\r\nThursday at 3 PM works.\r\n\r\nAli\r\n"  # RFC 2822 line ends
     assert result == {"account": "ali@acme.dev", "sent": True, "id": "18f0c1", "threadId": "18f0a0"}
+
+
+MARKDOWN = (
+    "# Launch plan\n\n"
+    "Hi **Sara**, the review is *Thursday* at `3 PM`.\n"
+    "Agenda:\n\n"
+    "- Demo\n"
+    "- [Checklist](https://acme.dev/launch?a=1&b=2)\n\n"
+    "1. Ship\n"
+    "2. Celebrate\n\n"
+    "<script>alert(1)</script> <b onclick=x>raw</b> [bad](javascript:alert(1))"
+)
+
+
+async def test_a_markdown_body_is_sent_as_plain_text_and_html_we_generate() -> None:
+    http = gmail()
+    http.route("POST", f"{USERS_ME}/messages/send", json=fixture("message_sent"))
+
+    await run(http, "send", {**MAIL, "body": MARKDOWN, "format": "markdown"})
+
+    mail = sent_mail(http.requests[0].json["raw"])
+    assert mail.get_content_type() == "multipart/alternative"
+    plain, rich = mail.iter_parts()
+    assert plain.get_content_type() == "text/plain"
+    assert plain.get_content().replace("\r\n", "\n").strip() == MARKDOWN  # readable as it was written
+    assert rich.get_content_type() == "text/html"
+    html = rich.get_content()
+    assert "<h1>Launch plan</h1>" in html
+    assert "Hi <strong>Sara</strong>, the review is <em>Thursday</em> at <code>3 PM</code>.<br>" in html
+    assert '<ul><li>Demo</li><li><a href="https://acme.dev/launch?a=1&amp;b=2">Checklist</a></li></ul>' in html
+    assert "<ol><li>Ship</li><li>Celebrate</li></ol>" in html
+    # The model's own markup is text, never HTML; only http(s) and mailto links become links.
+    assert "&lt;script&gt;alert(1)&lt;/script&gt; &lt;b onclick=x&gt;raw&lt;/b&gt;" in html
+    assert "<script" not in html and "javascript:" not in html.split("[bad]")[0] and 'href="javascript' not in html
+
+
+def test_markdown_links_keep_underscores_and_stars_in_their_address() -> None:
+    html = markdown_to_html("[docs](https://x.example/_a_/b**c**) and *after*")
+    assert '<a href="https://x.example/_a_/b**c**">docs</a> and <em>after</em>' in html
+
+
+async def test_plain_is_the_default_and_a_markdown_draft_is_multipart_too() -> None:
+    http = gmail()
+    http.route("POST", f"{USERS_ME}/drafts", json=fixture("draft_created"))
+    await run(http, "create_draft", {**MAIL, "format": "markdown"})
+    assert sent_mail(http.requests[0].json["message"]["raw"]).get_content_type() == "multipart/alternative"
+    with pytest.raises(ValidationError):
+        await run(gmail(), "send", {**MAIL, "format": "html"})  # no raw HTML from the model
 
 
 async def test_a_reply_goes_into_the_thread_with_in_reply_to_and_references() -> None:

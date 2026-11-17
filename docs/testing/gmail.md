@@ -1,4 +1,4 @@
-# Manual test: Gmail (slices 6.1-6.3)
+# Manual test: Gmail (slices 6.1-6.5)
 
 How to check by hand that a bot can read, organise, draft and send email with approvals, and react to new email. About 30 minutes, most of it the Google setup (once). Background: [ADR 0011](../adr/0011-gmail-plugin.md), [owner's guide](../self-hosting/google-oauth.md), [backend guide](../backend/README.md#gmail-tools-and-the-new-email-trigger).
 
@@ -66,6 +66,24 @@ Follow [the guide](../self-hosting/google-oauth.md) steps 1-6. For a local insta
    - [ ] Connect again and choose the account in Tools: the next new email is reacted to again.
 6. Switch **React to new email** off.
    - [ ] New mail no longer posts in the chat.
+
+## 5. Extras: attachments, Markdown mail and drafts
+
+Bot at **Ask before acting**. From your second address, send the test account an email with a small `.csv` attachment and a `.pdf`, and a newsletter-style HTML email if you have one (or forward one).
+
+1. "Read my newest email with an attachment and tell me what's in the CSV."
+   - [ ] It reads the thread (the attachments are listed with a `part`) and then the CSV with `gmail.read_attachment`, without asking.
+   - [ ] Asking for the PDF gets "BotDesk can't read PDF attachments yet" instead of made-up content.
+2. "Summarise the newsletter."
+   - [ ] The summary has the newsletter's lists and prices; nothing from hidden preview text.
+3. Reply to one of the bot's test emails from your second address (so the reply quotes it), then "Read that reply."
+   - [ ] The bot sees your new text, not the quoted copy below "On … wrote:".
+4. "Send <your second address> an email with subject Formatting test, as markdown: a heading, a bullet list and a **bold** word, plus the text <b>not bold</b>."
+   - [ ] The card shows the body as written. Approve → in the mail app the heading, list and bold word are formatted, and `<b>not bold</b>` shows as text.
+5. "Draft an email to <your second address> with subject Draft test." Approve the draft. Then "List my drafts and send the Draft test one."
+   - [ ] `gmail.list_drafts` runs without asking; the send card reads "Send draft r-… to <your second address>: “Draft test”". Approve → it arrives once and leaves Drafts.
+6. In Gmail, open another draft and change its recipient. Ask the bot to send it with the old recipient (from an earlier `list_drafts`).
+   - [ ] Approving sends nothing: the bot reports the draft doesn't match what the card showed.
 
 ## If something's off
 

@@ -81,3 +81,85 @@ def snapshot_hash(entries: list[dict[str, Any]]) -> str:
     """One hash for the whole list, to tell at a glance whether anything changed."""
     joined = "\n".join(sorted(f"{entry['name']}:{entry['hash']}" for entry in entries))
     return hashlib.sha256(joined.encode()).hexdigest()
+
+
+# Review (slice 7.4): what an admin approved, and what changed since.
+
+# The risks an admin may give an MCP tool on the review screen (never below `read`).
+REVIEW_RISKS = ("read", "write-internal", "write-external", "external-send", "destructive")
+DEFAULT_RISK = "external-send"
+_DEFINITION = ("title", "description", "inputSchema", "outputSchema")
+
+
+def normalized(entry: dict[str, Any]) -> dict[str, Any]:
+    """An entry with its review fields. Entries saved before reviews existed (slice 7.2) were
+    trusted as they were: approved, offered, `external-send`."""
+    return {
+        **entry,
+        "state": entry.get("state", "approved"),
+        "enabled": entry.get("enabled", True),
+        "risk": entry.get("risk", DEFAULT_RISK),
+        "approvedHash": entry.get("approvedHash", entry["hash"] if "state" not in entry else None),
+    }
+
+
+def offered(entry: dict[str, Any]) -> bool:
+    """Bots are offered a tool only when an admin approved it as it is now, and left it on."""
+    entry = normalized(entry)
+    return bool(entry["state"] == "approved" and entry["enabled"] and entry["approvedHash"] == entry["hash"])
+
+
+def review_diff(old: list[dict[str, Any]], fresh: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """The snapshot to store after listing the tools again (`fresh`, from `snapshot`), given the
+    one stored (`old`). The first snapshot is approved and offered as it is. After that:
+
+    - unchanged: kept as the admin left it (on or off, its risk);
+    - **changed** (hash differs from the approved one): not offered; `previous` keeps what was approved;
+    - **new**: `pending`, off, until an admin approves it;
+    - **removed**: kept as `removed` to show in the diff (a tool never approved is just dropped).
+
+    A tool's local name never changes across refreshes (bindings and approvals name it)."""
+    if not old:
+        return [
+            {**entry, "state": "approved", "enabled": True, "risk": DEFAULT_RISK, "approvedHash": entry["hash"]}
+            for entry in fresh
+        ]
+    before = {entry["name"]: normalized(entry) for entry in old}
+    taken = {entry["localName"] for entry in before.values()}
+    result: list[dict[str, Any]] = []
+    for entry in fresh:
+        known = before.pop(entry["name"], None)
+        if known is None:
+            name = local_name(entry["name"], taken)
+            taken.add(name)
+            result.append(
+                {
+                    **entry,
+                    "localName": name,
+                    "state": "pending",
+                    "enabled": False,
+                    "risk": DEFAULT_RISK,
+                    "approvedHash": None,
+                }
+            )
+            continue
+        merged = {**entry, "localName": known["localName"], "enabled": known["enabled"], "risk": known["risk"]}
+        merged["approvedHash"] = known["approvedHash"]
+        if known["approvedHash"] is None:
+            merged["state"] = "pending"
+        elif entry["hash"] == known["approvedHash"]:
+            merged["state"] = "approved"
+        else:
+            merged["state"] = "changed"
+            merged["previous"] = known.get("previous") or {key: known.get(key) for key in _DEFINITION}
+        result.append(merged)
+    for gone in before.values():  # no longer listed by the server
+        if gone["approvedHash"] is not None:
+            result.append({**{k: v for k, v in gone.items() if k != "previous"}, "state": "removed"})
+    return result
+
+
+def approve(entry: dict[str, Any], *, enabled: bool, risk: str) -> dict[str, Any]:
+    """The entry as an admin approved it now: offered (if `enabled`) at `risk`."""
+    approved = {k: v for k, v in normalized(entry).items() if k != "previous"}
+    return {**approved, "state": "approved", "enabled": enabled, "risk": risk, "approvedHash": entry["hash"]}

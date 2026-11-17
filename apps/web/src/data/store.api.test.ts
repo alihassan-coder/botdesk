@@ -539,6 +539,133 @@ describe("chats on the API", () => {
     expect(state().threads.find((t) => t.id === "t1")?.lastMessagePreview).toBe("On it.");
   });
 
+  describe("unread counts", () => {
+    const unreadOf = (id: string) => state().threads.find((t) => t.id === id)?.unread;
+    const hide = (hidden: boolean) =>
+      Object.defineProperty(document, "visibilityState", { configurable: true, get: () => (hidden ? "hidden" : "visible") });
+    afterEach(() => hide(false));
+
+    it("the chat list shows each chat's unread count from the API", async () => {
+      routes["GET /api/v1/orgs/o1/threads"] = { status: 200, body: [{ ...thread("t1", "b1"), unread: 3 }, { ...thread("g1", null, "group"), unread: 0 }] };
+      await actions.signOut();
+      await actions.signIn("zara@example.com", "long-enough");
+      await vi.waitFor(() => expect(unreadOf("t1")).toBe(3));
+      expect(unreadOf("g1")).toBe(0);
+    });
+
+    it("viewing a chat marks it read on the API, and again when you come back to the tab", async () => {
+      routes["POST /api/v1/orgs/o1/threads/t1/read"] = { status: 204 };
+      const reads = () => calls.filter((c) => c === "POST /api/v1/orgs/o1/threads/t1/read").length;
+      const stop = actions.viewThread("t1");
+      expect(reads()).toBe(1);
+      document.dispatchEvent(new Event("visibilitychange"));
+      expect(reads()).toBe(2);
+      stop();
+      document.dispatchEvent(new Event("visibilitychange"));
+      expect(reads()).toBe(2);
+    });
+
+    it("a reply in a chat you're looking at stays read; in a hidden tab it counts once, however often it's replayed", async () => {
+      routes["POST /api/v1/orgs/o1/threads/t1/read"] = { status: 204 };
+      const stopViewing = actions.viewThread("t1");
+      actions.openThread("t1");
+      await vi.waitFor(() => expect(state().threadLoads.t1?.status).toBe("ready"));
+      const stream = FakeEventSource.last!;
+      const reads = () => calls.filter((c) => c === "POST /api/v1/orgs/o1/threads/t1/read").length;
+
+      stream.emit("message_delta", { runId: "r1", data: { messageId: "m7", botId: "b1", text: "On it." } });
+      stream.emit("message_saved", { runId: "r1", data: { message: message("m7", "On it.", scoutSays, "2026-11-12T09:00:02Z") } });
+      expect(unreadOf("t1")).toBe(0);
+      expect(reads()).toBe(2); // on view, then for the new reply
+
+      hide(true);
+      const reply = { message: message("m8", "Found 3.", scoutSays, "2026-11-12T09:00:03Z") };
+      stream.emit("message_saved", { runId: "r2", data: reply });
+      stream.emit("message_saved", { runId: "r2", data: reply }); // replayed after a reconnect
+      expect(unreadOf("t1")).toBe(1);
+      // Your own messages never count.
+      stream.emit("message_saved", { data: { message: message("m9", "Thanks") } });
+      expect(unreadOf("t1")).toBe(1);
+      stopViewing();
+    });
+
+    it("messages replayed while a chat is still loading don't count", async () => {
+      let answer = () => {};
+      const slow = new Promise<void>((resolve) => (answer = resolve));
+      routes["GET /api/v1/orgs/o1/threads/t1/messages?limit=50"] = { status: 200, wait: slow, body: [message("m2", "Hello!", scoutSays)] };
+      actions.openThread("t1");
+      await vi.waitFor(() => expect(FakeEventSource.last).not.toBeNull());
+      FakeEventSource.last!.emit("message_saved", { data: { message: message("m2", "Hello!", scoutSays) } });
+      answer();
+      await vi.waitFor(() => expect(state().threadLoads.t1?.status).toBe("ready"));
+      expect(unreadOf("t1")).toBe(0);
+    });
+
+    it("a reply in a chat you've moved away from counts as unread", async () => {
+      actions.openThread("t1");
+      await vi.waitFor(() => expect(state().threadLoads.t1?.status).toBe("ready"));
+      FakeEventSource.last!.emit("message_saved", { runId: "r1", data: { message: message("m7", "Done.", scoutSays, "2026-11-12T09:00:02Z") } });
+      expect(unreadOf("t1")).toBe(1);
+    });
+
+    it("refreshChats brings in new counts and chats from the API, except for the chat you're looking at", async () => {
+      routes["POST /api/v1/orgs/o1/threads/g1/read"] = { status: 204 };
+      const stop = actions.viewThread("g1");
+      routes["GET /api/v1/orgs/o1/threads"] = {
+        status: 200,
+        body: [{ ...thread("t1", "b1"), unread: 2 }, { ...thread("g1", null, "group"), unread: 5 }, { ...thread("t2", "b2"), unread: 0 }],
+      };
+      await actions.refreshChats();
+      expect(unreadOf("t1")).toBe(2);
+      expect(unreadOf("g1")).toBe(0);
+      expect(state().threads.find((t) => t.id === "t1")?.title).toBe("Scout");
+      stop();
+    });
+  });
+
+  describe("managing a group", () => {
+    const group = (patch: Record<string, unknown> = {}) => ({ ...thread("g1", null, "group"), ...patch });
+
+    it("renameGroup saves the name on the API", async () => {
+      routes["PATCH /api/v1/orgs/o1/threads/g1"] = { status: 200, body: group({ title: "Launch week" }) };
+      await expect(actions.renameGroup("g1", "  Launch week ")).resolves.toEqual({ ok: true });
+      expect(state().threads.find((t) => t.id === "g1")?.title).toBe("Launch week");
+      const request = vi.mocked(fetch).mock.calls.find(([url, init]) => String(url).endsWith("/threads/g1") && init?.method === "PATCH")!;
+      expect(JSON.parse(String(request[1]?.body))).toEqual({ title: "Launch week" });
+    });
+
+    it("renameGroup refuses an empty name without asking the API", async () => {
+      await expect(actions.renameGroup("g1", "  ")).resolves.toEqual({ ok: false, error: "Give the group a name." });
+    });
+
+    it("addToGroup and removeFromGroup change who's in it, keeping your unread count", async () => {
+      const withScout = [{ type: "user", id: "u1" }, { type: "user", id: "u2" }, { type: "bot", id: "b1" }];
+      routes["POST /api/v1/orgs/o1/threads/g1/participants"] = { status: 200, body: group({ participants: withScout, leadBotId: "b1" }) };
+      await expect(actions.addToGroup("g1", { userIds: ["u2"], botIds: ["b1"] })).resolves.toEqual({ ok: true });
+      expect(state().threads.find((t) => t.id === "g1")?.participants).toEqual(withScout);
+
+      routes["DELETE /api/v1/orgs/o1/threads/g1/participants/bot/b1"] = { status: 200, body: group({ participants: withScout.slice(0, 2), leadBotId: null }) };
+      await expect(actions.removeFromGroup("g1", { type: "bot", id: "b1" })).resolves.toEqual({ ok: true });
+      expect(state().threads.find((t) => t.id === "g1")?.participants).toEqual(withScout.slice(0, 2));
+      expect(state().threads.find((t) => t.id === "g1")?.leadBotId).toBeUndefined();
+    });
+
+    it("a refusal is passed on", async () => {
+      routes["DELETE /api/v1/orgs/o1/threads/g1/participants/user/u1"] = { status: 400, body: { detail: "A group needs at least one person." } };
+      await expect(actions.removeFromGroup("g1", { type: "user", id: "u1" })).resolves.toEqual({ ok: false, error: "A group needs at least one person." });
+    });
+
+    it("a group you're removed from leaves your chat list when its stream says so", async () => {
+      routes["GET /api/v1/orgs/o1/threads/g1/messages?limit=50"] = { status: 200, body: [] };
+      actions.openThread("g1");
+      await vi.waitFor(() => expect(state().threadLoads.g1?.status).toBe("ready"));
+      FakeEventSource.last!.emit("thread_updated", { threadId: "g1", data: { thread: group({ title: "Renamed" }) } });
+      expect(state().threads.find((t) => t.id === "g1")?.title).toBe("Renamed");
+      FakeEventSource.last!.emit("thread_updated", { threadId: "g1", data: { thread: group({ participants: [{ type: "user", id: "u2" }] }) } });
+      expect(state().threads.some((t) => t.id === "g1")).toBe(false);
+    });
+  });
+
   describe("handoffs (ADR 0014)", () => {
     const card = (taskId: string, toBotId: string) => ({
       type: "handoff", taskId, fromBotId: "b1", toBotId, task: `Task for ${toBotId}`, status: "queued",

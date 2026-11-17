@@ -1,0 +1,137 @@
+{
+  "id": "18f0f0",
+  "messages": [
+    {
+      "id": "18f0f1",
+      "threadId": "18f0f0",
+      "labelIds": [
+        "INBOX"
+      ],
+      "snippet": "",
+      "payload": {
+        "partId": "",
+        "mimeType": "text/plain",
+        "filename": "",
+        "body": {
+          "size": 198,
+          "data": "U291bmRzIGdvb2QsIHNlZSB5b3UgVGh1cnNkYXkuCgpPbWFyCgpPbiBNb24sIE5vdiA5LCAyMDI2IGF0IDk6MTIgQU0gU2FyYSBMZWUgPHNhcmFAYWNtZS5kZXY-Cndyb3RlOgoKPiBIaSBhbGwsCj4KPiBUaGUgbGF1bmNoIHJldmlldyBpcyBvbiBUaHVyc2RheSBhdCAzIFBNLgo-Cj4gPiBFYXJsaWVyOiBjYW4gd2UgbW92ZSBpdD8KPgo-IFNhcmEK"
+        },
+        "headers": [
+          {
+            "name": "From",
+            "value": "Omar <omar@acme.dev>"
+          },
+          {
+            "name": "To",
+            "value": "sara@acme.dev"
+          },
+          {
+            "name": "Subject",
+            "value": "Re: Launch review"
+          },
+          {
+            "name": "Message-ID",
+            "value": "<o1@acme.dev>"
+          }
+        ]
+      }
+    },
+    {
+      "id": "18f0f2",
+      "threadId": "18f0f0",
+      "labelIds": [
+        "INBOX"
+      ],
+      "snippet": "",
+      "payload": {
+        "partId": "",
+        "mimeType": "text/html",
+        "filename": "",
+        "body": {
+          "size": 552,
+          "data": "PGRpdiBkaXI9Imx0ciI-VGh1cnNkYXkgd29ya3MgZm9yIG1lIHRvby48ZGl2Pjxicj48L2Rpdj48ZGl2PkFsaTwvZGl2PjwvZGl2Pjxicj48ZGl2IGNsYXNzPSJnbWFpbF9xdW90ZSI-PGRpdiBkaXI9Imx0ciIgY2xhc3M9ImdtYWlsX2F0dHIiPk9uIFR1ZSwgTm92IDEwLCAyMDI2IGF0IDg6MDEgQU0gT21hciAmbHQ7PGEgaHJlZj0ibWFpbHRvOm9tYXJAYWNtZS5kZXYiPm9tYXJAYWNtZS5kZXY8L2E-Jmd0OyB3cm90ZTo8YnI-PC9kaXY-PGJsb2NrcXVvdGUgY2xhc3M9ImdtYWlsX3F1b3RlIiBzdHlsZT0ibWFyZ2luOjBweCAwcHggMHB4IDAuOGV4O2JvcmRlci1sZWZ0OjFweCBzb2xpZCByZ2IoMjA0LDIwNCwyMDQpO3BhZGRpbmctbGVmdDoxZXgiPjxkaXYgZGlyPSJsdHIiPlNvdW5kcyBnb29kLCBzZWUgeW91IFRodXJzZGF5LjxkaXY-T21hcjwvZGl2PjxibG9ja3F1b3RlIGNsYXNzPSJnbWFpbF9xdW90ZSI-SGkgYWxsLDxicj5UaGUgbGF1bmNoIHJldmlldyBpcyBvbiBUaHVyc2RheSBhdCAzIFBNLjwvYmxvY2txdW90ZT48L2Rpdj48L2Jsb2NrcXVvdGU-PC9kaXY-"
+        },
+        "headers": [
+          {
+            "name": "From",
+            "value": "Ali <ali@acme.dev>"
+          },
+          {
+            "name": "To",
+            "value": "omar@acme.dev"
+          },
+          {
+            "name": "Subject",
+            "value": "Re: Launch review"
+          },
+          {
+            "name": "Message-ID",
+            "value": "<a1@acme.dev>"
+          }
+        ]
+      }
+    },
+    {
+      "id": "18f0f3",
+      "threadId": "18f0f0",
+      "labelIds": [
+        "INBOX"
+      ],
+      "snippet": "",
+      "payload": {
+        "partId": "",
+        "mimeType": "text/plain",
+        "filename": "",
+        "body": {
+          "size": 136,
+          "data": "RllJLCBzZWUgYmVsb3cuCgotLS0tLS0tLS0tIEZvcndhcmRlZCBtZXNzYWdlIC0tLS0tLS0tLQpGcm9tOiBWZW5kb3IgPGJpbGxpbmdAdmVuZG9yLmV4YW1wbGU-ClN1YmplY3Q6IEludm9pY2UgNDQ3MQoKQW1vdW50IGR1ZTogJDEsMjAwCg"
+        },
+        "headers": [
+          {
+            "name": "From",
+            "value": "Sara Lee <sara@acme.dev>"
+          },
+          {
+            "name": "To",
+            "value": "ali@acme.dev"
+          },
+          {
+            "name": "Subject",
+            "value": "Fwd: Invoice 4471"
+          }
+        ]
+      }
+    },
+    {
+      "id": "18f0f4",
+      "threadId": "18f0f0",
+      "labelIds": [
+        "INBOX"
+      ],
+      "snippet": "",
+      "payload": {
+        "partId": "",
+        "mimeType": "text/plain",
+        "filename": "",
+        "body": {
+          "size": 20,
+          "data": "PiBJcyB0aGlzIHN0aWxsIG9uPwo"
+        },
+        "headers": [
+          {
+            "name": "From",
+            "value": "Omar <omar@acme.dev>"
+          },
+          {
+            "name": "To",
+            "value": "ali@acme.dev"
+          },
+          {
+            "name": "Subject",
+            "value": "Re: Launch review"
+          }
+        ]
+      }
+    }
+  ]
+}

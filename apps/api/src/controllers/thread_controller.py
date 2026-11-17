@@ -10,9 +10,20 @@ from fastapi.sse import ServerSentEvent
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.api.deps import Access
+from src.models import RunEvent, Thread
+from src.models.thread import ParticipantType
 from src.runtime.runner import RunManager
 from src.schemas.run import ThreadRunsOut
-from src.schemas.thread import GroupIn, LeadIn, MessageIn, MessageOut, SentMessageOut, ThreadOut
+from src.schemas.thread import (
+    GroupIn,
+    GroupPatchIn,
+    LeadIn,
+    MessageIn,
+    MessageOut,
+    ParticipantsIn,
+    SentMessageOut,
+    ThreadOut,
+)
 from src.services import run_event_service, run_service, thread_service
 
 # How often an idle stream looks for new events anyway: Postgres notifications wake it at once,
@@ -22,18 +33,18 @@ RECHECK_SECONDS = 5.0
 
 async def list_threads(db: AsyncSession, access: Access) -> list[ThreadOut]:
     threads = await thread_service.threads_for_user(db, org_id=access.org.id, user_id=access.user.id)
-    return await thread_service.thread_outs(db, threads)
+    return await thread_service.thread_outs(db, threads, user_id=access.user.id)
 
 
 async def get_thread(db: AsyncSession, access: Access, thread_id: uuid.UUID) -> ThreadOut:
     thread = await thread_service.get_thread(db, org_id=access.org.id, user_id=access.user.id, thread_id=thread_id)
-    return await thread_service.thread_out(db, thread)
+    return await thread_service.thread_out(db, thread, user_id=access.user.id)
 
 
 async def open_dm(db: AsyncSession, access: Access, bot_id: uuid.UUID) -> ThreadOut:
     thread = await thread_service.open_dm(db, org_id=access.org.id, user_id=access.user.id, bot_id=bot_id)
     await db.commit()
-    return await thread_service.thread_out(db, thread)
+    return await thread_service.thread_out(db, thread, user_id=access.user.id)
 
 
 async def create_group(db: AsyncSession, access: Access, body: GroupIn) -> ThreadOut:
@@ -47,14 +58,69 @@ async def create_group(db: AsyncSession, access: Access, body: GroupIn) -> Threa
         lead_bot_id=body.lead_bot_id,
     )
     await db.commit()
-    return await thread_service.thread_out(db, thread)
+    return await thread_service.thread_out(db, thread, user_id=access.user.id)
 
 
-async def set_lead(db: AsyncSession, access: Access, thread_id: uuid.UUID, body: LeadIn) -> ThreadOut:
+async def set_lead(db: AsyncSession, access: Access, runs: RunManager, thread_id: uuid.UUID, body: LeadIn) -> ThreadOut:
     thread = await thread_service.get_thread(db, org_id=access.org.id, user_id=access.user.id, thread_id=thread_id)
     await thread_service.set_lead(db, thread, user_id=access.user.id, role=access.role, bot_id=body.bot_id)
+    return await _saved_change(db, access, runs, thread)
+
+
+async def rename_group(
+    db: AsyncSession, access: Access, runs: RunManager, thread_id: uuid.UUID, body: GroupPatchIn
+) -> ThreadOut:
+    thread = await thread_service.get_thread(db, org_id=access.org.id, user_id=access.user.id, thread_id=thread_id)
+    await thread_service.rename_group(db, thread, user_id=access.user.id, role=access.role, title=body.title)
+    return await _saved_change(db, access, runs, thread)
+
+
+async def add_participants(
+    db: AsyncSession, access: Access, runs: RunManager, thread_id: uuid.UUID, body: ParticipantsIn
+) -> ThreadOut:
+    thread = await thread_service.get_thread(db, org_id=access.org.id, user_id=access.user.id, thread_id=thread_id)
+    await thread_service.add_participants(
+        db, thread, user_id=access.user.id, role=access.role, user_ids=body.user_ids, bot_ids=body.bot_ids
+    )
+    return await _saved_change(db, access, runs, thread)
+
+
+async def remove_participant(
+    db: AsyncSession,
+    access: Access,
+    runs: RunManager,
+    thread_id: uuid.UUID,
+    kind: ParticipantType,
+    participant_id: uuid.UUID,
+) -> ThreadOut:
+    thread = await thread_service.get_thread(db, org_id=access.org.id, user_id=access.user.id, thread_id=thread_id)
+    await thread_service.remove_participant(
+        db, thread, user_id=access.user.id, role=access.role, kind=kind, participant_id=participant_id
+    )
+    return await _saved_change(db, access, runs, thread)
+
+
+async def _saved_change(db: AsyncSession, access: Access, runs: RunManager, thread: Thread) -> ThreadOut:
+    """Save a change to a group, and tell everyone with it open (`thread_updated` on its stream,
+    without anyone's unread count)."""
+    everyone = await thread_service.thread_out(db, thread)
+    run_event_service.add_event(
+        db,
+        org_id=thread.org_id,
+        thread_id=thread.id,
+        run_id=None,
+        kind="thread_updated",
+        data={"thread": everyone.model_dump(mode="json", by_alias=True, exclude={"unread"})},
+    )
     await db.commit()
-    return await thread_service.thread_out(db, thread)
+    runs.bus.announce(thread.id)
+    return await thread_service.thread_out(db, thread, user_id=access.user.id)
+
+
+async def mark_read(db: AsyncSession, access: Access, thread_id: uuid.UUID) -> None:
+    thread = await thread_service.get_thread(db, org_id=access.org.id, user_id=access.user.id, thread_id=thread_id)
+    await thread_service.mark_read(db, thread, user_id=access.user.id)
+    await db.commit()
 
 
 async def list_messages(
@@ -117,15 +183,33 @@ async def event_stream_start(
     return start
 
 
+def _leaves_out(event: RunEvent, user_id: uuid.UUID) -> bool:
+    """A group change after which this person is no longer in it."""
+    if event.kind != "thread_updated":
+        return False
+    people = event.payload["thread"]["participants"]
+    return not any(p["type"] == "user" and p["id"] == str(user_id) for p in people)
+
+
 async def follow_events(
-    runs: RunManager, thread_id: uuid.UUID, *, after_id: int, follow: bool
+    runs: RunManager, thread_id: uuid.UUID, *, user_id: uuid.UUID, after_id: int, follow: bool
 ) -> AsyncIterator[ServerSentEvent]:
-    """Send the chat's saved events after `after_id`, then each new one as it's saved."""
+    """Send the chat's saved events after `after_id`, then each new one as it's saved. Stops once
+    the person is no longer in the chat (removed from a group while they had it open)."""
     with runs.bus.listen(thread_id) as wake_up:
         while True:
             wake_up.clear()  # before reading, so an event saved during the read still wakes us
             async with runs.sessionmaker() as db:
                 events = await run_event_service.events_after(db, thread_id=thread_id, after_id=after_id)
+                still_in = await thread_service.is_participant(db, thread_id, user_id)
+            if not still_in:
+                # Removed: send up to the change that removed them (so their browser drops the
+                # group), nothing after it, and stop.
+                removal = next((i for i, e in enumerate(events) if _leaves_out(e, user_id)), -1)
+                for event in events[: removal + 1]:
+                    data = run_event_service.event_out(event).model_dump(mode="json", by_alias=True)
+                    yield ServerSentEvent(id=str(event.id), event=event.kind, data=data)
+                return
             for event in events:
                 after_id = event.id
                 data = run_event_service.event_out(event).model_dump(mode="json", by_alias=True)

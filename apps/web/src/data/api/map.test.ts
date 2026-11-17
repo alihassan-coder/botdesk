@@ -53,6 +53,15 @@ describe("API → web shapes", () => {
     expect(toThread(group)).toMatchObject({ leadBotId: "b1", createdBy: "u1" });
   });
 
+  it("a chat's unread count comes from the API, and reads as 0 when it isn't sent", () => {
+    const dm = {
+      id: "t1", kind: "dm" as const, title: "Scout", botId: "b1", leadBotId: null, createdBy: "u1",
+      participants: [], lastMessageAt: "2026-11-12T08:00:00Z", lastMessagePreview: "Found 3.",
+    };
+    expect(toThread({ ...dm, unread: 3 }).unread).toBe(3);
+    expect(toThread(dm).unread).toBe(0);
+  });
+
   it("a message keeps the parts the web app can show, and system messages have no author id", () => {
     const message = toMessage({
       id: "m1", threadId: "t1", author: { type: "system", id: null }, status: "complete", createdAt: "2026-11-12T08:00:00Z",

@@ -1,6 +1,6 @@
 import type { Approval, Message, MessagePart, Thread, ToolCallPart } from "../types";
 import { newerTaskChange, taskRank, withTaskChange, withTaskChangeIn, type TaskChange } from "@/lib/tasks";
-import { asUtc, toApproval, toMessage, toTaskChange } from "./map";
+import { asUtc, toApproval, toMessage, toTaskChange, toThread } from "./map";
 import type { ApiRun, ApiRunEvent } from "./types";
 
 /**
@@ -197,6 +197,12 @@ function reduce(chat: ChatSlice, event: ApiRunEvent): ChatSlice {
       const newest = newerTaskChange(chat.taskChanges?.[change.taskId], change);
       if (newest !== change) return chat; // older than what we know: a replay
       return { ...chat, messages: withTaskChangeIn(chat.messages, change), taskChanges: { ...chat.taskChanges, [change.taskId]: change } };
+    }
+
+    case "thread_updated": {
+      // A group's name or members changed. The count of what you haven't read is yours, so it stays.
+      const changed = toThread(event.data.thread);
+      return { ...chat, threads: chat.threads.map((t) => (t.id === changed.id ? { ...changed, unread: t.unread, pinned: t.pinned } : t)) };
     }
 
     default:

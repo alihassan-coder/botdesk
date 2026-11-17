@@ -2,7 +2,7 @@ import uuid
 from datetime import datetime
 from typing import Any, Literal
 
-from sqlalchemy import ForeignKey, Index, String
+from sqlalchemy import ForeignKey, Index, String, func
 from sqlalchemy.orm import Mapped, mapped_column
 
 from src.core.database import Base, CreatedAtMixin, IdMixin, utcnow
@@ -37,6 +37,9 @@ class ThreadParticipant(Base):
     thread_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("threads.id", ondelete="CASCADE"), primary_key=True)
     participant_type: Mapped[str] = mapped_column(String(10), primary_key=True)
     participant_id: Mapped[uuid.UUID] = mapped_column(primary_key=True, index=True)
+    # People: when they last read the chat. Messages after it, by someone else, are unread. Starts
+    # when they join, so joining a group doesn't make its history unread. Unused for bots.
+    last_read_at: Mapped[datetime] = mapped_column(default=utcnow, server_default=func.now())
 
 
 class Message(IdMixin, CreatedAtMixin, Base):

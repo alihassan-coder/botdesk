@@ -1,28 +1,14 @@
 import { useEffect, useState } from "react";
-import { Plus, RefreshCw } from "lucide-react";
-import { toast } from "sonner";
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-  AlertDialogTrigger,
-} from "@/components/ui/alert-dialog";
-import { Badge } from "@/components/ui/badge";
+import { Plus } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { actions, useAuthStatus, useCurrentUser, useIsDemo, useMcpServers, useOrg } from "@/data/store";
-import type { McpServer } from "@/data/types";
 import { AddMcpServerDialog } from "./add-mcp-server-dialog";
-import { ToolList } from "./tool-list";
+import { McpServerRow } from "./mcp-server-row";
 
 /**
  * Connect apps: the organization's remote MCP servers (ADR 0012). Everyone sees them; owners and
- * admins add, refresh and remove. Each is a plugin bots get in their Tools tab.
+ * admins add, sign in, review, refresh and remove. Each is a plugin bots get in their Tools tab.
  */
 export function McpServers() {
   const isDemo = useIsDemo();
@@ -61,75 +47,10 @@ export function McpServers() {
         </p>
       ) : (
         <ul className="flex flex-col gap-2">
-          {servers.items.map((server) => <ServerRow key={server.id} server={server} canManage={isAdmin} />)}
+          {servers.items.map((server) => <McpServerRow key={server.id} server={server} canManage={isAdmin} />)}
         </ul>
       )}
       <AddMcpServerDialog open={adding} onClose={() => setAdding(false)} />
     </section>
-  );
-}
-
-function ServerRow({ server, canManage }: { server: McpServer; canManage: boolean }) {
-  const [refreshing, setRefreshing] = useState(false);
-  const unreachable = server.status === "unreachable";
-
-  async function refresh() {
-    setRefreshing(true);
-    const result = await actions.refreshMcpServer(server.id);
-    setRefreshing(false);
-    if (!result.ok) return void toast.error(result.error);
-    toast.success(`${server.name}'s tools are up to date`);
-  }
-
-  return (
-    <li className="flex flex-col gap-3 rounded-2xl border bg-card p-4" aria-label={server.name}>
-      <div className="flex flex-wrap items-center gap-3">
-        <div className="min-w-0 flex-1">
-          <p className="font-medium">{server.name}</p>
-          <p className="truncate text-sm text-muted-foreground">
-            {server.url} · {server.tools.length === 1 ? "1 tool" : `${server.tools.length} tools`}
-            {unreachable && server.statusReason ? ` · ${server.statusReason}` : ""}
-          </p>
-        </div>
-        <Badge variant={unreachable ? "destructive" : "secondary"}>{unreachable ? "Unreachable" : "MCP"}</Badge>
-        {canManage && (
-          <>
-            <Button size="sm" variant="ghost" onClick={() => void refresh()} disabled={refreshing} aria-label={`Refresh ${server.name}`}>
-              <RefreshCw className={refreshing ? "animate-spin" : undefined} /> Refresh
-            </Button>
-            <RemoveButton server={server} />
-          </>
-        )}
-      </div>
-      {server.tools.length > 0 && (
-        <ToolList tools={server.tools.map((t) => ({ name: t.name, label: t.title ?? t.serverName, risk: "external-send" }))} />
-      )}
-    </li>
-  );
-}
-
-function RemoveButton({ server }: { server: McpServer }) {
-  const remove = async () => {
-    const result = await actions.removeMcpServer(server.id);
-    if (!result.ok) return void toast.error(result.error);
-    toast.success(`Removed ${server.name}`);
-  };
-
-  return (
-    <AlertDialog>
-      <AlertDialogTrigger asChild>
-        <Button variant="ghost" size="sm">Remove</Button>
-      </AlertDialogTrigger>
-      <AlertDialogContent>
-        <AlertDialogHeader>
-          <AlertDialogTitle>Remove {server.name}?</AlertDialogTitle>
-          <AlertDialogDescription>Every bot loses its tools straight away, and BotDesk forgets its key. You can add it again later.</AlertDialogDescription>
-        </AlertDialogHeader>
-        <AlertDialogFooter>
-          <AlertDialogCancel>Keep it</AlertDialogCancel>
-          <AlertDialogAction variant="destructive" onClick={remove}>Remove</AlertDialogAction>
-        </AlertDialogFooter>
-      </AlertDialogContent>
-    </AlertDialog>
   );
 }

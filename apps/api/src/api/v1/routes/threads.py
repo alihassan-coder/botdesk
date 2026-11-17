@@ -9,7 +9,18 @@ from fastapi.sse import EventSourceResponse, ServerSentEvent
 from src.api.deps import Db, OrgAccess, Runs
 from src.controllers import thread_controller
 from src.schemas.run import ThreadRunsOut
-from src.schemas.thread import GroupIn, LeadIn, MessageIn, MessageOut, OpenDmIn, SentMessageOut, ThreadOut
+from src.schemas.thread import (
+    GroupIn,
+    GroupPatchIn,
+    LeadIn,
+    MessageIn,
+    MessageOut,
+    OpenDmIn,
+    ParticipantsIn,
+    ParticipantType,
+    SentMessageOut,
+    ThreadOut,
+)
 
 router = APIRouter(prefix="/orgs/{org_id}/threads", tags=["threads"])
 
@@ -39,10 +50,41 @@ async def get_thread(thread_id: uuid.UUID, access: OrgAccess, db: Db) -> ThreadO
 
 
 @router.put("/{thread_id}/lead")
-async def set_lead(thread_id: uuid.UUID, body: LeadIn, access: OrgAccess, db: Db) -> ThreadOut:
+async def set_lead(thread_id: uuid.UUID, body: LeadIn, access: OrgAccess, db: Db, runs: Runs) -> ThreadOut:
     """Change a group's lead bot (one of its bots), or clear it with `botId: null`. The lead
     answers a message that mentions no bot. The group's creator, owners and admins may."""
-    return await thread_controller.set_lead(db, access, thread_id, body)
+    return await thread_controller.set_lead(db, access, runs, thread_id, body)
+
+
+@router.patch("/{thread_id}")
+async def rename_group(thread_id: uuid.UUID, body: GroupPatchIn, access: OrgAccess, db: Db, runs: Runs) -> ThreadOut:
+    """Rename a group. Its creator, owners and admins may; a DM is named after its bot."""
+    return await thread_controller.rename_group(db, access, runs, thread_id, body)
+
+
+@router.post("/{thread_id}/participants")
+async def add_participants(
+    thread_id: uuid.UUID, body: ParticipantsIn, access: OrgAccess, db: Db, runs: Runs
+) -> ThreadOut:
+    """Add people and bots of the organization to a group (its creator, owners and admins).
+    Everyone with the group open hears `thread_updated`."""
+    return await thread_controller.add_participants(db, access, runs, thread_id, body)
+
+
+@router.delete("/{thread_id}/participants/{kind}/{participant_id}")
+async def remove_participant(
+    thread_id: uuid.UUID, kind: ParticipantType, participant_id: uuid.UUID, access: OrgAccess, db: Db, runs: Runs
+) -> ThreadOut:
+    """Remove a person (`user`) or a bot from a group (its creator, owners and admins). A person
+    removed can't open it any more; removing the lead bot clears the lead. The last person stays."""
+    return await thread_controller.remove_participant(db, access, runs, thread_id, kind, participant_id)
+
+
+@router.post("/{thread_id}/read", status_code=status.HTTP_204_NO_CONTENT)
+async def mark_read(thread_id: uuid.UUID, access: OrgAccess, db: Db) -> None:
+    """You've read this chat up to now: its unread count drops to 0. The web calls it when you
+    open a chat, and again when messages arrive while you're looking at it."""
+    await thread_controller.mark_read(db, access, thread_id)
 
 
 @router.get("/{thread_id}/messages")
@@ -88,11 +130,15 @@ async def _stream_start(
 async def stream_events(
     thread_id: uuid.UUID,
     start: Annotated[int, Depends(_stream_start)],
+    access: OrgAccess,
     runs: Runs,
     follow: bool = True,
 ) -> AsyncIterator[ServerSentEvent]:
     """Live updates for this chat (Server-Sent Events): replies streaming in, messages saved,
     runs starting and ending. A reconnect resumes after `Last-Event-ID`; `after` does the same
-    on a first connection. `follow=false` sends what's saved and closes."""
-    async for event in thread_controller.follow_events(runs, thread_id, after_id=start, follow=follow):
+    on a first connection. `follow=false` sends what's saved and closes. Group changes arrive as
+    `thread_updated`; the stream ends if you're removed from the group."""
+    async for event in thread_controller.follow_events(
+        runs, thread_id, user_id=access.user.id, after_id=start, follow=follow
+    ):
         yield event

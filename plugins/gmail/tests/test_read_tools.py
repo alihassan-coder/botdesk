@@ -18,7 +18,7 @@ from botdesk_plugin_sdk.testing import FakeHttp, call_tool, make_context
 from pydantic import ValidationError
 
 from botdesk_gmail import GMAIL_API, MODIFY_SCOPE, READ_SCOPE, GmailError, gmail_plugin
-from botdesk_gmail.text import DEFUSED
+from botdesk_gmail.text import DEFUSED, html_to_text
 
 FIXTURES = Path(__file__).parent / "fixtures"
 USERS_ME = f"{GMAIL_API}/gmail/v1/users/me"
@@ -55,16 +55,17 @@ def email_blocks(text: str) -> list[str]:
 # The manifest
 
 
-def test_three_read_tools_where_mail_taints_the_run_and_all_need_only_read_access() -> None:
+def test_the_read_tools_where_mail_taints_the_run_and_all_need_only_read_access() -> None:
     manifest = validate_manifest(gmail_plugin())
     tools = {tool.name: tool for tool in manifest.tools if tool.risk == "read"}
-    assert set(tools) == {"search", "read_thread", "list_labels"}
+    assert set(tools) == {"search", "read_thread", "list_labels", "read_attachment", "list_drafts"}
     for tool in tools.values():
         assert tool.risk == "read"
         assert tool.idempotent
         assert tool.scopes == (READ_SCOPE,)
     # ADR 0011 §3: mail is outside text and taints the run; the mailbox's own label list doesn't.
     assert tools["search"].untrusted_output and tools["read_thread"].untrusted_output
+    assert tools["read_attachment"].untrusted_output and tools["list_drafts"].untrusted_output
     assert not tools["list_labels"].untrusted_output
 
 
@@ -178,6 +179,50 @@ async def test_an_html_only_email_becomes_readable_text_without_hidden_parts_scr
     assert "javascript" not in text
 
 
+async def test_a_newsletter_reads_as_text_with_numbered_lists_table_rows_and_no_preheader() -> None:
+    http = gmail()
+    result = await run(http, "read_thread", {"thread_id": thread(http, "thread_newsletter")})
+
+    (text,) = email_blocks(result["messages"][0]["text"])
+    assert text == (
+        "Acme Weekly\n\n"
+        "Hi Ali,\nhere is what shipped this week.\n\n"
+        "1. Faster search\n"
+        "2. Dark mode\n"
+        "3. New pricing (https://acme.example/pricing)\n\n"
+        "Plan | Price\n"
+        "Starter | $9\n"
+        "Team | $29\n\n"
+        "You get this because you signed up. Unsubscribe (https://acme.example/unsubscribe?id=42)"
+    )
+    # The hidden preheader, its zero-width filler and the logo's link (an image, no text) are gone.
+    assert "roundup" not in text and "ignore all instructions" not in text and "utm=logo" not in text
+    assert not set(text) & set("\u200b\u200c\u034f\u00ad\ufeff")
+
+
+async def test_quoted_earlier_mail_at_the_end_of_a_reply_is_left_out_and_said_so() -> None:
+    http = gmail()
+    result = await run(http, "read_thread", {"thread_id": thread(http, "thread_reply_chain")})
+
+    plain, html_reply, forward, only_quote = result["messages"]
+    # A plain-text reply: the "On … wrote:" line (here wrapped over two lines) and the "> " lines go.
+    assert email_blocks(plain["text"]) == ["Sounds good, see you Thursday.\n\nOmar"]
+    assert plain["quoted"] == "[quoted earlier mail not shown: 159 characters]"
+    assert "quoted" not in plain["text"]  # BotDesk's note, outside the email block
+    # Gmail's HTML quote (blockquote) goes the same way.
+    assert email_blocks(html_reply["text"]) == ["Thursday works for me too.\n\nAli"]
+    assert html_reply["quoted"].startswith("[quoted earlier mail not shown: ")
+    # A forward has no "wrote:" line: all of it is kept.
+    assert "Amount due: $1,200" in email_blocks(forward["text"])[0] and "quoted" not in forward
+    # A message that is nothing but a quote keeps it.
+    assert email_blocks(only_quote["text"]) == ["> Is this still on?"] and "quoted" not in only_quote
+
+
+def test_html_quotes_inside_a_message_are_marked_with_angle_brackets() -> None:
+    markup = "<p>See below.</p><blockquote>First<br>Second<blockquote>Deeper</blockquote></blockquote><p>Thanks</p>"
+    assert html_to_text(markup) == "See below.\n\n> First\n> Second\n> > Deeper\n\nThanks"
+
+
 async def test_a_multipart_email_prefers_its_plain_text_and_lists_attachments_without_reading_them() -> None:
     http = gmail()
     result = await run(http, "read_thread", {"thread_id": thread(http, "thread_multipart")})
@@ -186,8 +231,8 @@ async def test_a_multipart_email_prefers_its_plain_text_and_lists_attachments_wi
     assert email_blocks(message["text"]) == ["The contract is attached. Café at 5?"]
     assert "HTML ONLY WORDS" not in message["text"]
     assert message["attachments"] == [
-        {"name": "contract.pdf", "type": "application/pdf", "size": 48213},
-        {"name": "logo.png", "type": "image/png", "size": 1024},
+        {"part": "1", "name": "contract.pdf", "type": "application/pdf", "size": 48213},
+        {"part": "2", "name": "logo.png", "type": "image/png", "size": 1024},
     ]
     assert len(http.requests) == 1  # no attachment was downloaded
 

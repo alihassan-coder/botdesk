@@ -162,6 +162,8 @@ export interface ApiThread {
   lastMessageAt: string;
   /** "" until the chat has a message. */
   lastMessagePreview: string;
+  /** Messages after you last read the chat that someone else wrote. Left out of `thread_updated`. */
+  unread?: number;
 }
 
 export interface ApiMessage {
@@ -298,12 +300,14 @@ export type ApiRunEvent = {
   | { kind: "task_updated"; data: { task: ApiTask } }
   /** The parent run paused until the Tasks it handed off have ended. */
   | { kind: "run_waiting_handoff"; data: { status: "waiting_handoff"; taskIds: string[] } }
+  /** A group was renamed, or people or bots were added or removed (no unread count: the stream is shared). */
+  | { kind: "thread_updated"; data: { thread: ApiThread } }
 );
 
 export const RUN_EVENT_KINDS = [
   "message_saved", "run_started", "message_delta", "run_finished", "run_failed",
   "tool_started", "tool_finished", "approval_requested", "approval_decided", "run_resumed", "run_needs_attention",
-  "task_updated", "run_waiting_handoff",
+  "task_updated", "run_waiting_handoff", "thread_updated",
 ] as const satisfies readonly ApiRunEvent["kind"][];
 
 /* ---------- Memory ---------- */
@@ -344,14 +348,34 @@ export interface ApiMcpServer {
   pluginId: string;
   name: string;
   url: string;
-  authKind: "none" | "header";
+  authKind: "none" | "header" | "oauth";
   authHeader: string | null;
-  status: "active" | "unreachable";
+  status: "active" | "unreachable" | "needs_sign_in" | "needs_reconnect";
   statusReason: string | null;
-  tools: { name: string; serverName: string; title: string | null; description: string | null; annotations: Record<string, unknown> }[];
+  tools: {
+    name: string; serverName: string; title: string | null; description: string | null; annotations: Record<string, unknown>;
+    inputSchema: Record<string, unknown>; state: "approved" | "changed" | "pending" | "removed"; enabled: boolean;
+    risk: "read" | "write-internal" | "write-external" | "external-send" | "destructive";
+    previous: { title: string | null; description: string | null; inputSchema: Record<string, unknown> | null } | null;
+  }[];
+  toolsHash: string;
+  toolsChanged: number;
   lastCheckedAt: string | null;
   createdAt: string;
   createdBy: string | null;
+}
+
+/** POST /orgs/{id}/mcp-servers: a server that wants a sign-in comes back with where to go. */
+export type ApiMcpServerAdded = ApiMcpServer & { authorizeUrl: string | null };
+
+export interface ApiMcpServerInput {
+  name: string; url: string; apiKeyHeader?: string; apiKeyValue?: string; signIn?: boolean; oauthClientId?: string; oauthClientSecret?: string;
+}
+
+export interface ApiMcpToolChoice {
+  serverName: string;
+  enabled: boolean;
+  risk: ApiMcpServer["tools"][number]["risk"];
 }
 
 export interface ApiConnector {

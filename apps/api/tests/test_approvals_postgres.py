@@ -381,7 +381,8 @@ async def test_a_send_cut_off_by_the_runs_time_limit_waits_for_a_person(pg: Post
     pg.runs.registry.register(
         PluginManifest(id="sluggish", name="Sluggish", version="1", description="t", tools=(tool,))
     )
-    pg.runs.settings.run_max_seconds = 1  # new runs get a one-second time limit
+    # Long enough for the send to start even on a slow remote database, shorter than the send.
+    pg.runs.settings.run_max_seconds = 10
     use_model(pg, ScriptedToolModel(script=[("sluggish.send", {})]))
     me = await sign_up(pg.client)
     org = f"/api/v1/orgs/{me['organizations'][0]['id']}"

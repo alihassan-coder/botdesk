@@ -24,7 +24,9 @@ def upgrade() -> None:
     `tools` snapshot JSON; entries saved before it read as approved, offered, external-send."""
     op.add_column(
         "mcp_servers",
-        sa.Column("oauth", sa.JSON().with_variant(postgresql.JSONB(astext_type=sa.Text()), "postgresql"), nullable=True),
+        sa.Column(
+            "oauth", sa.JSON().with_variant(postgresql.JSONB(astext_type=sa.Text()), "postgresql"), nullable=True
+        ),
     )
 
 

@@ -4,7 +4,7 @@ from fastapi import APIRouter, status
 
 from src.api.deps import CurrentUser, Db, OrgAccess
 from src.controllers import organization_controller
-from src.schemas.organization import MemberOut, MemberRoleUpdate, OrgOut, OrgUpdate
+from src.schemas.organization import MemberOut, MemberRoleUpdate, OrgCreate, OrgOut, OrgUpdate
 
 router = APIRouter(prefix="/orgs", tags=["organizations"])
 
@@ -13,6 +13,12 @@ router = APIRouter(prefix="/orgs", tags=["organizations"])
 async def list_my_orgs(user: CurrentUser, db: Db) -> list[OrgOut]:
     """The organizations you belong to, with your role in each."""
     return await organization_controller.list_mine(db, user)
+
+
+@router.post("", status_code=status.HTTP_201_CREATED)
+async def create_org(body: OrgCreate, user: CurrentUser, db: Db) -> OrgOut:
+    """A new organization. Whoever creates it is its owner, as with the first one at sign-up."""
+    return await organization_controller.create(db, user, body)
 
 
 @router.get("/{org_id}")

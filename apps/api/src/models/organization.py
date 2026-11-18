@@ -21,6 +21,11 @@ class Organization(IdMixin, CreatedAtMixin, Base):
     default_security_level: Mapped[str] = mapped_column(
         String(30), default="ask-before-acting", server_default=text("'ask-before-acting'")
     )
+    # The ceiling: no run in the organization acts above this level, whatever its bot's level
+    # (ADR 0004: the strictest of org, bot and routine wins). "autonomous" = no ceiling.
+    max_security_level: Mapped[str] = mapped_column(
+        String(30), default="autonomous", server_default=text("'autonomous'")
+    )
 
 
 class Membership(CreatedAtMixin, Base):

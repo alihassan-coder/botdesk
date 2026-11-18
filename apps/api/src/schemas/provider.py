@@ -18,8 +18,9 @@ class ProviderOut(ApiModel):
     name: str  # the label, for a custom server
     hint: str
     connected: bool
-    # Where the key comes from: this organization (Settings), or the server's environment.
-    source: Literal["org", "env"] | None = None
+    # Where the key comes from: this organization (Settings), your own key ("Your keys"), or the
+    # server's environment.
+    source: Literal["org", "member", "env"] | None = None
     key_hint: str | None = None
     status: Literal["ok", "invalid"] | None = None
     last_verified_at: datetime | None = None

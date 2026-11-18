@@ -4,7 +4,7 @@ import pytest
 from botdesk_plugin_sdk import RISK_CLASSES, RiskClass
 
 from src.models.bot import SecurityLevel
-from src.runtime.policy import Decision, decide, effective_risk, strictest_level
+from src.runtime.policy import Decision, decide, effective_risk, looser_than, strictest_level
 
 # Exactly the table in ADR 0004 §4. Columns: read, write-internal, write-external,
 # external-send, spend, destructive, credential.
@@ -73,3 +73,10 @@ def test_the_effective_level_is_the_strictest() -> None:
     assert strictest_level("autonomous", "ask-before-acting") == "ask-before-acting"
     assert strictest_level("autonomous", "read-only", "ask-before-acting") == "read-only"
     assert strictest_level("autonomous") == "autonomous"
+
+
+def test_a_level_is_looser_than_a_ceiling_only_when_it_lets_the_bot_do_more() -> None:
+    assert looser_than("autonomous", "ask-before-acting")
+    assert looser_than("ask-before-acting", "read-only")
+    assert not looser_than("read-only", "autonomous")
+    assert not looser_than("ask-before-acting", "ask-before-acting")

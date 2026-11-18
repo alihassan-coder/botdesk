@@ -20,10 +20,11 @@ from src.core.config import Settings
 from src.core.database import utcnow
 from src.core.errors import NotFound
 from src.core.handles import mentioned_handles
-from src.models import Approval, Bot, Message, Run, RunEvent, Task, Thread, ThreadParticipant, User
+from src.models import Approval, Bot, Message, Organization, Run, RunEvent, Task, Thread, ThreadParticipant, User
+from src.models.bot import SecurityLevel
 from src.models.run import ACTIVE_STATUSES, PAUSED_STATUSES
 from src.models.task import OPEN_TASK_STATUSES
-from src.runtime.policy import strictest_level
+from src.runtime.policy import LEVELS, strictest_level
 from src.runtime.prompt import ROSTER_LIMIT, TaskBrief, Teammate, handoff_prompt
 from src.schemas.run import RunOut
 from src.services.mention_routing import BotAuthor, ChatBots, Reply, route
@@ -313,6 +314,13 @@ def _label(name: str | None, handle: str | None) -> str:
     return f"{name} (@{handle})" if name and handle else ""
 
 
+async def org_ceiling(db: AsyncSession, org_id: uuid.UUID) -> SecurityLevel:
+    """The organization's security level ceiling now. An organization that's gone (the run is
+    about to be deleted with it) gets the strictest level: fail closed."""
+    ceiling = await db.scalar(select(Organization.max_security_level).where(Organization.id == org_id))
+    return ceiling if ceiling in LEVELS else "read-only"
+
+
 async def run_context(db: AsyncSession, run_id: uuid.UUID) -> RunContext:
     """The bot and the chat so far, in two queries: the run with its bot, chat and trigger, then the
     last `HISTORY_LENGTH` messages up to and including the trigger, each with its author and
@@ -341,6 +349,7 @@ async def run_context(db: AsyncSession, run_id: uuid.UUID) -> RunContext:
                 Bot.model_id,
                 Bot.security_level,
                 Run.security_level.label("run_level"),
+                Organization.max_security_level.label("org_ceiling"),
                 Bot.memory_enabled,
                 Thread.kind,
                 Thread.bot_id.label("dm_bot_id"),
@@ -349,6 +358,7 @@ async def run_context(db: AsyncSession, run_id: uuid.UUID) -> RunContext:
                 trigger.id.label("trigger_id"),
             )
             .join(Bot, Bot.id == Run.bot_id)
+            .join(Organization, Organization.id == Run.org_id)
             .join(Thread, Thread.id == Run.thread_id)
             .outerjoin(trigger, trigger.id == Run.trigger_message_id)
             .outerjoin(Task, Task.child_run_id == Run.id)
@@ -424,10 +434,12 @@ async def run_context(db: AsyncSession, run_id: uuid.UUID) -> RunContext:
         bot_name=row.name,
         instructions=row.instructions,
         model_id=row.model_id,
-        # A routine can make its bot stricter, never looser (ADR 0004). Its run keeps the level it
-        # started with (`Run.security_level`), even if the routine is loosened or removed; the
-        # bot's own level still applies if it was made stricter since.
-        security_level=strictest_level(row.security_level, row.run_level or row.security_level),
+        # The strictest of the organization's ceiling, the bot's level and the run's own (ADR 0004).
+        # A routine can make its bot stricter, never looser: its run keeps the level it started
+        # with (`Run.security_level`), even if the routine is loosened or removed. The ceiling and
+        # the bot's level are read now, so tightening either reaches runs already queued (and the
+        # graph reads the ceiling again before each tool call).
+        security_level=strictest_level(row.org_ceiling, row.security_level, row.run_level or row.security_level),
         memory_enabled=row.memory_enabled,
         tainted=tainted,
         group=row.kind == "group",

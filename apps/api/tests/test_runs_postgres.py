@@ -54,7 +54,7 @@ class ScriptedModel(BaseChatModel):
 
 
 def use_model(pg: Postgres, model: BaseChatModel) -> None:
-    async def model_for(_org_id: uuid.UUID, _model_id: str) -> BaseChatModel:
+    async def model_for(_org_id: uuid.UUID, _model_id: str, _requester_id: uuid.UUID | None = None) -> BaseChatModel:
         return model
 
     pg.runs.model_for = model_for

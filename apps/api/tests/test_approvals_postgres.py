@@ -311,7 +311,7 @@ async def test_the_model_is_looked_up_once_per_run(pg: Postgres) -> None:
     model = ScriptedToolModel(script=[("demo.current_time", {}), ("demo.current_time", {})])
     lookups: list[str] = []
 
-    async def model_for(_org_id: uuid.UUID, model_id: str) -> Any:
+    async def model_for(_org_id: uuid.UUID, model_id: str, _requester_id: uuid.UUID | None = None) -> Any:
         lookups.append(model_id)
         return model
 

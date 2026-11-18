@@ -2,8 +2,9 @@
 
 Model lists change (new models, retired ones), so they're fetched from each provider rather than
 kept in the database. Fetching takes a second or so, and every bot editor asks, so each
-organization's list per provider is kept for `ttl_seconds` (10 minutes). The cache key includes a
-fingerprint of the key and base URL, so replacing a key never serves the old key's list.
+organization's list per provider is kept for `ttl_seconds` (10 minutes). The cache entry carries a
+fingerprint of the key and base URL, so replacing a key never serves the old key's list. A
+member's own key has its own entry, so their list and the organization's never replace each other.
 
 One catalog per API process, created in the app's lifespan with two HTTP clients: the shared
 one for the built-in providers (fixed public addresses), and one for custom servers whose
@@ -40,6 +41,14 @@ class _Entry:
 
 def _fingerprint(connection: ProviderAccess) -> str:
     return hashlib.sha256(f"{connection.api_key}\0{connection.base_url or ''}".encode()).hexdigest()
+
+
+def _slot(org_id: uuid.UUID, connection: ProviderAccess) -> tuple[uuid.UUID, str]:
+    """Where a provider's list is cached: per organization and provider, and a member's own key
+    apart from the organization's (by its saved key's id)."""
+    if connection.source == "member":
+        return org_id, f"{connection.provider_id}#member-{connection.credential_id}"
+    return org_id, connection.provider_id
 
 
 def model_out(provider_id: str, info: ModelInfo) -> ModelOut:
@@ -84,9 +93,8 @@ class ModelCatalog:
         return await adapter_for(connection.kind).list_models(http, connection.api_key, base_url)
 
     async def models(self, org_id: uuid.UUID, connection: ProviderAccess, *, refresh: bool = False) -> list[ModelInfo]:
-        key = (org_id, connection.provider_id)
         fingerprint = _fingerprint(connection)
-        entry = self._cache.get(key)
+        entry = self._cache.get(_slot(org_id, connection))
         if not refresh and entry and entry.fingerprint == fingerprint and entry.expires_at > self.clock():
             return entry.models
         models = await self.fetch(connection)
@@ -95,16 +103,19 @@ class ModelCatalog:
 
     def remember(self, org_id: uuid.UUID, connection: ProviderAccess, models: list[ModelInfo]) -> None:
         entry = _Entry(_fingerprint(connection), self.clock() + self.ttl_seconds, models)
-        self._cache[(org_id, connection.provider_id)] = entry
+        self._cache[_slot(org_id, connection)] = entry
 
     def cached(self, org_id: uuid.UUID, provider_id: str) -> list[ModelInfo] | None:
-        """The last list fetched for this provider, even if it's past its 10 minutes: prices
-        read from it for usage records don't need to be fresh to the second. None if never fetched."""
+        """The last list fetched for this provider with the organization's (or the server's) key,
+        even if it's past its 10 minutes: prices read from it for usage records don't need to be
+        fresh to the second. None if never fetched."""
         entry = self._cache.get((org_id, provider_id))
         return entry.models if entry else None
 
-    def forget(self, org_id: uuid.UUID, provider_id: str) -> None:
-        self._cache.pop((org_id, provider_id), None)
+    def forget(self, org_id: uuid.UUID, provider_id: str, *, member_key: uuid.UUID | None = None) -> None:
+        """Drop the organization's list for this provider (or, with `member_key`, that member key's)."""
+        slot = f"{provider_id}#member-{member_key}" if member_key else provider_id
+        self._cache.pop((org_id, slot), None)
 
     async def merged(
         self, org_id: uuid.UUID, connections: Sequence[ProviderAccess], *, refresh: bool = False

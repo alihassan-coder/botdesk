@@ -6,12 +6,18 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.api.deps import Access
 from src.models import User
-from src.schemas.organization import MemberOut, MemberRoleUpdate, OrgOut, OrgUpdate
+from src.schemas.organization import MemberOut, MemberRoleUpdate, OrgCreate, OrgOut, OrgUpdate
 from src.services import organization_service
 
 
 async def list_mine(db: AsyncSession, user: User) -> list[OrgOut]:
     return await organization_service.orgs_for_user(db, user)
+
+
+async def create(db: AsyncSession, user: User, body: OrgCreate) -> OrgOut:
+    org = await organization_service.create_org(db, user, name=body.name, slug=body.slug)
+    await db.commit()
+    return organization_service.org_out(org, "owner")
 
 
 def get_one(access: Access) -> OrgOut:
@@ -21,7 +27,12 @@ def get_one(access: Access) -> OrgOut:
 async def update(db: AsyncSession, access: Access, body: OrgUpdate) -> OrgOut:
     access.require_admin()
     org = await organization_service.update_org(
-        db, access.org, name=body.name, slug=body.slug, default_security_level=body.default_security_level
+        db,
+        access.org,
+        name=body.name,
+        slug=body.slug,
+        default_security_level=body.default_security_level,
+        max_security_level=body.max_security_level,
     )
     if "monthly_budget_usd" in body.model_fields_set:  # null is a value here: "no limit"
         organization_service.set_budget(org, body.monthly_budget_usd)

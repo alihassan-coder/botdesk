@@ -53,7 +53,8 @@ class Run(IdMixin, CreatedAtMixin, Base):
     # the strictest of its bot's and this. A routine's run keeps the strictest of its bot's and its
     # routine's (so removing or loosening the routine mid-run can't loosen it); a handoff's child
     # run keeps its parent's effective level (ADR 0014: a child is never looser than its parent).
-    # Empty for other runs. (The handoffs contract's `level_cap` is this column.)
+    # Empty for other runs. The organization's ceiling (`Organization.max_security_level`) applies on
+    # top, read when the run loads its context. (The handoffs contract's `level_cap` is this column.)
     security_level: Mapped[str | None] = mapped_column(String(30))
     status: Mapped[str] = mapped_column(String(20), default="queued")
     # Limits, copied from settings when the run is created, and what has been used so far.

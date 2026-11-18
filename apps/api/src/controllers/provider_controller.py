@@ -1,5 +1,7 @@
 """Handles Models & keys requests. Everyone in the organization sees the providers and models;
-owners and admins add, replace, test and remove keys.
+owners and admins add, replace, test and remove the organization's keys. Every member manages
+their own keys ("My keys", built-in providers only): only they see them (last 4 characters), and
+they serve only runs that member is the requester of.
 
 Calls to providers can take seconds, so every handler here ends its database transaction
 (`db.commit()`, which also returns the connection to the pool) before calling out, and opens a
@@ -7,6 +9,7 @@ short new one afterwards to save the result.
 """
 
 import uuid
+from dataclasses import replace
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -111,7 +114,9 @@ async def list_models(
     catalog: ModelCatalog,
 ) -> ModelListOut:
     org_id = access.org.id
-    connections, unreadable = await provider_service.connections(db, org_id, settings, secrets)
+    connections, unreadable = await provider_service.connections(
+        db, org_id, settings, secrets, member_id=access.user.id
+    )
     await db.commit()
     if provider:
         connections = [c for c in connections if c.provider_id == provider]
@@ -119,3 +124,48 @@ async def list_models(
     result = await catalog.merged(org_id, connections, refresh=refresh)
     result.errors.extend(ProviderProblem(provider=p, message=message) for p, message in unreadable.items())
     return result
+
+
+# My keys: a member's own, for the runs they're the requester of. Any member; nobody sees another's,
+# owners and admins included.
+
+
+async def list_my_keys(db: AsyncSession, access: Access) -> list[ProviderOut]:
+    credentials = await provider_service.list_credentials(db, access.org.id, member_id=access.user.id)
+    return provider_service.member_views(credentials)
+
+
+async def save_my_key(
+    db: AsyncSession,
+    access: Access,
+    provider_id: str,
+    body: ProviderKeyIn,
+    *,
+    secrets: SecretBox,
+    catalog: ModelCatalog,
+) -> ProviderOut:
+    """Checked with a live call first, like the organization's keys."""
+    org_id, user_id = access.org.id, access.user.id
+    target = provider_service.member_target(provider_id)
+    draft = provider_service.draft_connection(target, body, None, secrets)
+    await db.commit()  # nothing held open while the provider answers
+
+    try:
+        models = await catalog.fetch(draft)
+    except ProviderError as error:
+        raise BadRequest(f"That key didn't work: {error}") from error
+
+    credential = await provider_service.save_credential(
+        db, org_id=org_id, user_id=user_id, member_id=user_id, connection=draft, secrets=secrets, verified_at=utcnow()
+    )
+    await db.commit()
+    # Your next model list is instant (cached apart from the organization's).
+    catalog.remember(org_id, replace(draft, source="member", credential_id=credential.id), models)
+    return provider_service.view_of(credential)
+
+
+async def remove_my_key(db: AsyncSession, access: Access, provider_id: str, *, catalog: ModelCatalog) -> None:
+    target = provider_service.member_target(provider_id)
+    removed = await provider_service.delete_credential(db, access.org.id, target, member_id=access.user.id)
+    await db.commit()
+    catalog.forget(access.org.id, provider_id, member_key=removed)

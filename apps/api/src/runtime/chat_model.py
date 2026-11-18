@@ -43,8 +43,9 @@ from src.services.model_catalog import ModelCatalog
 logger = logging.getLogger(__name__)
 
 STAND_IN_REPLY = (
-    "Hi! I'm a stand-in reply: BotDesk has no API key for {provider} yet, so I can't think for real. "
-    "An owner or admin can add one in Settings → Models & keys, then pick a model for me. "
+    "Hi! I'm a stand-in reply: BotDesk has no API key for {provider} for you yet, so I can't think for real. "
+    "An owner or admin can add one in Settings → Models & keys (or add your own under My keys there), "
+    "then pick a model for me. "
     "You can still try tools: send `/tool demo.send_email to=sara@acme.dev subject=Hi`."
 )
 TOOL_COMMAND = "/tool"
@@ -230,9 +231,11 @@ class ModelResolver:
         self._price_failed_at: dict[uuid.UUID, float] = {}  # org id → when its list last failed
         self._price_locks: dict[uuid.UUID, asyncio.Lock] = {}  # one fetch per org at a time
 
-    async def price(self, org_id: uuid.UUID, model_id: str) -> ModelPrice:
+    async def price(self, org_id: uuid.UUID, model_id: str, requester_id: uuid.UUID | None = None) -> ModelPrice:
         """The model's price: OpenRouter's from its model list, the built-in providers' from
-        `pricing.PRICE_TABLE`, and none for custom servers. Never fails: an unknown price is None."""
+        `pricing.PRICE_TABLE`, and none for custom servers. Never fails: an unknown price is None.
+        OpenRouter's list is the organization's; without one, the key the requester's run uses
+        fetches it (prices are the same for every key)."""
         full_id = model_id or self.settings.default_model_id
         provider_id, _, model = full_id.partition(":")
         spec = BUILT_IN.get(provider_id)
@@ -240,19 +243,21 @@ class ModelResolver:
             return ModelPrice(full_id, provider_id, None)
         if spec.kind != "openrouter":
             return ModelPrice(full_id, provider_id, pricing.table_price(spec.kind, model))
-        return ModelPrice(full_id, provider_id, await self._openrouter_price(org_id, model))
+        return ModelPrice(full_id, provider_id, await self._openrouter_price(org_id, model, requester_id))
 
-    async def _openrouter_price(self, org_id: uuid.UUID, model: str) -> Pricing | None:
+    async def _openrouter_price(self, org_id: uuid.UUID, model: str, requester_id: uuid.UUID | None) -> Pricing | None:
         if self.catalog is None:
             return None
         models = self.catalog.cached(org_id, "openrouter")
         if models is None:  # not listed since the API started: fetch the list once (it's cached)
-            models = await self._fetch_openrouter_prices(org_id, self.catalog)
+            models = await self._fetch_openrouter_prices(org_id, self.catalog, requester_id)
         if models is None:
             return None
         return next((info.pricing for info in models if info.model == model), None)
 
-    async def _fetch_openrouter_prices(self, org_id: uuid.UUID, catalog: ModelCatalog) -> list[ModelInfo] | None:
+    async def _fetch_openrouter_prices(
+        self, org_id: uuid.UUID, catalog: ModelCatalog, requester_id: uuid.UUID | None
+    ) -> list[ModelInfo] | None:
         """OpenRouter's model list for this org, fetched by one caller at a time: the others wait
         and read the cache. After a failure, None for `PRICE_RETRY_SECONDS` without asking again."""
         lock = self._price_locks.setdefault(org_id, asyncio.Lock())
@@ -265,7 +270,7 @@ class ModelResolver:
             try:
                 async with self.sessionmaker() as db:
                     connection = await provider_service.connection_for(
-                        db, org_id, "openrouter", self.settings, self.secrets
+                        db, org_id, "openrouter", self.settings, self.secrets, requester_id=requester_id
                     )
                 if connection is None:
                     return None
@@ -277,12 +282,15 @@ class ModelResolver:
             self._price_failed_at.pop(org_id, None)
             return models
 
-    async def __call__(self, org_id: uuid.UUID, model_id: str) -> BaseChatModel:
-        """`model_id` is "provider:model" (e.g. "groq:llama-3.3-70b-versatile"). Empty = DEFAULT_MODEL_ID."""
+    async def __call__(self, org_id: uuid.UUID, model_id: str, requester_id: uuid.UUID | None = None) -> BaseChatModel:
+        """`model_id` is "provider:model" (e.g. "groq:llama-3.3-70b-versatile"). Empty = DEFAULT_MODEL_ID.
+        The key: `requester_id`'s own (whoever the run works for), else the org's, else the server's."""
         provider_id, _, model = (model_id or self.settings.default_model_id).partition(":")
         try:
             async with self.sessionmaker() as db:
-                connection = await provider_service.connection_for(db, org_id, provider_id, self.settings, self.secrets)
+                connection = await provider_service.connection_for(
+                    db, org_id, provider_id, self.settings, self.secrets, requester_id=requester_id
+                )
             if connection is None:
                 return stand_in_model(provider_id)
             base_url = connection.base_url

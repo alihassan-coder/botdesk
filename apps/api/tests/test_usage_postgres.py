@@ -39,7 +39,7 @@ class CountingModel(ScriptedModel):
 
 
 def use_price(pg: Postgres, pricing: Pricing | None, model_id: str = "anthropic:claude-sonnet-5-5") -> None:
-    async def price_for(_org_id: uuid.UUID, _model_id: str) -> ModelPrice:
+    async def price_for(_org_id: uuid.UUID, _model_id: str, _requester_id: uuid.UUID | None = None) -> ModelPrice:
         return ModelPrice(model_id=model_id, provider=model_id.partition(":")[0], pricing=pricing)
 
     pg.runs.price_for = price_for

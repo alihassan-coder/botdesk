@@ -65,7 +65,7 @@ from src.runtime.chat_model import (
 )
 from src.runtime.limits import RunLimits, limit_reached
 from src.runtime.memory import MemoryScope, MemoryService
-from src.runtime.policy import LEVELS
+from src.runtime.policy import LEVELS, strictest_level
 from src.runtime.prompt import HistoryLine, TaskBrief, Teammate, build_prompt, results_text
 from src.runtime.reporter import RunReporter
 from src.runtime.token_batcher import BackgroundSender, TokenBatcher
@@ -153,7 +153,7 @@ class RunDeps:
     sessionmaker: async_sessionmaker[AsyncSession]
     reporter: RunReporter
     memory: MemoryService
-    model_for: Callable[[str], Awaitable[BaseChatModel]]  # model id → chat model, with this org's keys
+    model_for: Callable[[str], Awaitable[BaseChatModel]]  # model id → chat model (requester's key, else org's)
     price_for: Callable[[str], Awaitable[ModelPrice]]  # model id → its price, for budgets and usage
     in_background: Callable[[Coroutine[Any, Any, None]], None]
     # Work that must finish even if the run is stopped or the API shuts down (usage records):
@@ -220,7 +220,8 @@ def _history_lines(state: RunState) -> list[HistoryLine]:
 
 
 def _security_level(state: RunState) -> SecurityLevel:
-    """The bot's level. Anything unexpected falls back to the strictest one (fail closed)."""
+    """The run's effective level when it loaded its context (the organization's ceiling, the bot's
+    level, the run's own). Anything unexpected falls back to the strictest one (fail closed)."""
     level = state.get("security_level", "")
     return level if level in LEVELS else "read-only"
 
@@ -498,10 +499,11 @@ async def prepare_call(state: RunState, runtime: Runtime[RunDeps]) -> RunState:
     tainted = state.get("tainted", False)
     request = ToolCallRequest(id=first["id"], name=first["name"], args=dict(first.get("args") or {}))
     tools = await _toolset(deps)
-    prepared = tool_pipeline.prepare(
-        tools, request, level=_security_level(state), tainted=tainted, connections=tools.connections
-    )
     async with deps.sessionmaker() as db:
+        # The organization's ceiling is read again for every call, so lowering it reaches a run
+        # already going from its next tool call. It only ever makes the run's level stricter.
+        level = strictest_level(_security_level(state), await run_service.org_ceiling(db, deps.org_id))
+        prepared = tool_pipeline.prepare(tools, request, level=level, tainted=tainted, connections=tools.connections)
         recorded = await tool_pipeline.record(
             db, deps.run_ref, prepared, tainted=tainted, approval_expiry=deps.approval_expiry
         )

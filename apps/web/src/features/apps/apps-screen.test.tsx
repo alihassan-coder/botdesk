@@ -134,22 +134,29 @@ describe("Connect apps on the API", () => {
 
 describe("MCP servers on Connect apps", () => {
   const api = withFakeApi();
+  // The API's shape since slice 7.4: each tool carries its review state, and only approved, enabled ones are offered.
+  const mcpTool = (serverName: string, title: string | null, state = "approved", enabled = true) => ({
+    name: `mcp-1a2b3c4d.${serverName}`, serverName, title, description: `${serverName}.`, annotations: {}, inputSchema: { type: "object" },
+    outputSchema: null, state, enabled, risk: "external-send", previous: null,
+  });
   const tracker = {
     id: "m1", pluginId: "mcp-1a2b3c4d", name: "Tracker", url: "https://mcp.example.com/mcp", authKind: "header", authHeader: "X-API-Key",
     status: "active", statusReason: null, lastCheckedAt: "2026-11-17T08:00:00Z", createdAt: "2026-11-17T08:00:00Z", createdBy: "u1",
-    tools: [
-      { name: "mcp-1a2b3c4d.search_issues", serverName: "search_issues", title: "Search issues", description: "Finds issues.", annotations: {} },
-      { name: "mcp-1a2b3c4d.create_issue", serverName: "create_issue", title: null, description: "Creates one.", annotations: {} },
-    ],
+    tools: [mcpTool("search_issues", "Search issues"), mcpTool("create_issue", null)], toolsHash: "h1", toolsChanged: 0,
+  };
+  // What adding it returns: nothing approved yet (ADR 0012 §4).
+  const justAdded = {
+    ...tracker, tools: [mcpTool("search_issues", "Search issues", "pending", false), mcpTool("create_issue", null, "pending", false)],
+    toolsChanged: 2, authorizeUrl: null,
   };
   beforeEach(() => {
     api.routes["GET /api/v1/orgs/o1/connectors"] = { status: 200, body: [] };
     api.routes["GET /api/v1/orgs/o1/connections"] = { status: 200, body: [] };
   });
 
-  it("an owner adds a server with a header key; it's listed with its tool count, and the key isn't kept", async () => {
+  it("an owner adds a server with a header key; nothing is offered until its tools are reviewed, and the key isn't kept", async () => {
     api.routes["GET /api/v1/orgs/o1/mcp-servers"] = { status: 200, body: [] };
-    api.routes["POST /api/v1/orgs/o1/mcp-servers"] = { status: 201, body: tracker };
+    api.routes["POST /api/v1/orgs/o1/mcp-servers"] = { status: 201, body: justAdded };
     await signInOnApi();
     const { user } = renderUI(<AppsScreen />);
 
@@ -164,8 +171,14 @@ describe("MCP servers on Connect apps", () => {
     await user.type(within(dialog).getByLabelText("Header value"), "sk-secret");
     await user.click(within(dialog).getByRole("button", { name: "Add server" }));
 
+    // Step 2 of the dialog leads to Review tools.
+    expect(await within(dialog).findByText("Tracker added")).toBeInTheDocument();
+    expect(within(dialog).getByText(/2 tools to review/)).toBeInTheDocument();
+    expect(within(dialog).getByRole("link", { name: "Review tools" })).toHaveAttribute("href", "/apps/mcp/m1");
+    await user.click(within(dialog).getByRole("button", { name: "Later" }));
     const row = await within(section).findByRole("listitem", { name: "Tracker" });
-    expect(within(row).getByText(/2 tools/)).toBeInTheDocument();
+    expect(within(row).getByText(/No tools offered to bots yet/)).toBeInTheDocument();
+    expect(within(row).getByText("2 tools to review")).toBeInTheDocument();
     expect(api.sent.find((r) => r.key === "POST /api/v1/orgs/o1/mcp-servers")?.body).toEqual({
       name: "Tracker", url: "https://mcp.example.com/mcp", apiKeyHeader: "X-API-Key", apiKeyValue: "sk-secret",
     });
@@ -189,14 +202,15 @@ describe("MCP servers on Connect apps", () => {
 
   it("an owner refreshes and removes a server", async () => {
     api.routes["GET /api/v1/orgs/o1/mcp-servers"] = { status: 200, body: [tracker] };
-    api.routes["POST /api/v1/orgs/o1/mcp-servers/m1/refresh"] = { status: 200, body: { ...tracker, tools: tracker.tools.slice(0, 1) } };
+    api.routes["POST /api/v1/orgs/o1/mcp-servers/m1/refresh"] = { status: 200, body: { ...tracker, tools: tracker.tools.slice(0, 1), toolsHash: "h2" } };
     api.routes["DELETE /api/v1/orgs/o1/mcp-servers/m1"] = { status: 204 };
     await signInOnApi();
     const { user } = renderUI(<AppsScreen />);
 
     const row = await screen.findByRole("listitem", { name: "Tracker" });
+    expect(within(row).getByText(/2 tools offered to bots$/)).toBeInTheDocument();
     await user.click(within(row).getByRole("button", { name: "Refresh Tracker" }));
-    expect(await within(row).findByText(/1 tool$/)).toBeInTheDocument();
+    expect(await within(row).findByText(/1 tool offered to bots$/)).toBeInTheDocument();
 
     await user.click(within(row).getByRole("button", { name: "Remove" }));
     await user.click(within(screen.getByRole("alertdialog")).getByRole("button", { name: "Remove" }));
@@ -215,5 +229,52 @@ describe("MCP servers on Connect apps", () => {
     expect(within(row).queryByRole("button", { name: /Refresh/ })).not.toBeInTheDocument();
     expect(within(row).queryByRole("button", { name: "Remove" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Add server" })).not.toBeInTheDocument();
+  });
+  it("a changed tool shows as a badge, and Review tools is the next step", async () => {
+    const changed = { ...mcpTool("create_issue", null, "changed", true), previous: { title: null, description: "Old.", inputSchema: { type: "object" }, outputSchema: null } };
+    api.routes["GET /api/v1/orgs/o1/mcp-servers"] = { status: 200, body: [{ ...tracker, tools: [tracker.tools[0], changed], toolsChanged: 1 }] };
+    await signInOnApi();
+    renderUI(<AppsScreen />);
+
+    const row = await screen.findByRole("listitem", { name: "Tracker" });
+    expect(within(row).getByText("1 tool changed")).toBeInTheDocument();
+    expect(within(row).getByText(/1 tool offered to bots$/)).toBeInTheDocument();
+    expect(within(row).getByRole("link", { name: "Review tools" })).toHaveAttribute("href", "/apps/mcp/m1");
+  });
+
+  it("a sign-in that needs more access says why, and Reconnect signs in again", async () => {
+    const oauth = { ...tracker, authKind: "oauth", authHeader: null, status: "needs_reconnect", statusReason: "Tracker needs more access than it was given (tracker.write)." };
+    api.routes["GET /api/v1/orgs/o1/mcp-servers"] = { status: 200, body: [oauth] };
+    api.routes["POST /api/v1/orgs/o1/mcp-servers/m1/sign-in"] = { status: 200, body: { authorizeUrl: "https://auth.example/authorize?x=1" } };
+    const leave = vi.spyOn(browser, "leaveFor").mockImplementation(() => {});
+    await signInOnApi();
+    const { user } = renderUI(<AppsScreen />);
+
+    const row = await screen.findByRole("listitem", { name: "Tracker" });
+    expect(within(row).getByRole("status")).toHaveTextContent("needs more access than it was given (tracker.write)");
+    await user.click(within(row).getByRole("button", { name: "Reconnect" }));
+    await vi.waitFor(() => expect(leave).toHaveBeenCalledWith("https://auth.example/authorize?x=1"));
+    leave.mockRestore();
+  });
+
+  it("an MCP sign-in in Your connections is named after its server and reconnects through it", async () => {
+    const oauth = { ...tracker, authKind: "oauth", authHeader: null, status: "needs_reconnect" };
+    api.routes["GET /api/v1/orgs/o1/mcp-servers"] = { status: 200, body: [oauth] };
+    api.routes["GET /api/v1/orgs/o1/connections"] = {
+      status: 200,
+      body: [{ id: "c9", connectorId: "mcp-1a2b3c4d", ownerKind: "org", ownerUserId: null, ownerBotId: null, authType: "oauth2", accountLabel: "Tracker",
+        scopes: [], status: "needs_reconnect", statusReason: "The MCP server stopped accepting this sign-in.", createdAt: "2026-11-17T08:00:00Z", lastUsedAt: null, createdBy: "u1" }],
+    };
+    api.routes["POST /api/v1/orgs/o1/mcp-servers/m1/sign-in"] = { status: 200, body: { authorizeUrl: "https://auth.example/authorize?y=2" } };
+    const leave = vi.spyOn(browser, "leaveFor").mockImplementation(() => {});
+    await signInOnApi();
+    const { user } = renderUI(<AppsScreen />);
+
+    const mine = await screen.findByRole("region", { name: "Your connections" });
+    expect(await within(mine).findByText("Tracker (MCP)")).toBeInTheDocument();
+    await user.click(within(mine).getByRole("button", { name: "Reconnect" }));
+    await vi.waitFor(() => expect(leave).toHaveBeenCalledWith("https://auth.example/authorize?y=2"));
+    expect(api.sent.some((r) => r.key === "POST /api/v1/orgs/o1/connections/oauth/start")).toBe(false);
+    leave.mockRestore();
   });
 });

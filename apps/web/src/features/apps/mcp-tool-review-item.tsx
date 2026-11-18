@@ -7,6 +7,7 @@ import type { McpTool, McpToolChoice, McpToolRisk } from "@/data/types";
 import { RISK } from "@/features/approvals/risk";
 import { MCP_TOOL_RISKS, isLowered } from "@/lib/mcp-review";
 import { McpToolArguments } from "./mcp-tool-arguments";
+import { McpToolDiff } from "./mcp-tool-diff";
 
 const STATE: Partial<Record<McpTool["state"], { label: string; variant: "default" | "destructive" | "outline" }>> = {
   changed: { label: "Changed", variant: "default" },
@@ -37,18 +38,7 @@ export function McpToolReviewItem({
       </div>
 
       {tool.state === "changed" && tool.previous ? (
-        <div className="grid gap-3 sm:grid-cols-2">
-          <div className="rounded-xl bg-muted/50 p-3">
-            <p className="mb-1 text-xs font-medium text-muted-foreground">Before (approved)</p>
-            <p className="text-sm whitespace-pre-wrap">{tool.previous.description || "No description."}</p>
-            <div className="mt-2"><McpToolArguments schema={tool.previous.inputSchema} label="Arguments before" /></div>
-          </div>
-          <div className="rounded-xl border border-primary/40 p-3">
-            <p className="mb-1 text-xs font-medium text-muted-foreground">Now</p>
-            <p className="text-sm whitespace-pre-wrap">{tool.description || "No description."}</p>
-            <div className="mt-2"><McpToolArguments schema={tool.inputSchema} label="Arguments now" /></div>
-          </div>
-        </div>
+        <McpToolDiff tool={tool} />
       ) : (
         <>
           <p className="text-sm whitespace-pre-wrap text-muted-foreground">{tool.description || "No description."}</p>

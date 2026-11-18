@@ -10,7 +10,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { actions, useAuthStatus, useCurrentUser, useMcpServers, useOrg } from "@/data/store";
 import type { McpServer, McpToolChoice } from "@/data/types";
 import { PageHeader } from "@/features/shell/page-header";
-import { initialChoices, reviewOrder } from "@/lib/mcp-review";
+import { initialChoices, reviewOrder, waitingLabel } from "@/lib/mcp-review";
 import { McpToolReviewItem } from "./mcp-tool-review-item";
 
 /**
@@ -55,6 +55,8 @@ function ReviewForm({ server }: { server: McpServer }) {
   const [saving, setSaving] = useState(false);
   const tools = reviewOrder(server.tools);
   const offered = Object.values(choices).filter((c) => c.enabled).length;
+  const waiting = waitingLabel(server.tools);
+  const firstReview = server.tools.length > 0 && server.tools.every((t) => t.state === "pending");
 
   async function save() {
     setSaving(true);
@@ -74,11 +76,11 @@ function ReviewForm({ server }: { server: McpServer }) {
         <h2 className="text-lg font-semibold">{server.name}</h2>
         <p className="text-sm break-all text-muted-foreground">{server.url}</p>
       </div>
-      {server.toolsChanged > 0 && (
+      {waiting && (
         <Alert>
-          <AlertTitle>{server.toolsChanged === 1 ? "1 tool changed" : `${server.toolsChanged} tools changed`} on the server</AlertTitle>
+          <AlertTitle>{firstReview ? waiting : `${waiting} on the server`}</AlertTitle>
           <AlertDescription>
-            Changed and new tools aren&apos;t offered to bots until {canEdit ? "you approve them here" : "an owner or admin approves them"}. Read what they say now: a tool&apos;s description goes into every bot&apos;s instructions.
+            {firstReview ? "Nothing from this server is offered to bots" : "Changed and new tools aren't offered to bots"} until {canEdit ? "you approve them here" : "an owner or admin approves them"}. Read what each one says: a tool&apos;s description goes into the instructions of every bot that uses it.
           </AlertDescription>
         </Alert>
       )}

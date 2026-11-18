@@ -164,8 +164,9 @@ export function toMcpServer(s: ApiMcpServer): McpServer {
   const { id, pluginId, name, url, authKind, authHeader, status, statusReason, toolsHash, toolsChanged } = s;
   return {
     id, pluginId, name, url, authKind, authHeader, status, statusReason, toolsHash, toolsChanged,
-    tools: s.tools.map(({ name, serverName, title, description, annotations, inputSchema, state, enabled, risk, previous }) => ({
-      name, serverName, title, description, annotations, inputSchema, state, enabled, risk, previous,
+    tools: s.tools.map(({ name, serverName, title, description, annotations, inputSchema, outputSchema, state, enabled, risk, previous }) => ({
+      name, serverName, title, description, annotations, inputSchema, outputSchema: outputSchema ?? null, state, enabled, risk,
+      previous: previous ? { ...previous, outputSchema: previous.outputSchema ?? null } : null,
     })),
     lastCheckedAt: s.lastCheckedAt ? asUtc(s.lastCheckedAt) : null,
   };

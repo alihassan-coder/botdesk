@@ -52,7 +52,7 @@ from botdesk_plugin_sdk import (
     validate_manifest,
 )
 from pydantic import BaseModel, ConfigDict, SecretStr
-from sqlalchemy import delete, select, update
+from sqlalchemy import Select, delete, select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from src.core import url_guard
@@ -95,6 +95,7 @@ CHANGED = "This tool changed on the server; an admin must review it in Connect a
 STALE_REVIEW = "The server's tools changed again since you opened the review. Look at them again."
 UNKNOWN_TOOL = "This server has no tool called {name}."
 KEY_REFUSED = "The server refused that key. Check the header name and value."
+SERVER_ERROR = "The server answered with an MCP error. Refresh to try again; its admin can tell you why."
 NOT_SIGN_IN = "This MCP server doesn't use sign-in."
 SIGN_IN_UNAVAILABLE = "Signing in to MCP servers isn't available on this server."
 UNSAFE_SIGN_IN = "This MCP server's sign-in uses an address BotDesk won't connect to (it must be public https)."
@@ -173,11 +174,26 @@ async def list_servers(db: AsyncSession, org_id: uuid.UUID) -> list[McpServer]:
     return list(rows)
 
 
-async def get_server(db: AsyncSession, org_id: uuid.UUID, server_id: uuid.UUID) -> McpServer:
-    server = await db.scalar(select(McpServer).where(McpServer.org_id == org_id, McpServer.id == server_id))
+def server_query(org_id: uuid.UUID, server_id: uuid.UUID, *, for_update: bool = False) -> Select[McpServer]:
+    """One server of the organization. `for_update`: lock its row (Postgres) for a change of its
+    snapshot, so a review and a call that saw the tools change can't undo each other."""
+    query = select(McpServer).where(McpServer.org_id == org_id, McpServer.id == server_id)
+    return query.with_for_update() if for_update else query
+
+
+async def get_server(
+    db: AsyncSession, org_id: uuid.UUID, server_id: uuid.UUID, *, for_update: bool = False
+) -> McpServer:
+    server = await db.scalar(server_query(org_id, server_id, for_update=for_update))
     if server is None:
         raise NotFound(NOT_FOUND)
     return server
+
+
+def status_reason(error: McpClientError) -> str:
+    """Why a server is unreachable, as every member sees it on Connect apps: never the server's
+    own words (an MCP error's message is outside text)."""
+    return SERVER_ERROR if isinstance(error, McpProtocolError) else str(error)
 
 
 @dataclass(frozen=True)
@@ -311,6 +327,9 @@ async def add(db: AsyncSession, runtime: McpRuntime, actor: Actor, data: McpServ
         secret = json.dumps({"header": data.api_key_header, "value": data.api_key_value.get_secret_value()})
         server.encrypted_auth = runtime.vault.seal(secret)
     challenge = ""
+    # No transaction open while the server is called: listing, discovery and registration can
+    # take over a minute (Postgres would sit idle in transaction, holding a pooled connection).
+    await db.rollback()
     if not data.sign_in:
         try:
             tools = await mcp.list_tools(_header_config(server, runtime), network=runtime.network)
@@ -335,32 +354,34 @@ async def add(db: AsyncSession, runtime: McpRuntime, actor: Actor, data: McpServ
 async def refresh(db: AsyncSession, runtime: McpRuntime, actor: Actor, server_id: uuid.UUID) -> McpServer:
     """List the tools again. Changed and new tools are recorded and wait for an admin's review
     (refreshing never trusts them by itself). A server that can't be reached keeps its last
-    snapshot and is marked unreachable; one whose sign-in stopped working needs reconnecting."""
+    snapshot and is marked unreachable; one whose sign-in stopped working needs reconnecting.
+    The server is called with no transaction open (up to 70 s), then read again and saved."""
     _require_admin(actor)
-    server = await get_server(db, actor.org_id, server_id)
+    ref = _ref(await get_server(db, actor.org_id, server_id))
+    await db.rollback()
+    tools: list[mcp.McpToolInfo] | None = None
+    failure: McpClientError | None = None
     try:
-        tools = await mcp.list_tools(await _config(server, runtime), network=runtime.network)
+        tools = await mcp.list_tools(await _config_for(ref, runtime), network=runtime.network)
     except McpNeedsSignIn:
-        return server  # Connect apps shows Reconnect from the connection's state
-    except McpAuthRequired as needs:
-        if server.auth_kind == "oauth":
-            await _sign_in_refused(runtime, server.org_id, server.plugin_id)
-            return server
-        server.status, server.status_reason = "unreachable", KEY_REFUSED if server.auth_kind == "header" else str(needs)
-        server.last_checked_at = utcnow()
-        return server
-    except McpInsufficientScope as more:
-        if server.auth_kind == "oauth" and server.oauth:
-            server.oauth, extra = _with_scopes(server.oauth, more.challenge)
-            await _mark_more_access(db, server.org_id, server.plugin_id, server.name, extra)
-            return server
-        server.status, server.status_reason = "unreachable", str(more)
-        server.last_checked_at = utcnow()
-        return server
+        return await get_server(db, actor.org_id, server_id)  # Reconnect shows from the connection's state
     except McpClientError as error:
-        server.status, server.status_reason = "unreachable", str(error)
+        failure = error
+    if isinstance(failure, McpAuthRequired) and ref.auth_kind == "oauth":
+        await _sign_in_refused(runtime, ref.org_id, ref.plugin_id)
+    server = await get_server(db, actor.org_id, server_id, for_update=True)
+    if isinstance(failure, McpAuthRequired) and server.auth_kind == "oauth":
+        return server
+    if isinstance(failure, McpInsufficientScope) and server.auth_kind == "oauth" and server.oauth:
+        server.oauth, extra = _with_scopes(server.oauth, failure.challenge)
+        await _mark_more_access(db, server.org_id, server.plugin_id, server.name, extra)
+        return server
+    if failure is not None:
+        refused_key = isinstance(failure, McpAuthRequired) and server.auth_kind == "header"
+        server.status, server.status_reason = "unreachable", KEY_REFUSED if refused_key else status_reason(failure)
         server.last_checked_at = utcnow()
         return server
+    assert tools is not None
     _save_snapshot(server, tools)
     _audit(db, actor, "mcp_server.refreshed", server)
     return server
@@ -372,7 +393,7 @@ async def review(db: AsyncSession, actor: Actor, server_id: uuid.UUID, data: Mcp
     waiting). Removed tools leave the list. `tools_hash` must be the one the admin looked at.
     Every risk change is its own audit line (ADR 0012 §5)."""
     _require_admin(actor)
-    server = await get_server(db, actor.org_id, server_id)
+    server = await get_server(db, actor.org_id, server_id, for_update=True)
     if data.tools_hash != server.tools_hash:
         raise Conflict(STALE_REVIEW)
     entries = [normalized(entry) for entry in server.tools]
@@ -582,7 +603,7 @@ async def finish_sign_in(
         bearer = {"Authorization": f"Bearer {tokens.access_token}"}
         listed = await mcp.list_tools(McpServerConfig(url=url, headers=bearer), network=runtime.network)
     except McpClientError as error:
-        unreachable = str(error)
+        unreachable = status_reason(error)
 
     scopes = tokens.scope.split() if tokens.scope else list(flow.scopes)
     try:
@@ -600,7 +621,7 @@ async def finish_sign_in(
         )
     except AppError as conflict:
         raise FlowFailed("failed", conflict.message) from conflict
-    row = await db.get(McpServer, server_id)
+    row = await db.get(McpServer, server_id, with_for_update=True)
     if row is not None:
         if listed is not None:
             _save_snapshot(row, listed)
@@ -941,7 +962,7 @@ async def _record_drift(runtime: McpRuntime, server_id: uuid.UUID, tools: list[m
         return
     try:
         async with runtime.sessionmaker() as db:
-            server = await db.get(McpServer, server_id)
+            server = await db.get(McpServer, server_id, with_for_update=True)
             if server is not None:
                 _save_snapshot(server, tools)
                 await db.commit()

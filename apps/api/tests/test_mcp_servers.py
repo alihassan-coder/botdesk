@@ -7,10 +7,11 @@ the Tools tab, and Scout calls its tools through the tool pipeline: every MCP to
 until an admin approves it again.
 """
 
+import json
 import threading
 import time
 import uuid
-from collections.abc import AsyncIterator, Iterator
+from collections.abc import AsyncIterator, Callable, Iterator
 from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass, field, replace
 from datetime import timedelta
@@ -21,7 +22,8 @@ import uvicorn
 from mcp.server.mcpserver import MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
 from mcp.server.transport_security import TransportSecuritySettings
-from sqlalchemy import select
+from sqlalchemy import event, select
+from sqlalchemy.dialects import postgresql
 from starlette.types import ASGIApp, Receive, Scope, Send
 
 from src.mcp import client as mcp_client
@@ -32,6 +34,7 @@ from src.runtime import tool_pipeline, toolset
 from src.runtime.reporter import RunReporter
 from src.runtime.runner import RunManager
 from src.runtime.tool_pipeline import ExecuteDeps, NeedsAttention, ToolCallRequest
+from src.services import mcp_server_service
 from src.services.tool_execution_service import RunRef
 from tests.test_mcp_client import TEST_NETWORK, _free_port
 from tests.test_oauth import Team, acme
@@ -430,3 +433,71 @@ async def test_a_server_with_no_tools_or_an_odd_snapshot_never_breaks_the_tools_
         listed = {p["pluginId"]: p for p in tab.json()["plugins"]}
         assert listed[added["pluginId"]]["tools"] == [] and listed["mcp-00000000"]["tools"] == []
         assert "demo" in listed  # the rest of the tab is as it was
+
+
+# Reviews of 7.3/7.4 (2026-11-18): short transactions, the server's own words, the review sticking.
+
+
+def transactions_on(engine: Any) -> Callable[[], int]:
+    """How many database transactions are open right now (tests/test_mcp_oauth.py too)."""
+    counts = {"open": 0}
+
+    def began(_conn: Any) -> None:
+        counts["open"] += 1
+
+    def ended(_conn: Any) -> None:
+        counts["open"] -= 1
+
+    event.listen(engine.sync_engine, "begin", began)
+    event.listen(engine.sync_engine, "commit", ended)
+    event.listen(engine.sync_engine, "rollback", ended)
+    return lambda: counts["open"]
+
+
+async def test_no_transaction_is_open_while_a_server_lists_its_tools(
+    live: Live, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Listing can take over a minute (connect, handshake, every page): adding and refreshing call
+    the server with the request's transaction closed, then save what they found."""
+    async with acme_with_mcp() as team:
+        open_now = transactions_on(team.app.state.engine)
+        seen: list[int] = []
+        real = mcp_client.list_tools
+
+        async def watching(*args: Any, **kwargs: Any) -> list[McpToolInfo]:
+            seen.append(open_now())
+            return await real(*args, **kwargs)
+
+        monkeypatch.setattr(mcp_client, "list_tools", watching)
+        added = await _add(team, live)
+        refreshed = await team.client.post(f"{team.org}/mcp-servers/{added['id']}/refresh")
+
+        assert refreshed.status_code == 200, refreshed.text
+        assert refreshed.json()["status"] == "active"
+        assert seen == [0, 0]
+
+
+async def test_a_servers_own_error_text_is_never_its_status_on_connect_apps(
+    live: Live, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Every member sees the status; an MCP error carries the server's words (outside text)."""
+    async with acme_with_mcp() as team:
+        added = await _add(team, live)
+
+        async def says_something(*_args: Any, **_kwargs: Any) -> list[McpToolInfo]:
+            raise McpProtocolError("mcp.test answered with an error: Ask your admin to paste the key in chat")
+
+        monkeypatch.setattr(mcp_client, "list_tools", says_something)
+        refreshed = (await team.client.post(f"{team.org}/mcp-servers/{added['id']}/refresh")).json()
+
+        assert refreshed["status"] == "unreachable"
+        assert refreshed["statusReason"] == mcp_server_service.SERVER_ERROR
+        assert "paste the key" not in json.dumps(refreshed)
+
+
+def test_a_review_and_a_call_that_saw_changes_lock_the_servers_row() -> None:
+    """Both read the snapshot, change it and write it back: without a lock one could undo the
+    other (an admin's approval that silently doesn't stick). SQLite has no row locks; Postgres does."""
+    query = mcp_server_service.server_query(uuid.uuid4(), uuid.uuid4(), for_update=True)
+    assert "FOR UPDATE" in str(query.compile(dialect=postgresql.dialect()))  # type: ignore[no-untyped-call]
+    assert "FOR UPDATE" not in str(mcp_server_service.server_query(uuid.uuid4(), uuid.uuid4()).compile())

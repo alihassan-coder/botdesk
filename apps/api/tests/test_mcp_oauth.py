@@ -7,6 +7,7 @@ registration and a token endpoint that checks PKCE and the `resource`. The brows
 sign-in page is played by the test; the callback is the real `/api/v1/oauth/callback`.
 """
 
+import asyncio
 import base64
 import hashlib
 import json
@@ -36,7 +37,7 @@ from src.models import Connection, McpServer, Membership
 from src.runtime.runner import RunManager
 from src.services.mcp_server_service import McpRuntime
 from tests.test_mcp_client import _free_port
-from tests.test_mcp_servers import _bind_and_ask, _call, approve_all
+from tests.test_mcp_servers import _bind_and_ask, _call, approve_all, transactions_on
 from tests.test_oauth import GOOGLE_SETTINGS, Team, acme
 
 ISSUER = "https://auth.example"
@@ -689,3 +690,47 @@ async def test_an_endless_metadata_answer_is_cut_off() -> None:
 
     with pytest.raises(McpSignInError, match="far more data"):
         await _discover(handle)
+
+
+async def test_a_server_that_drips_its_answer_is_cut_off_in_time(monkeypatch: pytest.MonkeyPatch) -> None:
+    """httpx's timeout is per read: a server sending a byte now and then would hold a request for
+    hours. Each sign-in request has a limit for the whole of it."""
+    from src.mcp import oauth as mcp_oauth
+
+    async def drip() -> AsyncIterator[bytes]:
+        while True:
+            await asyncio.sleep(0.05)
+            yield b" "
+
+    def handle(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, content=drip())
+
+    monkeypatch.setattr(mcp_oauth, "REQUEST_SECONDS", 0.3)
+    rt = _runtime(handle)
+    found = {"tokenEndpoint": f"{ISSUER}/token", "resource": "https://mcp.example/mcp"}
+    async with rt.http() as http:
+        with pytest.raises(httpx.TimeoutException, match="took longer than"):
+            await mcp_oauth.token_request(http, found, "client", None, {"grant_type": "x"}, rt.guard)
+
+
+async def test_no_transaction_is_open_while_a_server_is_asked_how_to_sign_in(
+    guarded: Guarded, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Discovery and registration can take a minute: holding the request's transaction that long
+    would leave Postgres idle in transaction and the pool short."""
+    from src.mcp import oauth as mcp_oauth
+
+    async with acme_with_sign_in(guarded) as (team, _fake):
+        open_now = transactions_on(team.app.state.engine)
+        seen: list[int] = []
+        real = mcp_oauth.discover
+
+        async def watching(*args: Any, **kwargs: Any) -> dict[str, Any]:
+            seen.append(open_now())
+            return await real(*args, **kwargs)
+
+        monkeypatch.setattr(mcp_oauth, "discover", watching)
+        added = await team.client.post(f"{team.org}/mcp-servers", json={"name": "Tracker", "url": guarded.url})
+
+        assert added.status_code == 201, added.text
+        assert seen == [0]

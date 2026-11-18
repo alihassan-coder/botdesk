@@ -27,6 +27,7 @@
 - **Errors** are `McpSignInError` with a sentence people can act on; never the server's own words.
 """
 
+import asyncio
 import base64
 import ipaddress
 import re
@@ -106,19 +107,31 @@ def _path(url: str) -> str:
     return urlsplit(url).path.rstrip("/")
 
 
+# The whole of one sign-in request: httpx's timeout is per read, so a server dripping a byte now
+# and then could otherwise hold a request (and the person waiting) for hours.
+REQUEST_SECONDS = 15.0
+
+
 async def _send(http: httpx.AsyncClient, method: str, url: str, **kwargs: Any) -> httpx.Response:
     """One request to a sign-in address, its answer read up to `MAX_METADATA_BYTES` (a server
-    can't make BotDesk hold an endless body in memory). The answer comes back already read."""
+    can't make BotDesk hold an endless body in memory) within `REQUEST_SECONDS`. The answer comes
+    back already read."""
     request = http.build_request(method, url, **kwargs)
-    response = await http.send(request, stream=True)
     try:
-        body = bytearray()
-        async for chunk in response.aiter_bytes():
-            body.extend(chunk)
-            if len(body) > MAX_METADATA_BYTES:
-                raise McpSignInError("This MCP server's sign-in answered with far more data than expected.")
-    finally:
-        await response.aclose()
+        async with asyncio.timeout(REQUEST_SECONDS):
+            response = await http.send(request, stream=True)
+            try:
+                body = bytearray()
+                async for chunk in response.aiter_bytes():
+                    body.extend(chunk)
+                    if len(body) > MAX_METADATA_BYTES:
+                        raise McpSignInError("This MCP server's sign-in answered with far more data than expected.")
+            finally:
+                await response.aclose()
+    except TimeoutError as error:
+        raise httpx.ReadTimeout(
+            f"{request.url.host} took longer than {REQUEST_SECONDS:g} seconds to answer.", request=request
+        ) from error
     # The body is decoded already: drop the headers that describe the encoded one.
     headers = [(k, v) for k, v in response.headers.multi_items() if k.lower() not in _BODY_HEADERS]
     return httpx.Response(response.status_code, headers=headers, content=bytes(body), request=request)

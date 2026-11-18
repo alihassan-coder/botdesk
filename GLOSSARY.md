@@ -39,7 +39,7 @@ The words BotDesk uses for its domain. Use these exact terms in code, UI copy, d
 | **MCP server** | A remote server speaking the Model Context Protocol that an org's admin added. One kind of plugin, private to that org; everything it says counts as outside text. |
 | **Tool snapshot** | The exact tool list of an MCP server (names, descriptions, arguments) that an admin approved. A tool that no longer matches its snapshot is paused until approved again. |
 | **Memory** | Facts a bot remembers about members and work (mem0). Visible and editable by members. |
-| **Template** | A ready-made bot in the marketplace that an org can hire. |
+| **Template** | A ready-made bot in the marketplace that an org can hire. Hiring one makes a bot with its instructions and plugins, at its security level or the org's default, whichever is stricter. One catalogue for every org (`apps/api/src/templates/catalogue.json`). |
 | **Budget** | A monthly spending cap (calendar month, UTC) on a bot, and optionally on the whole organization. A bot that reaches either stops before its next model call and says so in the chat. 0 or empty = no limit. |
 | **Model provider** | A service bots' models come from: Anthropic, OpenAI, Google Gemini, OpenRouter, Groq, or a **custom** OpenAI-compatible server (Ollama, LM Studio, vLLM). Its id is the kind (`groq`) or `custom-<id>`. |
 | **Model id** | `provider:model`, e.g. `anthropic:claude-opus-5-5` or `custom-<id>:llama3.2:latest` (only the first colon splits). Empty = the instance's default model. |

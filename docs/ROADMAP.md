@@ -122,5 +122,6 @@ When you finish something, tick it here in the same pull request.
 - [x] Model prices (`apps/api/src/services/pricing.py`) are effective-dated, so they switch by themselves: on **2026-12-01** Gemini 4 Carbon and Argon double, and gemini-2.5-pro / 2.5-flash switch models (no price from then); on **2027-01-01** gemini-3.8-flash doubles
 - [x] Unread counts in the chat list (per person, marked read when you look at the chat)
 - [x] Manage a group: rename it, add and remove people and bots (its creator, owners and admins)
+- [x] Marketplace templates from the API: one catalogue (`apps/api/src/templates/catalogue.json`, Chief included), hired by the API with the template's instructions, plugins and the stricter of its level and the org's default
 - [ ] Bot computers (live screen, take over) and routine recording
 - [ ] Desktop app, then mobile

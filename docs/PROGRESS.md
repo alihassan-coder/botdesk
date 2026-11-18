@@ -2,6 +2,16 @@
 
 A short history of BotDesk, newest first. For one checklist of what is done and what is next, see [ROADMAP.md](ROADMAP.md).
 
+## 2026-11-18: Chat gaps finished (unread, groups, prices) and marketplace templates from the API
+
+The 2026-11-17 entry below was written while that work was still partial; this finishes it. Details: [backend guide](backend/README.md#bots-working-together) (managing a group), [templates](backend/README.md#marketplace-templates), [frontend guide](frontend/README.md#talking-to-the-api).
+
+- **Groups, fixed:** changes to one group now happen one at a time (its row is locked, and the asker must still be in it), so two adds of the same bot no longer fail with a duplicate key and two removals at once can't leave a group with nobody in it (Postgres test, `test_unread_postgres.py`). Removing a bot stops its unfinished runs in that group, so it no longer posts into a group it left. A deleted bot leaves its groups, and someone removed from the organization leaves its groups; an open stream also ends when you're no longer a member of the organization (before, a removed member's open tab kept hearing the chat). A change is read once, not twice, for its answer and its live event.
+- **Unread and groups on the web, fixed:** a removal replayed after you were added back no longer drops the group (the chat list decides); a chat list that was on its way no longer brings back the count of a chat you just read, drops a chat you just started (a new hire's DM or group could vanish for 20 s), or rolls back a newer preview; a chat opened in a background tab isn't marked read until you look; the badge caps at "99+" and reads "N unread messages"; Remove isn't offered on yourself (leaving is later) and the rename and Remove buttons have 44 px tap areas on phones.
+- **Dated prices, checked:** `ModelResolver` takes a `now` clock, and a test shows a run is priced at the moment of each call (December's price from the first call after midnight UTC); another checks every step list starts at `date.min` and runs oldest first.
+- **Marketplace templates from the API:** one catalogue, `apps/api/src/templates/catalogue.json` (Chief, with its chief-of-staff instructions, Inbox Zero, Outbound SDR, Recruiter, Expense Clerk, QA Tester, Researcher), served by `GET /templates` (plugins this server loaded only) and hired by `POST /orgs/{id}/templates/{templateId}/hire`: the API makes the bot with the template's instructions, its plugins switched on (Gmail on with no account yet), $20 a month, the default model, and the stricter of the template's security level and the org's default. The demo shows the same catalogue (a test keeps the copy word for word). Ids changed from `tpl_*` to slugs (`chief`, `inbox-zero`, …). Taken from the 2026-11-17 `wave4/gaps-chat` work; its separate unread table was dropped in favour of `last_read_at`.
+- **Later (unchanged):** an org-wide event stream; "leave group"; a confirm before removing a person; a live `thread_updated` when a bot is deleted or someone leaves the organization (their groups update on the next 20 s refresh).
+
 ## 2026-11-17: Unread counts, managing groups, dated model prices
 
 Details: [backend guide](backend/README.md#unread-counts), [frontend guide](frontend/README.md#talking-to-the-api).
@@ -18,7 +28,7 @@ Details: [frontend guide](frontend/README.md#routes).
 - **Who sees it:** after sign-up, the owner of an organization with no bots goes from `/` to `/welcome` (`lib/onboarding.ts`, `onboarding/use-onboarding-redirect.ts`; `/welcome` itself sends members and the demo home). Invited members, admins, teams with bots and the demo never do. Finishing or skipping is remembered per organization in this browser (`botdesk.onboarding.done.<orgId>`), so it never nags; no new API field.
 - **Steps** (`features/onboarding/`, outside the app shell, progress bars and Skip on each): name the organization (prefilled, `PATCH /orgs/{id}` only if changed); add an AI key (the Models & keys dialog; "Skip — bots will use a stand-in reply"); hire Chief (a new marketplace template) or Inbox Zero, or leave to create one from scratch; connect Gmail (the Connect apps dialog; a server without a Google client says so and links the guide). Finish opens the first hired bot's DM.
 - **Welcome message:** an empty DM now opens with the bot introducing itself (`threads/dm-welcome.tsx`, `lib/bot-welcome.ts`), so a new bot's chat never starts blank on the API either.
-- **Later:** after Google sign-in the browser lands on `/apps/callback`, not back in the bot's DM; the store has no "bots failed to load" state, so an owner whose bot list fails to load is offered setup (Skip setup gets out); Chief is a template with no chief-of-staff instructions yet.
+- **Later:** after Google sign-in the browser lands on `/apps/callback`, not back in the bot's DM; the store has no "bots failed to load" state, so an owner whose bot list fails to load is offered setup (Skip setup gets out). (Chief's chief-of-staff instructions were in fact added that day; see 2026-11-18.)
 
 ## 2026-11-17: Gmail extras: easier HTML mail, attachments, Markdown mail, drafts
 

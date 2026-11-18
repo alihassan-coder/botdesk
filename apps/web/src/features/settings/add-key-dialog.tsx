@@ -15,6 +15,8 @@ import { maskedKey } from "@/lib/models";
 interface AddKeyDialogProps {
   provider?: ModelProvider;
   trigger: React.ReactNode;
+  /** Your own key (My keys) instead of the organization's. Built-in providers only. */
+  mine?: boolean;
 }
 
 /**
@@ -26,10 +28,10 @@ interface AddKeyDialogProps {
  * stays the same. The API never sends a saved key to a new address, so a changed URL needs the
  * key again, or "This server needs no key".
  */
-export function AddKeyDialog({ provider, trigger }: AddKeyDialogProps) {
+export function AddKeyDialog({ provider, trigger, mine = false }: AddKeyDialogProps) {
   const [open, setOpen] = useState(false);
-  const isCustom = !provider || provider.kind === "custom";
-  const title = !provider ? "Add a custom server" : provider.connected && provider.source === "org" ? `Replace the ${provider.name} key` : `Add a ${provider.name} key`;
+  const isCustom = !mine && (!provider || provider.kind === "custom");
+  const title = titleFor(provider, mine);
 
   return (
     <Dialog open={open} onOpenChange={setOpen}>
@@ -38,18 +40,26 @@ export function AddKeyDialog({ provider, trigger }: AddKeyDialogProps) {
         <DialogHeader>
           <DialogTitle>{title}</DialogTitle>
           <DialogDescription>
-            {isCustom ? "Any server that speaks OpenAI's API: Ollama, LM Studio, vLLM." : provider.hint}{" "}
-            Keys are encrypted and never shown again in full.
+            {isCustom ? "Any server that speaks OpenAI's API: Ollama, LM Studio, vLLM." : provider?.hint}{" "}
+            {mine
+              ? "Only you see it, and only your own requests use it. It's encrypted and never shown again in full."
+              : "Keys are encrypted and never shown again in full."}
           </DialogDescription>
         </DialogHeader>
         {/* Mounted only while open, so it starts empty each time. */}
-        {open && <KeyForm provider={provider} isCustom={isCustom} onDone={() => setOpen(false)} />}
+        {open && <KeyForm provider={provider} isCustom={isCustom} mine={mine} onDone={() => setOpen(false)} />}
       </DialogContent>
     </Dialog>
   );
 }
 
-function KeyForm({ provider, isCustom, onDone }: { provider?: ModelProvider; isCustom: boolean; onDone: () => void }) {
+function titleFor(provider: ModelProvider | undefined, mine: boolean) {
+  if (!provider) return "Add a custom server";
+  if (mine) return provider.connected ? `Replace your ${provider.name} key` : `Add your ${provider.name} key`;
+  return provider.connected && provider.source === "org" ? `Replace the ${provider.name} key` : `Add a ${provider.name} key`;
+}
+
+function KeyForm({ provider, isCustom, mine, onDone }: { provider?: ModelProvider; isCustom: boolean; mine: boolean; onDone: () => void }) {
   const [label, setLabel] = useState(provider?.kind === "custom" ? provider.name : "");
   const [baseUrl, setBaseUrl] = useState(provider?.baseUrl ?? "");
   const [apiKey, setApiKey] = useState("");
@@ -72,10 +82,12 @@ function KeyForm({ provider, isCustom, onDone }: { provider?: ModelProvider; isC
     const input = isCustom
       ? { apiKey: key, baseUrl: baseUrl.trim(), label: label.trim(), ...(noKey ? { noKey: true } : {}) }
       : { apiKey: key };
-    const result = await actions.saveProviderKey(provider?.id ?? "custom", input);
+    const result = mine && provider
+      ? await actions.saveMyKey(provider.id, key)
+      : await actions.saveProviderKey(provider?.id ?? "custom", input);
     setChecking(false);
     if (!result.ok) return setError(result.error);
-    toast.success(`${isCustom ? label.trim() : provider?.name} is connected`);
+    toast.success(mine ? `Saved your ${provider?.name} key` : `${isCustom ? label.trim() : provider?.name} is connected`);
     onDone();
   }
 

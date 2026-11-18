@@ -9,7 +9,7 @@ import { actions, getStoreSnapshot } from "@/data/store";
 
 type Route = { status: number; body?: unknown };
 
-export const apiOrg = { id: "o1", name: "Zara's team", slug: "zara-team", role: "owner", defaultSecurityLevel: "ask-before-acting" };
+export const apiOrg = { id: "o1", name: "Zara's team", slug: "zara-team", role: "owner", defaultSecurityLevel: "ask-before-acting", maxSecurityLevel: "autonomous" };
 export const apiMe = { user: { id: "u1", name: "Zara", email: "zara@example.com", handle: "zara" }, organizations: [apiOrg] };
 export const apiScout = {
   id: "b1", name: "Scout", handle: "scout", role: "Research", description: "", instructions: "", avatarColor: "sky",

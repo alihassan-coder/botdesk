@@ -6,8 +6,9 @@ import { Switch } from "@/components/ui/switch";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { budgetUse } from "@/lib/budget";
 import { formatUsd } from "@/lib/format";
-import { actions, useBotRoutines, useCurrentUser, useModel } from "@/data/store";
-import type { Bot } from "@/data/types";
+import { looserThan } from "@/lib/security-ceiling";
+import { actions, useBotRoutines, useCurrentUser, useModel, useOrg } from "@/data/store";
+import type { Bot, SecurityLevel } from "@/data/types";
 import { BotAvatar } from "@/features/bots/bot-avatar";
 import { BotTools } from "@/features/bots/bot-tools";
 import { EditBotDialog } from "@/features/bots/edit-bot-dialog";
@@ -62,7 +63,7 @@ function Profile({ bot }: { bot: Bot }) {
         <dt className="text-muted-foreground">Model</dt>
         <dd>{model?.name ?? (bot.modelId || "Organization default")}</dd>
         <dt className="text-muted-foreground">Security level</dt>
-        <dd>{securityLabel(bot.securityLevel)}</dd>
+        <dd><BotLevel level={bot.securityLevel} /></dd>
         <dt className="text-muted-foreground">Computer</dt>
         <dd>{bot.computerMode === "own" ? "Its own" : bot.computerMode === "shared" ? "Shared" : "None"}</dd>
       </dl>
@@ -132,4 +133,16 @@ function Computer({ bot }: { bot: Bot }) {
 
 function Empty({ text }: { text: string }) {
   return <p className="py-6 text-center text-sm text-muted-foreground">{text}</p>;
+}
+
+/** The bot's own level, and the organization's ceiling when that's lower (it's what applies). */
+function BotLevel({ level }: { level: SecurityLevel }) {
+  const ceiling = useOrg().maxSecurityLevel;
+  if (!looserThan(level, ceiling)) return securityLabel(level);
+  return (
+    <>
+      {securityLabel(level)}
+      <span className="block text-xs text-muted-foreground">Capped at {securityLabel(ceiling)} by the organization</span>
+    </>
+  );
 }

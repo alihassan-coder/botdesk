@@ -18,6 +18,8 @@ export interface ApiOrg {
   /** null = no limit. */
   monthlyBudgetUsd?: number | null;
   defaultSecurityLevel: ApiSecurityLevel;
+  /** The ceiling: no bot here acts above it ("autonomous" = none). */
+  maxSecurityLevel: ApiSecurityLevel;
 }
 
 /** Who is signed in, and which organizations they belong to. */
@@ -108,7 +110,8 @@ export interface ApiModelProvider {
   name: string;
   hint: string;
   connected: boolean;
-  source: "org" | "env" | null;
+  /** "member": your own key (My keys), only ever in your own list. */
+  source: "org" | "member" | "env" | null;
   keyHint: string | null;
   status: "ok" | "invalid" | null;
   lastVerifiedAt: string | null;

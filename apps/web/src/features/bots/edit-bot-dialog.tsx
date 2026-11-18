@@ -7,7 +7,7 @@ import { Field, FieldContent, FieldDescription, FieldError, FieldGroup, FieldLab
 import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
-import { actions, useCurrentUser, type NewBotInput } from "@/data/store";
+import { actions, useCurrentUser, useOrg, type NewBotInput } from "@/data/store";
 import type { Bot } from "@/data/types";
 import { ColorPicker } from "./color-picker";
 import { ModelPicker } from "./model-picker";
@@ -42,6 +42,7 @@ function EditBotForm({ bot, onDone }: { bot: Bot; onDone: () => void }) {
   }));
   const [saving, startSaving] = useTransition();
   const canChangeBudget = useCurrentUser().role !== "member";
+  const ceiling = useOrg().maxSecurityLevel;
   const update = <K extends keyof Editable>(key: K, value: Editable[K]) => setDraft((d) => ({ ...d, [key]: value }));
   const nameMissing = !draft.name.trim();
 
@@ -90,7 +91,7 @@ function EditBotForm({ bot, onDone }: { bot: Bot; onDone: () => void }) {
         </Field>
         <Field>
           <FieldLabel>Security level</FieldLabel>
-          <SecurityLevelPicker value={draft.securityLevel} onChange={(l) => update("securityLevel", l)} />
+          <SecurityLevelPicker value={draft.securityLevel} max={ceiling} onChange={(l) => update("securityLevel", l)} />
         </Field>
         <Field>
           <FieldLabel htmlFor="edit-bot-budget">Monthly budget (USD)</FieldLabel>

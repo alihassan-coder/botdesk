@@ -63,10 +63,21 @@ export const authApi = {
 };
 
 export const orgApi = {
-  /** `monthlyBudgetUsd`: null removes the limit. Owners and admins only. */
+  /** A new organization; whoever creates it owns it. Without a slug, one is made from the name. */
+  create: (input: { name: string; slug?: string }) => apiFetch<ApiOrg>("/api/v1/orgs", { method: "POST", body: input }),
+  /**
+   * `monthlyBudgetUsd`: null removes the limit. `maxSecurityLevel`: the ceiling for every bot;
+   * lowering it below the default lowers the default too. Owners and admins only.
+   */
   update: (
     orgId: string,
-    patch: { name?: string; slug?: string; monthlyBudgetUsd?: number | null; defaultSecurityLevel?: ApiSecurityLevel },
+    patch: {
+      name?: string;
+      slug?: string;
+      monthlyBudgetUsd?: number | null;
+      defaultSecurityLevel?: ApiSecurityLevel;
+      maxSecurityLevel?: ApiSecurityLevel;
+    },
   ) =>
     apiFetch<ApiOrg>(`/api/v1/orgs/${orgId}`, { method: "PATCH", body: patch }),
   members: (orgId: string) => apiFetch<ApiMember[]>(`/api/v1/orgs/${orgId}/members`),
@@ -236,7 +247,14 @@ export const modelApi = {
     apiFetch<ApiProviderTest>(`/api/v1/orgs/${orgId}/providers/${providerId}/test`, { method: "POST" }),
   removeKey: (orgId: string, providerId: string) =>
     apiFetch<void>(`/api/v1/orgs/${orgId}/providers/${providerId}`, { method: "DELETE" }),
-  /** Every connected provider's models, live (cached ~10 minutes on the API unless `refresh`). */
+  /** My keys: your own key per built-in provider in this org (last 4 characters only). Only you see them; they serve only your runs. */
+  myKeys: (orgId: string) => apiFetch<ApiModelProvider[]>(`/api/v1/orgs/${orgId}/me/providers`),
+  /** Any member; checked live before it's saved, like the org's keys. */
+  saveMyKey: (orgId: string, providerId: string, apiKey: string) =>
+    apiFetch<ApiModelProvider>(`/api/v1/orgs/${orgId}/me/providers/${providerId}`, { method: "PUT", body: { apiKey } }),
+  removeMyKey: (orgId: string, providerId: string) =>
+    apiFetch<void>(`/api/v1/orgs/${orgId}/me/providers/${providerId}`, { method: "DELETE" }),
+  /** Every connected provider's models, live (cached ~10 minutes on the API unless `refresh`), as your runs reach them: your own key first. */
   models: (orgId: string, refresh = false) =>
     apiFetch<ApiModelList>(`/api/v1/orgs/${orgId}/models${refresh ? "?refresh=true" : ""}`),
 };

@@ -28,7 +28,7 @@ const BLANK: NewBotInput = {
 export function CreateBotScreen() {
   const router = useRouter();
   const templates = useTemplates();
-  const defaultLevel = useOrg().defaultSecurityLevel;
+  const { defaultSecurityLevel: defaultLevel, maxSecurityLevel: ceiling } = useOrg();
   // New bots start at the org's default (Settings → Security).
   const [bot, setBot] = useState(() => ({ ...BLANK, securityLevel: defaultLevel }));
   const [showErrors, setShowErrors] = useState(false);
@@ -115,7 +115,7 @@ export function CreateBotScreen() {
             </Section>
 
             <Section title="What it may do">
-              <SecurityLevelPicker value={bot.securityLevel} onChange={(l) => update("securityLevel", l)} />
+              <SecurityLevelPicker value={bot.securityLevel} max={ceiling} onChange={(l) => update("securityLevel", l)} />
               <Field>
                 <FieldLabel htmlFor="bot-budget">Monthly budget (USD)</FieldLabel>
                 <Input id="bot-budget" type="number" min={budgetLimit ? 1 : 0} max={budgetLimit} step={5} value={bot.monthlyBudgetUsd} className="max-w-40"

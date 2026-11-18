@@ -20,8 +20,9 @@ export function toUser({ id, name, email, handle }: ApiUser, role: ApiRole): Use
   return { id, name, email, handle, role, presence: "online" };
 }
 
-export function toOrg({ id, name, slug, defaultSecurityLevel }: ApiOrg): Org {
-  return { id, name, slug, defaultSecurityLevel };
+/** An API from before the ceiling sends none: that means no ceiling (the API is what enforces it). */
+export function toOrg({ id, name, slug, defaultSecurityLevel, maxSecurityLevel = "autonomous" }: ApiOrg): Org {
+  return { id, name, slug, defaultSecurityLevel, maxSecurityLevel };
 }
 
 /** Drops the one-time invite link, so it never sits in the store. */

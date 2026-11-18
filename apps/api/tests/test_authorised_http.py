@@ -231,3 +231,26 @@ async def test_refusals_before_sending_and_unbuildable_requests_never_count() ->
         with pytest.raises((HttpError, TypeError)):
             await http.request("POST", url, json=body)
         assert not http.may_have_changed_something
+
+
+async def test_requests_sent_at_once_are_counted_one_by_one() -> None:
+    """Two sends in parallel (asyncio.gather): one refused must not hide the other that may have gone."""
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/v1/refused":
+            await asyncio.sleep(0.01)  # both are in flight when this one is refused
+            return httpx.Response(400, json={})
+        await asyncio.sleep(0.05)  # answers after the refusal
+        if request.url.path == "/v1/lost":
+            raise httpx.ReadError("the connection dropped", request=request)
+        return httpx.Response(429, json={})
+
+    for second, changed in (("/v1/lost", True), ("/v1/limited", False)):
+        client = guarded_client(5, httpx.MockTransport(handler))
+        http = AuthorisedHttp(client=client, egress=(HOST,), credential=credential)
+        await asyncio.gather(
+            http.request("POST", f"https://{HOST}/v1/refused"),
+            http.request("POST", f"https://{HOST}{second}"),
+            return_exceptions=True,
+        )
+        assert http.may_have_changed_something is changed, second

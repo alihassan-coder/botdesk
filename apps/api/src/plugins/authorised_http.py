@@ -97,9 +97,15 @@ class AuthorisedHttp:
         self._credential: Credential | None = None
         self._max_bytes = max_bytes
         self.used = False  # at least one request reached the service
-        # A request that can change something (POST, PUT, PATCH, DELETE…) was sent and didn't
-        # certainly fail before the service acted on it: the service may have done it.
-        self.may_have_changed_something = False
+        # Requests that can change something (POST, PUT, PATCH, DELETE…) that were sent and didn't
+        # certainly fail before the service acted on them. A count, not a flag: requests sent at
+        # once (asyncio.gather) are each taken back only by their own certain failure.
+        self._may_have_acted = 0
+
+    @property
+    def may_have_changed_something(self) -> bool:
+        """A request that can change something was sent and the service may have done it."""
+        return self._may_have_acted > 0
 
     def __repr__(self) -> str:
         return f"AuthorisedHttp(hosts={sorted(self._hosts)})"
@@ -126,15 +132,21 @@ class AuthorisedHttp:
         request = self._client.build_request(
             method.upper(), target, params=dict(params or {}), json=json, data=data, headers=merged
         )
-        changes = request.method not in SAFE_METHODS
-        changed_before = self.may_have_changed_something
-        if changes:
-            self.may_have_changed_something = True  # from here on the service may act on it
+        counted = request.method not in SAFE_METHODS
+        if counted:
+            self._may_have_acted += 1  # from here on the service may act on it
+
+        def had_no_effect() -> None:
+            nonlocal counted
+            if counted:
+                self._may_have_acted -= 1
+                counted = False
+
         try:
             response = await self._client.send(request, stream=True)
             try:
-                if changes and 400 <= response.status_code < 500:
-                    self.may_have_changed_something = changed_before  # refused: the service didn't do it
+                if 400 <= response.status_code < 500:
+                    had_no_effect()  # refused: the service didn't do it
                 if response.status_code in REDIRECTS:
                     raise HttpError(
                         f"{target.host} answered with a redirect ({response.status_code}). "
@@ -144,12 +156,12 @@ class AuthorisedHttp:
             finally:
                 await response.aclose()
         except UnsafeUrl as error:  # refused before connecting
-            self.may_have_changed_something = changed_before
+            had_no_effect()
             raise HostNotAllowed(
                 f"{target.host} resolves to a private network address, which tools can't reach."
             ) from error
         except _NEVER_SENT as error:
-            self.may_have_changed_something = changed_before
+            had_no_effect()
             raise HttpError(_failure_text(error, target.host)) from error
         except httpx.HTTPError as error:
             raise HttpError(_failure_text(error, target.host)) from error

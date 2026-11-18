@@ -265,8 +265,9 @@ A **routine** (`routines`, migration `e1c4d7a92b30`) is a saved task a bot repea
 | `POST /api/v1/auth/forgot-password` | Emails a reset link if the account exists. Always the same 202 answer (doesn't reveal accounts). 429 after 5 an hour for one email or 20 an hour from one address |
 | `POST /api/v1/auth/reset-password` | `{token, password}`: sets a new password from the link (once, before it expires) and signs out every device. 429 after 20 an hour from one address |
 | `GET /api/v1/orgs` | Your organizations |
-| `GET /api/v1/orgs/{id}` | One organization |
-| `PATCH /api/v1/orgs/{id}` | Rename / change address / set the monthly budget `monthlyBudgetUsd` (null or 0 = no limit) / set `defaultSecurityLevel` (owner or admin; members 403) |
+| `POST /api/v1/orgs` | `{name, slug?}`: create another organization; you're its owner (201). Without `slug` one is made from the name (`acme`, `acme-2`…, at most 56 characters before the number); a chosen `slug` that's taken is 409 "That address is taken. Try another."; a blank name 400. It starts empty: no bots, no keys, no ceiling, the default level `ask-before-acting` |
+| `GET /api/v1/orgs/{id}` | One organization, with `defaultSecurityLevel` and `maxSecurityLevel` (the ceiling) |
+| `PATCH /api/v1/orgs/{id}` | Rename / change address / set the monthly budget `monthlyBudgetUsd` (null or 0 = no limit) / set `defaultSecurityLevel` / set `maxSecurityLevel` (owner or admin; members 403). See [The security ceiling](#the-security-ceiling) |
 | `GET /api/v1/orgs/{id}/members` | People and their roles |
 | `PATCH /api/v1/orgs/{id}/members/{userId}` | Change a role (owners and admins; only owners touch owners) |
 | `DELETE /api/v1/orgs/{id}/members/{userId}` | Remove someone, or leave (your own id). There's always one owner |
@@ -275,9 +276,9 @@ A **routine** (`routines`, migration `e1c4d7a92b30`) is a saved task a bot repea
 | `DELETE /api/v1/orgs/{id}/invitations/{invId}` | Revoke an invite |
 | `POST /api/v1/invitations/accept` | Join from an invite link (signed in with the invited email) |
 | `GET /api/v1/orgs/{id}/bots` | The organization's bots |
-| `POST /api/v1/orgs/{id}/bots` | Hire a bot (any member); @handle comes from the name. Without `securityLevel` it gets the org's `defaultSecurityLevel` (`read-only` / `ask-before-acting` / `autonomous`; new orgs: `ask-before-acting`). Members may set `monthlyBudgetUsd` from 1 up to the default ($50); more, or 0 (no limit), is 403 for them |
+| `POST /api/v1/orgs/{id}/bots` | Hire a bot (any member); @handle comes from the name. Without `securityLevel` it gets the org's `defaultSecurityLevel` (`read-only` / `ask-before-acting` / `autonomous`; new orgs: `ask-before-acting`). A `securityLevel` above the org's ceiling is 400 for everyone. Members may set `monthlyBudgetUsd` from 1 up to the default ($50); more, or 0 (no limit), is 403 for them. `modelId` may use a provider only your own key connects |
 | `GET /api/v1/orgs/{id}/bots/{botId}` | One bot |
-| `PATCH /api/v1/orgs/{id}/bots/{botId}` | Edit a bot (only the fields you send). Changing `monthlyBudgetUsd` takes an owner or admin (403 "Only owners and admins can change budgets."); sending the current value is fine |
+| `PATCH /api/v1/orgs/{id}/bots/{botId}` | Edit a bot (only the fields you send). Changing `monthlyBudgetUsd` takes an owner or admin (403 "Only owners and admins can change budgets."); sending the current value is fine. Raising `securityLevel` above the org's ceiling is 400; lowering it, or sending the level it already has, is fine |
 | `DELETE /api/v1/orgs/{id}/bots/{botId}` | Remove a bot (owners and admins); its chats go too |
 | `GET /api/v1/orgs/{id}/memory/status` | `{enabled, reason}`: whether bots can remember on this server, and if not, what to set |
 | `GET /api/v1/orgs/{id}/bots/{botId}/memories?q=&limit=` | What the bot remembers that you may see: its shared memories and your own DM ones. With `q`, closest first. See [Memory](#memory) |
@@ -311,7 +312,10 @@ A **routine** (`routines`, migration `e1c4d7a92b30`) is a saved task a bot repea
 | `PUT /api/v1/orgs/{id}/providers/{provider}` | `{apiKey, baseUrl?, label?}`: add or replace a key (owners and admins). Checked live first; a bad one is 400 `"That key didn't work: …"`. `provider` = `anthropic` / `openai` / `gemini` / `openrouter` / `groq`, `custom` for a new server, `custom-<id>` to change one |
 | `POST /api/v1/orgs/{id}/providers/{provider}/test` | Check a saved key again; saves the result (owners and admins) |
 | `DELETE /api/v1/orgs/{id}/providers/{provider}` | Remove the org's key or custom server (owners and admins) |
-| `GET /api/v1/orgs/{id}/models` | Live models of every connected provider, merged; `?provider=` for one, `?refresh=true` skips the 10 minute cache. A provider that's down is listed in `errors`, the rest still come back. Any member |
+| `GET /api/v1/orgs/{id}/me/providers` | My keys: every built-in provider, with your own key's last 4 characters where you added one (`source: "member"`). Only yours, never anyone else's. Any member. See [Member keys](#member-keys) |
+| `PUT /api/v1/orgs/{id}/me/providers/{provider}` | `{apiKey}`: add or replace your own key for a built-in provider (any member). Checked live first (400 `"That key didn't work: …"`); `custom` is 400 (custom servers are the organization's) |
+| `DELETE /api/v1/orgs/{id}/me/providers/{provider}` | Remove your own key (404 if you have none). Your runs go back to the org's key |
+| `GET /api/v1/orgs/{id}/models` | Live models of every connected provider, merged, as your runs reach them (your own key first); `?provider=` for one, `?refresh=true` skips the 10 minute cache. A provider that's down is listed in `errors`, the rest still come back. Any member |
 | `GET /api/v1/orgs/{id}/usage` | Daily spend for `?days=` (default 14, max 90), this month's total, the org's budget and each bot's spend against its budget. Any member. See [Usage and budgets](#usage-and-budgets) |
 | `GET /api/v1/orgs/{id}/bots/{botId}/usage` | One bot's spend this month, its budget and daily totals. Any member |
 | `POST /api/v1/orgs/{id}/approvals/{approvalId}/decide` | `{decision: "approve" or "deny", editedArgs?}`. Decides once and resumes the run. 409 if already decided or expired, 400 if `editedArgs` don't fit the tool |
@@ -369,7 +373,7 @@ Error messages match the web app's wording, e.g. `401 "That email and password d
 
 ## Models and keys
 
-Settings → Models & keys. An organization's owners and admins add an API key per **model provider**; the app then lists that provider's models live, members pick one per bot, and runs use the org's key.
+Settings → Models & keys. An organization's owners and admins add an API key per **model provider**; the app then lists that provider's models live, members pick one per bot, and runs use the org's key. Any member may also add their own key per built-in provider ("My keys", see [Member keys](#member-keys)), which only their own runs use.
 
 | Provider | Calls | Model list |
 |---|---|---|
@@ -399,19 +403,32 @@ The code: `src/model_providers/` holds one small adapter per provider behind one
 ```
 
 - **Model ids** are `provider:model`; a custom server's are `custom-<id>:<model>`. Only the first colon splits, so Ollama tags (`llama3.2:latest`) and OpenRouter slashes work.
-- **Which key a run uses:** the org's key for that provider, else the server's environment key, else the stand-in model. The key is decrypted inside the run, right before the model is built (`runtime/chat_model.py`, `ModelResolver`).
-- **Bots:** a bot's `modelId` must name a connected provider (org key or env key), or the bot isn't saved (400 `"OpenAI isn't connected. Add a key in Settings → Models & keys first."`). The model itself isn't checked against the live list, since lists change; a model that's gone fails its run with "The provider doesn't offer this model any more…".
+- **Which key a run uses:** its requester's own key for that provider (built-in providers only), else the org's key, else the server's environment key, else the stand-in model. The key is decrypted inside the run, right before the model is built (`runtime/chat_model.py`, `ModelResolver`).
+- **Bots:** a bot's `modelId` must name a connected provider (org key, env key, or the editor's own key), or the bot isn't saved (400 `"OpenAI isn't connected. Add a key in Settings → Models & keys first."`). The model itself isn't checked against the live list, since lists change; a model that's gone fails its run with "The provider doesn't offer this model any more…".
 - **Run errors** are rewritten into something to act on: a refused key, a model that can't use tools ("This model can't use tools. Pick another model in the bot's settings."), a missing model, a rate limit. Anything else is shown scrubbed: the exact key the failed request carried (read from the error's request headers) and anything key-shaped become `[key]`.
 - **Editing a custom server:** an empty `apiKey` keeps the saved key while the base URL stays the same. A saved key is never sent to a new address, so a changed `baseUrl` needs the key again or `"noKey": true` (400 otherwise). Two admins saving the first key for the same provider at once end with one key (the second insert hits the unique index and becomes an update), not a 500.
 - **Timeouts:** chat calls connect within 10 s and fail if the provider sends nothing for 60 s (httpx's read timeout is per chunk, so a long streamed answer is fine).
 - **Speed:** the providers list is one query. Saving, testing and listing end the database transaction before calling a provider (calls time out after 8 s) and open a short new one to save the result. Model lists are cached per organization and provider for 10 minutes, keyed by a hash of the key and base URL, so a replaced key never serves the old list; saving a key fills the cache.
+
+### Member keys
+
+A member's own API key for a built-in provider, in one organization (`provider_credentials.user_id` set; the organization's keys have it empty). Settings → Models & keys → **My keys**. The rules:
+
+- **When it's used:** for a run whose **requester** is that member, and only in that organization: their own message's runs (and the bot-to-bot and handoff runs that chain starts, which keep its requester), the routines they set up, and the triggers they switched on (their subscriber runs). For those runs their key comes **before** the organization's, so their usage goes on their own provider bill (ADR 0008). It's looked up when the run looks up its model (`RunTicket.requester_id` → `ModelResolver(org, model, requester)` → `provider_service.connection_for(…, requester_id=…)`).
+- **When it's never used:** for anyone else's run, whatever their role (owners and admins included), for a run with no requester, for a custom server (custom servers are organization keys only), and in another organization (the same person in two organizations has separate keys). Removing a member, or leaving, deletes their keys in that organization; deleting the account deletes them all (foreign key, `ON DELETE CASCADE`).
+- **Who sees what:** only the member, through `GET /me/providers`: the last 4 characters, the last check and nothing else. No route returns the key itself. Owners and admins don't see whether a member has keys; the organization's list (`GET /providers`) and its Test / Replace / Remove never touch them (404).
+- **Model lists:** `GET /models` lists each provider through the key that member's runs would use (their own first), so they see what their key reaches. A member's list is cached apart from the organization's (`model_catalog._slot`, by the saved key's id), so neither replaces the other.
+- **Bots on a provider only your key connects:** you may pick its models for a bot (as with the org's keys, it must be connected for whoever saves the bot). Runs other people request then get the stand-in reply ("no API key for openai for you yet…") until they or the organization add a key.
+- **Prices:** OpenRouter's list comes from the organization's key; with none, a member-key run fetches it with its requester's own key, so budgets still have a price. Usage and budgets count every run the same, whoever's key paid.
+- **At rest and in logs:** exactly like the organization's keys (below): Fernet with the app's `SECRET_KEY`, hint only for keys of 12+ characters, never logged.
+- **Not yet:** a Test button for your own key, your own key for memory (mem0 uses the server's settings), per-bot keys.
 
 ### How keys are protected
 
 - **At rest:** Fernet (AES-128-CBC + HMAC-SHA256, `cryptography`), with a key derived from `SECRET_KEY` by HKDF-SHA256. The database holds the token and `key_hint` (last 4 characters, only for keys of 12+ characters).
 - **In answers:** no route returns a key; only `keyHint`. Provider error messages are scrubbed: the key itself and anything key-shaped (`sk-…`, `gsk_…`, `AIza…`, long tokens) become `[key]`, and they're cut to 200 characters.
 - **In logs:** keys are never logged; a `ProviderAccess` (a decrypted key in memory) prints without it. A test checks the key appears in no response and no log line.
-- **Who:** owners and admins add, replace, test and remove keys; every member can see providers (without keys) and models.
+- **Who:** owners and admins add, replace, test and remove the organization's keys; every member can see providers (without keys) and models, and manage their own keys (My keys), which nobody else sees.
 - **Fails closed:** without an explicit `ENVIRONMENT=development` or `test`, the API refuses to start without a `SECRET_KEY` of at least 32 characters, so a forgotten setting never puts a real server on the public development key.
 - **Rotation:** set the new `SECRET_KEY` and move the old one to `SECRET_KEY_OLD` (comma-separate several). `MultiFernet` encrypts with the new key and decrypts with any of them; each key is re-encrypted with the new one the next time it's saved. Once every key has been saved again (or re-added), drop `SECRET_KEY_OLD`.
 - **Environment keys** (`ANTHROPIC_API_KEY` …) are `SecretStr` in the settings, so they never show up in a repr or a log line.
@@ -440,7 +457,7 @@ call_model ──(tool calls, one at a time)──→ prepare_call: validate arg
    └────────── finish_call: the model gets the result, or why it didn't run ←──────────────────┘
 ```
 
-- **Policy** (`runtime/policy.py`, pure): the ADR 0004 table, 3 levels × 7 risk classes (`read`, `write-internal`, `write-external`, `external-send`, `spend`, `destructive`, `credential`). The bot's `securityLevel` is the level, made stricter for a routine's run by its routine's (`runs.security_level`); there's no org ceiling yet (the org's `defaultSecurityLevel` is only where new bots start).
+- **Policy** (`runtime/policy.py`, pure): the ADR 0004 table, 3 levels × 7 risk classes (`read`, `write-internal`, `write-external`, `external-send`, `spend`, `destructive`, `credential`). The level is the strictest of the organization's ceiling (`organizations.max_security_level`), the bot's `securityLevel` and the run's own (`runs.security_level`: a routine's, or a handoff parent's); see [The security ceiling](#the-security-ceiling). The org's `defaultSecurityLevel` is only where new bots start.
 - **Taint** (strict, run-level): a tool that returns outside text (`untrusted_output`) sets `runs.tainted`, and so does a history holding a reply that a tainted run wrote (see How a reply flows). After that, anything above `write-internal` asks, even for Autonomous bots, and the run saves no memories. Outside text reaches the model wrapped in `<untrusted-content>`. An `open`-egress read in a tainted run counts as `external-send`.
 - **`tool_executions`** records every call; run id + the model's tool call id is the idempotency key. Status: `ready` → `started` → `succeeded` / `failed`; `waiting_approval` → `ready` (approved) / `denied`; refused calls are saved as `denied` / `failed`. It also stores `risk`, `decision`, `decision_trace`, `args` and `args_hash`. Running a call that already `succeeded` reuses its result; one left `started` stops the run as `needs_attention` unless the tool is idempotent. A tool also gets `ctx.idempotency_key` (`"{runId}:{toolCallId}"`) to pass to services that accept one.
 - **Pausing:** `approval_gate` only calls `interrupt({"approvalId"})`. The run task ends, the run becomes `waiting_approval`, and the checkpoint waits in Postgres (it survives restarts; SQLite's in-memory checkpoints don't, and resuming then fails the run with a clear message).
@@ -449,6 +466,15 @@ call_model ──(tool calls, one at a time)──→ prepare_call: validate arg
 - **Expiry:** approvals expire after `APPROVAL_EXPIRY_HOURS`: the `expire_approvals` job (every minute) expires them and resumes their runs told "no". Deciding one that is overdue but not swept yet also expires it (409, and the run is told "no"); stopping the run expires its pending approvals.
 - **Short transactions:** none is open during a model call, a tool call, or the wait for a person.
 - **Results must be JSON objects.** A handler that returns something else (a list, None, a dict holding a `datetime` or `UUID`) fails that call with a clear message: the row ends `failed`, not `started`, and the run goes on.
+
+### The security ceiling
+
+`organizations.max_security_level` (`maxSecurityLevel`, default `autonomous` = no ceiling): the highest level any bot in the organization acts at (ADR 0004 §4, "effective level"). Owners and admins set it in Settings → Security (`PATCH /orgs/{id}`); members get 403.
+
+- **Bots under it:** hiring a bot with a level above it, or raising a bot above it, is 400 "This organization's highest security level is Ask before acting. Owners and admins can raise it in Settings → Security." for every role (an admin raises the ceiling first). Lowering a bot, or sending back the level it already has (the editor sends every field), is always fine, so a bot that was above a ceiling lowered later can still be edited. Its own level is kept; what applies is the ceiling.
+- **The default stays under it:** a `defaultSecurityLevel` above the ceiling (the new one, when both are sent) is 400; lowering the ceiling below the default lowers the default with it. A bot hired without a level gets the default.
+- **Runs:** `run_context` takes the strictest of the ceiling, the bot's level and the run's own when the run loads its context, and `prepare_call` reads the ceiling again before every tool call (`run_service.org_ceiling`, one query), so lowering it reaches a run already going from its next tool call. Re-reading only ever makes a run stricter: raising the ceiling applies to runs that load their context after it. Routines, the Gmail new-email trigger and handoff children all go through `run_context`, so they're capped too (a child also keeps its parent's level as its own).
+- **Not yet:** a tool call already waiting for approval when the ceiling drops keeps its approval card (a person still decides it); the decision trace shows the level used, not which of the three set it.
 
 ### Plugins
 
@@ -683,10 +709,11 @@ The invite flow is the one that already existed: the link is `/invite/<token>`; 
 - **Tenancy:** every `/orgs/{id}/…` route goes through `OrgAccess`. Non-members get 404, so they can't learn an org exists.
 - **CORS:** only `WEB_ORIGINS`, with credentials.
 - **Secrets:** only in `.env` (git-ignored). `.env.example` lists every setting.
-- **Model keys:** encrypted at rest with `SECRET_KEY` (32+ characters, rotatable with `SECRET_KEY_OLD`), never returned or logged; custom model servers pass an SSRF guard in every environment (public addresses only, pinned at connect time, no redirects). See [Models and keys](#models-and-keys).
+- **Model keys:** encrypted at rest with `SECRET_KEY` (32+ characters, rotatable with `SECRET_KEY_OLD`), never returned or logged; custom model servers pass an SSRF guard in every environment (public addresses only, pinned at connect time, no redirects). A member's own key serves only runs they're the requester of. See [Models and keys](#models-and-keys) and [Member keys](#member-keys).
+- **Security ceiling:** no run acts above the organization's `maxSecurityLevel`, read again before every tool call. See [The security ceiling](#the-security-ceiling).
 
 ## Not yet (in order)
 
-1. Approval follow-ups: *retry / skip* for `needs_attention` runs, saved rules ("always allow"), org ceiling, per-call risk raising, `run_steps` audit rows, a tool-calls-per-run limit, an org-wide approvals stream. Then the rest of step 3: `plugins/_template`, a generated and CI-checked `manifest.json`, import rules in CI, release-please for the SDK. Full order: [agents-and-plugins.md §14](../architecture/agents-and-plugins.md#14-build-order-each-step-small-tested-and-usable).
+1. Approval follow-ups: *retry / skip* for `needs_attention` runs, saved rules ("always allow"), per-call risk raising, `run_steps` audit rows, a tool-calls-per-run limit, an org-wide approvals stream. Then the rest of step 3: `plugins/_template`, a generated and CI-checked `manifest.json`, import rules in CI, release-please for the SDK. Full order: [agents-and-plugins.md §14](../architecture/agents-and-plugins.md#14-build-order-each-step-small-tested-and-usable).
 2. Memory: the org's OpenAI key for memory, `memory_audit`, tainted memories; trimming old `run_events` and checkpoints.
 3. Email verification; rate limits shared between several API copies.

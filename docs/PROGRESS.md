@@ -2,6 +2,16 @@
 
 A short history of BotDesk, newest first. For one checklist of what is done and what is next, see [ROADMAP.md](ROADMAP.md).
 
+## 2026-11-18: Organization security ceiling, member keys, creating organizations
+
+Details: [backend guide](backend/README.md#the-security-ceiling) ([member keys](backend/README.md#member-keys)), [frontend guide](frontend/README.md#talking-to-the-api). Finishes work started on 2026-11-17 (branch `wave4/gaps-org`), re-applied on the current code, completed and tested.
+
+- **Security ceiling** (ADR 0004 §4, the "effective level"): `organizations.max_security_level` (migration `d5e1a7c3f920`, after `d4b8e1f0a372`; existing orgs get `autonomous`, no ceiling). Owners and admins set it with `PATCH /orgs/{id}` (`maxSecurityLevel`). No bot is hired or raised above it (400, for every role); lowering a bot, or resending its level, is fine. The default for new bots stays at or under it (lowering the ceiling lowers it). A run's level is the strictest of ceiling, bot and run, read when it loads its context, and the ceiling is read again before every tool call, so lowering it reaches runs already going. Routines, the Gmail new-email trigger and handoff children are capped the same way (tested end to end on SQLite).
+- **Member keys** ("My keys"): `provider_credentials.user_id` (migration `e8b3c6d2a417`, after the ceiling; partial unique indexes: one org key per built-in provider, one member key per member and provider). `GET/PUT/DELETE /orgs/{id}/me/providers[/{provider}]`, any member, built-in providers only, checked live, encrypted like org keys. A run's key is its requester's own, then the org's, then the server's, then the stand-in; never another member's, never in another org. Only the member sees it (last 4 characters); leaving or being removed deletes it. Model lists follow the same order and cache a member's list apart from the org's; OpenRouter prices fall back to the requester's key so budgets keep a price.
+- **Create organization:** `POST /orgs` (`{name, slug?}`), the creator is owner; a slug is made from the name (cut to fit the 64-character column) or must be free (409). Web: "New organization" in the org switcher opens a dialog, then switches to the new org, where first-time setup starts.
+- **Web:** Settings → Security has "Highest level for every bot"; the security-level picker shows levels above the ceiling as unavailable (Create bot, Edit bot, the default), "Your bots" and the bot details say "Capped at … by the organization". Settings → Models & keys has My keys. The stand-in reply mentions My keys.
+- **Later:** a pending approval keeps its card when the ceiling drops after it was asked; a Test button for your own key; your own key for memory; a limit on how many organizations one person may create (none today).
+
 ## 2026-11-17: Unread counts, managing groups, dated model prices
 
 Details: [backend guide](backend/README.md#unread-counts), [frontend guide](frontend/README.md#talking-to-the-api).

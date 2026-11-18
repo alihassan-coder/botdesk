@@ -20,6 +20,7 @@ import time
 import uuid
 from collections.abc import AsyncIterator, Callable, Iterator, Sequence
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Any
 
 from langchain_core.callbacks import AsyncCallbackManagerForLLMRun, CallbackManagerForLLMRun
@@ -32,6 +33,7 @@ from langchain_core.tools import BaseTool
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from src.core.config import Settings
+from src.core.database import utcnow
 from src.core.errors import AppError
 from src.core.secrets import SecretBox
 from src.core.url_guard import GuardedTransport, check_base_url
@@ -221,25 +223,29 @@ class ModelResolver:
         secrets: SecretBox,
         catalog: ModelCatalog | None = None,
         clock: Callable[[], float] = time.monotonic,
+        now: Callable[[], datetime] = utcnow,
     ) -> None:
         self.settings = settings
         self.sessionmaker = sessionmaker
         self.secrets = secrets
         self.catalog = catalog
         self.clock = clock
+        self.now = now  # the moment a price is asked for: table prices are effective-dated
         self._price_failed_at: dict[uuid.UUID, float] = {}  # org id → when its list last failed
         self._price_locks: dict[uuid.UUID, asyncio.Lock] = {}  # one fetch per org at a time
 
     async def price(self, org_id: uuid.UUID, model_id: str) -> ModelPrice:
         """The model's price: OpenRouter's from its model list, the built-in providers' from
-        `pricing.PRICE_TABLE`, and none for custom servers. Never fails: an unknown price is None."""
+        `pricing.PRICE_TABLE` as it stands now (the run asks right before each model call, so a
+        dated change applies from the first call after it), and none for custom servers. Never
+        fails: an unknown price is None."""
         full_id = model_id or self.settings.default_model_id
         provider_id, _, model = full_id.partition(":")
         spec = BUILT_IN.get(provider_id)
         if spec is None:  # a custom server
             return ModelPrice(full_id, provider_id, None)
         if spec.kind != "openrouter":
-            return ModelPrice(full_id, provider_id, pricing.table_price(spec.kind, model))
+            return ModelPrice(full_id, provider_id, pricing.table_price(spec.kind, model, at=self.now()))
         return ModelPrice(full_id, provider_id, await self._openrouter_price(org_id, model))
 
     async def _openrouter_price(self, org_id: uuid.UUID, model: str) -> Pricing | None:

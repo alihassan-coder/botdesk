@@ -1,10 +1,14 @@
 """Prices that change on a known date switch by themselves: the price used is the one in effect
 when the call is made (docs/ROADMAP.md lists the changes)."""
 
-from datetime import UTC, datetime, timedelta, timezone
+import uuid
+from datetime import UTC, date, datetime, timedelta, timezone
+from typing import Any, cast
 
 from src.model_providers import Pricing
+from src.runtime.chat_model import ModelResolver
 from src.services import pricing
+from tests.conftest import TEST_SETTINGS
 
 BEFORE_DECEMBER = datetime(2026, 11, 30, 23, 59, tzinfo=UTC)
 DECEMBER_FIRST = datetime(2026, 12, 1, 0, 0, tzinfo=UTC)
@@ -43,3 +47,27 @@ def test_a_change_takes_effect_at_utc_midnight_whatever_the_time_zone_of_the_mom
 def test_unchanged_models_keep_their_price_and_the_default_moment_is_now() -> None:
     assert pricing.table_price("anthropic", "claude-sonnet-5-5", at=JANUARY_FIRST) == Pricing(2.0, 10.0)
     assert pricing.table_price("anthropic", "claude-sonnet-5-5") == Pricing(2.0, 10.0)
+
+
+def test_every_dated_entry_starts_at_the_beginning_and_runs_oldest_first() -> None:
+    """A step list out of order would quietly price calls with the wrong step, so the table is
+    checked: each list starts at `date.min` (a price before any change) and its dates only grow."""
+    for provider, models in pricing.PRICE_TABLE.items():
+        for model, entry in models.items():
+            if isinstance(entry, Pricing):
+                continue
+            days = [effective_from for effective_from, _ in entry]
+            assert days[0] == date.min, f"{provider}:{model}"
+            assert days == sorted(set(days)), f"{provider}:{model}"
+
+
+async def test_a_call_is_priced_at_the_moment_it_is_made() -> None:
+    """The run asks for the price right before each model call (`ModelResolver.price`), so a call
+    on 1 December uses December's price even if the run started in November."""
+    moment = [BEFORE_DECEMBER]
+    resolver = ModelResolver(TEST_SETTINGS, cast(Any, None), cast(Any, None), now=lambda: moment[0])
+    org = uuid.uuid4()
+    assert (await resolver.price(org, "gemini:gemini-4-carbon")).pricing == Pricing(2.0, 10.0)
+    moment[0] = DECEMBER_FIRST
+    assert (await resolver.price(org, "gemini:gemini-4-carbon")).pricing == Pricing(4.0, 20.0)
+    assert (await resolver.price(org, "gemini:gemini-2.5-pro")).pricing is None

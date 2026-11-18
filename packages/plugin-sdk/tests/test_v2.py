@@ -14,11 +14,14 @@ from botdesk_plugin_sdk import (
     ApiKeyAuth,
     ConnectionInfo,
     HostNotAllowed,
+    HttpError,
     HttpResponse,
     NoArgs,
     NotConnected,
+    NotDone,
     OAuth2Auth,
     PluginManifest,
+    ResponseTooLarge,
     ToolContext,
     ToolResult,
     ToolSpec,
@@ -232,6 +235,15 @@ async def test_fake_http_refuses_hosts_the_manifest_does_not_list_and_plain_http
         await http.request("GET", "http://api.example.com/v1/me")
     with pytest.raises(AssertionError, match=r"no route for POST https://api\.example\.com/x"):
         await http.request("POST", "https://api.example.com/x")
+
+
+def test_refusals_made_before_a_request_leaves_say_nothing_was_done() -> None:
+    # A tool that isn't idempotent and fails with one of these is marked failed, not "may have
+    # happened" (ADR 0004 §2); a plugin raises `NotDone` itself when it stops before acting.
+    assert issubclass(HostNotAllowed, NotDone) and issubclass(NotConnected, NotDone)
+    assert issubclass(HostNotAllowed, HttpError) and issubclass(NotConnected, HttpError)
+    assert not issubclass(ResponseTooLarge, NotDone)  # it got an answer: the request was acted on
+    assert not issubclass(HttpError, NotDone)
 
 
 def test_http_response_helpers() -> None:

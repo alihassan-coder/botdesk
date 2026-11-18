@@ -14,6 +14,7 @@ from botdesk_plugin_sdk.auth import (
     OAuth2Auth,
     OwnerKind,
 )
+from botdesk_plugin_sdk.characters import describe_character, hidden_characters, show_hidden
 from botdesk_plugin_sdk.http import (
     HostNotAllowed,
     HttpClient,
@@ -24,6 +25,7 @@ from botdesk_plugin_sdk.http import (
     ResponseTooLarge,
 )
 from botdesk_plugin_sdk.manifest import ENTRY_POINT_GROUP, MANIFEST_VERSION, PluginManifest, manifest_json
+from botdesk_plugin_sdk.outcome import NotDone
 from botdesk_plugin_sdk.risk import EGRESS_KINDS, RISK_CLASSES, Egress, RiskClass
 from botdesk_plugin_sdk.tool import NoArgs, ToolContext, ToolHandler, ToolResult, ToolSpec
 from botdesk_plugin_sdk.trigger import TriggerEvent, TriggerPoll, TriggerPollResult, TriggerSpec
@@ -49,6 +51,7 @@ __all__ = [
     "NoArgs",
     "NoHttp",
     "NotConnected",
+    "NotDone",
     "OAuth2Auth",
     "OwnerKind",
     "PluginError",
@@ -63,7 +66,10 @@ __all__ = [
     "TriggerPoll",
     "TriggerPollResult",
     "TriggerSpec",
+    "describe_character",
+    "hidden_characters",
     "manifest_json",
     "manifest_problems",
+    "show_hidden",
     "validate_manifest",
 ]

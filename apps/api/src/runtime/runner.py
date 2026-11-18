@@ -58,7 +58,7 @@ from src.runtime.memory import MemoryService, NoMemory
 from src.runtime.reporter import RunReporter
 from src.runtime.tool_access import ToolAccessProvider
 from src.runtime.tool_pipeline import NeedsAttention
-from src.services import approval_service, run_event_service, run_service, task_service
+from src.services import approval_service, run_event_service, run_service, task_service, tool_execution_service
 from src.services.credential_vault import CredentialVault
 from src.services.mcp_server_service import McpRuntime
 from src.services.model_catalog import ModelCatalog
@@ -441,6 +441,10 @@ class RunManager:
                 return Outcome("cancelled")
             raise
         except TimeoutError:
+            # Out of time in the middle of a call that may have happened (an email that may be
+            # out): a person checks, as after a restart, instead of the run just failing.
+            if half_done := await self._unknown_outcome(ticket.id):
+                return Outcome("needs_attention", f"{time_limit_message(ticket.max_seconds)} {half_done}")
             return Outcome("failed", time_limit_message(ticket.max_seconds))
         except NeedsAttention as error:
             return Outcome("needs_attention", str(error))
@@ -495,6 +499,10 @@ class RunManager:
         reporter.announce()
         for child_id in aftermath.stop:
             await self.stop(child_id)
+
+    async def _unknown_outcome(self, run_id: uuid.UUID) -> str | None:
+        async with self.sessionmaker() as db:
+            return await tool_execution_service.unknown_outcome(db, run_id)
 
     async def _stop_was_requested(self, run_id: uuid.UUID) -> bool:
         async with self.sessionmaker() as db:

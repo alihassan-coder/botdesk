@@ -82,11 +82,13 @@ class McpToolsReviewIn(ApiModel):
 
 
 class McpToolBeforeOut(ApiModel):
-    """What an admin approved, for a tool that has changed since."""
+    """What an admin approved, for a tool that has changed since: every part of the hashed
+    definition, so the review can show what changed (the drift diff)."""
 
     title: str | None
     description: str | None
     input_schema: dict[str, Any] | None
+    output_schema: dict[str, Any] | None
 
 
 class McpToolOut(ApiModel):
@@ -96,6 +98,7 @@ class McpToolOut(ApiModel):
     description: str | None
     annotations: dict[str, Any]  # the server's own claims (readOnlyHint…): shown, never trusted
     input_schema: dict[str, Any]
+    output_schema: dict[str, Any] | None
     # approved: offered if enabled; changed / pending: waits for the review; removed: gone from the server
     state: Literal["approved", "changed", "pending", "removed"]
     enabled: bool  # "offer to bots"

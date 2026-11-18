@@ -38,7 +38,10 @@ async def get_connection(connection_id: uuid.UUID, access: OrgAccess, db: Db) ->
 
 
 @router.delete("/{connection_id}", status_code=status.HTTP_204_NO_CONTENT)
-async def disconnect(connection_id: uuid.UUID, access: OrgAccess, db: Db, vault: Vault, oauth: OAuthFlows) -> None:
+async def disconnect(
+    connection_id: uuid.UUID, access: OrgAccess, db: Db, vault: Vault, oauth: OAuthFlows, runs: Runs
+) -> None:
     """Forget the credential and mark the connection disconnected (kept for the audit log). An
-    OAuth token is also revoked at the provider, best effort, once that is saved."""
-    await connection_controller.disconnect(db, access, connection_id, vault=vault, oauth=oauth)
+    OAuth token is also revoked at the provider (an MCP server's authorization server for an MCP
+    sign-in), best effort, once that is saved."""
+    await connection_controller.disconnect(db, access, connection_id, vault=vault, oauth=oauth, mcp=runs.mcp)

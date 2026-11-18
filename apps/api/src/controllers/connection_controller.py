@@ -12,9 +12,10 @@ from src.api.deps import Access
 from src.core.errors import NotFound
 from src.plugins.registry import ToolRegistry
 from src.schemas.connection import ApiKeyConnectionIn, ConnectionOut, OAuthStartIn, OAuthStartOut
-from src.services import auth_service, connection_service
+from src.services import auth_service, connection_service, mcp_server_service
 from src.services.connection_service import Actor
 from src.services.credential_vault import CredentialVault
+from src.services.mcp_server_service import McpRuntime
 from src.services.oauth_flow import FlowFailed, OAuth
 
 logger = logging.getLogger(__name__)
@@ -85,10 +86,23 @@ async def finish_oauth(
 
 
 async def disconnect(
-    db: AsyncSession, access: Access, connection_id: uuid.UUID, *, vault: CredentialVault, oauth: OAuth
+    db: AsyncSession,
+    access: Access,
+    connection_id: uuid.UUID,
+    *,
+    vault: CredentialVault,
+    oauth: OAuth,
+    mcp: McpRuntime | None = None,
 ) -> None:
     connection, token = await connection_service.disconnect(db, _actor(access), connection_id, vault)
     connector_id = connection.connector_id
     await db.commit()
-    if token is not None:  # an OAuth token: tell the provider too, now that nothing waits on it
-        await oauth.revoke(oauth.registry.plugin(connector_id), token)
+    if token is None:
+        return
+    # An OAuth token: tell the provider too, now that nothing waits on it.
+    if mcp is not None and mcp_server_service.is_mcp_plugin(connector_id):  # an MCP server's sign-in
+        revocation = await mcp_server_service.revocation_for(db, mcp, access.org.id, connector_id, token)
+        await db.rollback()  # end that read before the network
+        await mcp_server_service.revoke_at_server(mcp, [revocation] if revocation else [])
+        return
+    await oauth.revoke(oauth.registry.plugin(connector_id), token)

@@ -2,7 +2,7 @@ import { screen, within } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { getStoreSnapshot } from "@/data/store";
 import { renderUI } from "@/test/render";
-import { signInOnApi, withFakeApi } from "@/test/fake-api";
+import { apiMe, apiOrg, signInOnApi, withFakeApi } from "@/test/fake-api";
 import { BotTools } from "./bot-tools";
 
 describe("A bot's Tools tab in the demo", () => {
@@ -124,5 +124,24 @@ describe("A bot's Tools tab on the API", () => {
     await open();
     expect(await screen.findByText("Couldn't load Scout's tools.")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Try again" })).toBeInTheDocument();
+  });
+  it("an MCP server says how many tools wait for a review, and a member can't switch one with the organization's sign-in", async () => {
+    api.routes["POST /api/v1/auth/sign-in"] = { status: 200, body: { ...apiMe, organizations: [{ ...apiOrg, role: "member" }] } };
+    api.routes["GET /api/v1/orgs/o1/members"] = { status: 200, body: [{ ...apiMe.user, role: "member" }] };
+    const tracker = plugin({
+      pluginId: "mcp-1a2b3c4d", name: "Tracker", description: "Tools from the MCP server at https://mcp.example.com/mcp.", enabled: false, tools: [],
+      mcp: { toolsWaiting: 2, problem: "Needs signing in again: an owner or admin can reconnect it on Connect apps.", orgAccount: true },
+    });
+    api.routes["GET /api/v1/orgs/o1/bots/b1/tools"] = { status: 200, body: { plugins: [plugin({}), tracker] } };
+    api.routes["GET /api/v1/orgs/o1/connections"] = { status: 200, body: [] };
+    await open();
+
+    const card = await screen.findByRole("article", { name: "Tracker" });
+    expect(within(card).getByText("2 tools to review")).toBeInTheDocument();
+    expect(within(card).getByText(/until an owner or admin reviews them/)).toBeInTheDocument();
+    expect(within(card).getByRole("status")).toHaveTextContent("Needs signing in again");
+    expect(within(card).getByRole("switch", { name: "Use Tracker" })).toBeDisabled();
+    expect(within(card).getByText(/only owners and admins switch it on or off/)).toBeInTheDocument();
+    expect(screen.getByRole("switch", { name: "Use Demo" })).toBeEnabled(); // other plugins as before
   });
 });

@@ -16,13 +16,15 @@ from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from typing import Any
 
+import mcp_types
 import pytest
 import uvicorn
 from mcp.server.mcpserver import MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
 from mcp.server.transport_security import TransportSecuritySettings
 from mcp.shared.exceptions import MCPError
-from mcp_types import REQUEST_TIMEOUT
+from mcp_types import INTERNAL_ERROR, INVALID_PARAMS, METHOD_NOT_FOUND, REQUEST_TIMEOUT
+from pydantic import ValidationError
 from starlette.applications import Starlette
 from starlette.requests import Request
 from starlette.responses import PlainTextResponse, RedirectResponse
@@ -33,6 +35,8 @@ from src.mcp.client import (
     McpCallResult,
     McpClientError,
     McpNetwork,
+    McpProtocolError,
+    McpRefused,
     McpResponseTooLarge,
     McpServerConfig,
     McpTimeout,
@@ -242,6 +246,28 @@ def test_the_sdks_own_request_timeout_counts_as_a_timeout() -> None:
 
     assert isinstance(translated, McpTimeout)
     assert "took too long" in str(translated)
+
+
+@pytest.mark.parametrize(
+    ("code", "refused"),
+    [
+        (METHOD_NOT_FOUND, True),  # the call was refused: nothing ran
+        (INVALID_PARAMS, True),  # an unknown tool or bad arguments: nothing ran
+        (INTERNAL_ERROR, False),  # may come after the tool did its thing
+        (-32000, False),  # a server's own error code: can't tell
+    ],
+)
+def test_only_refusals_say_the_tool_did_not_run(code: int, refused: bool) -> None:
+    translated = _translate(MCPError(code=code, message="nope"), "mcp.test")
+    assert isinstance(translated, McpProtocolError)
+    assert isinstance(translated, McpRefused) is refused
+
+
+def test_an_answer_that_isnt_mcp_is_not_a_refusal() -> None:
+    with pytest.raises(ValidationError) as invalid:
+        mcp_types.CallToolResult.model_validate({"content": "not a list"})
+    translated = _translate(invalid.value, "mcp.test")
+    assert isinstance(translated, McpProtocolError) and not isinstance(translated, McpRefused)
 
 
 async def test_huge_output_is_cut_with_a_note(live_server: LiveServer) -> None:

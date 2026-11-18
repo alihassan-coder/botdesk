@@ -15,15 +15,18 @@ What callers get for free:
 - **The protocol**: the SDK's `auto` mode speaks 2026-07-28 and falls back to the handshake
   versions. Sampling, elicitation and roots are never offered; a tool that asks for input fails.
 - **Errors**: everything that goes wrong is an `McpClientError` subclass with a message that's safe
-  for people and the model. A tool that ran and failed is not an error: it's `is_error=True`.
+  for people and the model. A tool that ran and failed is not an error: it's `is_error=True`. Of
+  the MCP errors a call can get, only `McpRefused` (method not found, invalid params) says the tool
+  didn't run; any other `McpProtocolError` may come after it did.
 
 Each operation opens its own connection (stateless): no session outlives a call.
 
-OAuth (slice 7.3): a server that answers 401 raises `McpAuthRequired` with its challenge; once
-signed in, the access token goes in `headers` like a header key (`services/mcp_server_service.py`
-refreshes it first). The SDK's `OAuthClientProvider` isn't used: its discovery and token requests
-would go through this origin-locked transport, and our callback, vault and refresh lease already
-exist (5.3). `McpServerConfig.auth` stays as a seam.
+OAuth (slice 7.3): a server that answers 401 raises `McpAuthRequired` with its challenge, and
+403 `insufficient_scope` raises `McpInsufficientScope`; once signed in, the access token goes in
+`headers` like a header key (`services/mcp_server_service.py` refreshes it first). The SDK's
+`OAuthClientProvider` isn't used (ADR 0016): its discovery and token requests would go through
+this origin-locked transport, and our callback, vault and refresh lease already exist (5.3).
+`McpServerConfig.auth` stays as a seam.
 """
 
 import json
@@ -51,6 +54,8 @@ MAX_RESULT_TEXT = 256 * 1024
 MAX_RESPONSE_BYTES = 8 * 1024 * 1024
 MAX_CALL_TIMEOUT = 300.0
 CLIENT_INFO = mcp_types.Implementation(name="botdesk", version="0.1.0")
+# JSON-RPC errors that mean the request was turned down before anything ran.
+_REFUSALS = frozenset({mcp_types.METHOD_NOT_FOUND, mcp_types.INVALID_PARAMS})
 
 
 # Errors
@@ -91,8 +96,24 @@ class McpAuthRequired(McpClientError):
         self.challenge = challenge
 
 
+class McpInsufficientScope(McpClientError):
+    """The server answered 403 `insufficient_scope`: the token works but needs more access (MCP
+    step-up authorization). `challenge` is its `WWW-Authenticate` header, naming the scopes."""
+
+    def __init__(self, message: str, challenge: str) -> None:
+        super().__init__(message)
+        self.challenge = challenge
+
+
 class McpProtocolError(McpClientError):
-    """The server answered, but with an MCP error (unknown tool, bad arguments, asked for input…)."""
+    """The server answered, but with an MCP error, or with something that isn't MCP, or the tool
+    asked for input. For a call this can come after the tool did its thing (an internal error once
+    the email is out): unless it's an `McpRefused`, whether the tool ran is unknown."""
+
+
+class McpRefused(McpProtocolError):
+    """The server refused the call before running anything: JSON-RPC "method not found" or
+    "invalid params" (an unknown tool, arguments that don't fit). Nothing ran."""
 
 
 # Inputs and outputs
@@ -191,11 +212,12 @@ async def _with_client[T](
 ) -> T:
     url = _checked_url(server.url, network)
     call_timeout = _call_timeout(server)
-    refused: list[str] = []  # a 401's WWW-Authenticate: the SDK only reports "an error response"
+    # A 401's or 403's WWW-Authenticate: the SDK only reports "an error response".
+    refused: list[tuple[int, str]] = []
 
     async def on_response(response: httpx2.Response) -> None:
-        if response.status_code == 401 and not refused:
-            refused.append(response.headers.get("www-authenticate", "")[:2000])
+        if response.status_code in (401, 403) and not refused:
+            refused.append((response.status_code, response.headers.get("www-authenticate", "")[:2000]))
 
     transport = GuardedTransport(
         server_url=url,
@@ -228,8 +250,11 @@ async def _with_client[T](
             ):
                 return await operation(client)
     except Exception as error:
-        if refused:
-            raise McpAuthRequired(f"{url.host} needs signing in.", refused[0]) from error
+        status, challenge = refused[0] if refused else (0, "")
+        if status == 401:
+            raise McpAuthRequired(f"{url.host} needs signing in.", challenge) from error
+        if status == 403 and "insufficient_scope" in challenge.lower():
+            raise McpInsufficientScope(f"{url.host} needs more access.", challenge) from error
         raise _translate(error, url.host) from error
 
 
@@ -269,7 +294,8 @@ def _translate(error: Exception, host: str) -> McpClientError:
         if timed_out or isinstance(leaf, TimeoutError | httpx2.TimeoutException):
             return McpTimeout(f"{host} took too long to answer.")
         if isinstance(leaf, MCPError):
-            return McpProtocolError(f"{host} answered with an error: {leaf.error.message}")
+            refused = leaf.error.code in _REFUSALS
+            return (McpRefused if refused else McpProtocolError)(f"{host} answered with an error: {leaf.error.message}")
         if isinstance(leaf, httpx2.HTTPError):
             return McpUnreachable(f"Couldn't reach {host} ({type(leaf).__name__}).")
         if isinstance(leaf, ValidationError):

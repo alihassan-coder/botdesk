@@ -78,11 +78,11 @@ Prove `mcp` 2.x + `httpx2` with the SSRF guard ported to `httpcore2`: list and c
 
 ### Slice 7.3 — MCP OAuth 2.1 · M
 
-`OAuthClientProvider` with vault-backed `TokenStorage`; pre-registered client fields in the add dialog; CIMD document route; DCR fallback; `resource` and `iss` checks; owner rules from ADR 0010; `insufficient_scope` → Reconnect. Tests against a fake authorization server (PRM, AS metadata, token endpoint).
+`OAuthClientProvider` with vault-backed `TokenStorage`; pre-registered client fields in the add dialog; CIMD document route; DCR fallback; `resource` and `iss` checks; owner rules from ADR 0010; `insufficient_scope` → Reconnect. Tests against a fake authorization server (PRM, AS metadata, token endpoint). As built (our own OAuth flow instead of the SDK's provider, the organization's sign-in only for now): [ADR 0016](../adr/0016-mcp-sign-in-and-review-as-built.md).
 
 ### Slice 7.4 — Drift review UI · S
 
-Connect apps badge "3 tools changed", a diff view (description and schema before/after) and re-approve. Can merge into 7.2 if it stays small.
+Connect apps badge "3 tools changed", a diff view (description and schema before/after) and re-approve. Can merge into 7.2 if it stays small. As built: a new server's tools also wait for this review before any is offered (ADR 0012 §4), and the badge is on a bot's Tools too.
 
 ## Order and parallel work
 

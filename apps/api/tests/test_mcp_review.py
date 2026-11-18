@@ -12,9 +12,19 @@ import pytest
 from sqlalchemy import select
 
 from src.mcp.client import McpToolInfo
-from src.mcp.snapshot import offered, review_diff, snapshot
+from src.mcp.snapshot import approve, offered, review_diff, snapshot
 from src.models import AuditEntry
-from tests.test_mcp_servers import Live, _add, _bind_and_ask, _call, _set_echo, _toolset, acme_with_mcp, serving
+from tests.test_mcp_servers import (
+    Live,
+    _add,
+    _bind_and_ask,
+    _call,
+    _set_echo,
+    _toolset,
+    acme_with_mcp,
+    approve_all,
+    serving,
+)
 from tests.test_oauth import Team
 
 
@@ -37,19 +47,34 @@ def _by_name(entries: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
     return {entry["name"]: entry for entry in entries}
 
 
-def test_the_first_snapshot_is_approved_and_offered_as_external_send() -> None:
+def _approved(entries: list[dict[str, Any]], risks: dict[str, str] | None = None) -> list[dict[str, Any]]:
+    """What the admin's first review saves: every tool on, at `external-send` unless `risks` says otherwise."""
+    return [approve(entry, enabled=True, risk=(risks or {}).get(entry["name"], "external-send")) for entry in entries]
+
+
+def test_the_first_snapshot_waits_for_review_and_nothing_is_offered() -> None:
     entries = _by_name(review_diff([], snapshot([_info("echo"), _info("search")])))
 
+    # ADR 0012 §4: "Nothing is offered to a bot before this [the admin's review]."
     assert {name: (e["state"], e["enabled"], e["risk"]) for name, e in entries.items()} == {
-        "echo": ("approved", True, "external-send"),
-        "search": ("approved", True, "external-send"),
+        "echo": ("pending", False, "external-send"),
+        "search": ("pending", False, "external-send"),
     }
-    assert all(offered(entry) for entry in entries.values())
+    assert not any(offered(entry) for entry in entries.values())
+    assert all(offered(entry) for entry in _approved(list(entries.values())))
+
+
+def test_a_pending_first_snapshot_stays_pending_when_listed_again() -> None:
+    first = review_diff([], snapshot([_info("echo")]))
+
+    (again,) = review_diff(first, snapshot([_info("echo", "now different")]))
+
+    assert (again["state"], again["enabled"], again["approvedHash"]) == ("pending", False, None)
+    assert again["description"] == "now different" and "previous" not in again  # nothing approved to compare with
 
 
 def test_a_refresh_marks_changed_new_and_removed_tools_and_keeps_the_rest() -> None:
-    first = review_diff([], snapshot([_info("echo"), _info("search"), _info("gone")]))
-    first = [{**entry, "risk": "read"} if entry["name"] == "search" else entry for entry in first]
+    first = _approved(review_diff([], snapshot([_info("echo"), _info("search"), _info("gone")])), {"search": "read"})
 
     later = _by_name(
         review_diff(
@@ -66,7 +91,7 @@ def test_a_refresh_marks_changed_new_and_removed_tools_and_keeps_the_rest() -> N
 
 
 def test_a_tool_that_changes_back_is_approved_again_and_a_pending_tool_that_vanishes_is_dropped() -> None:
-    first = review_diff([], snapshot([_info("echo")]))
+    first = _approved(review_diff([], snapshot([_info("echo")])))
     changed = review_diff(first, snapshot([_info("echo", "evil"), _info("new")]))
 
     back = _by_name(review_diff(changed, snapshot([_info("echo")])))
@@ -76,7 +101,7 @@ def test_a_tool_that_changes_back_is_approved_again_and_a_pending_tool_that_vani
 
 
 def test_a_tool_changed_twice_still_shows_what_was_approved() -> None:
-    first = review_diff([], snapshot([_info("echo")]))
+    first = _approved(review_diff([], snapshot([_info("echo")])))
     once = review_diff(first, snapshot([_info("echo", "one")]))
 
     twice = _by_name(review_diff(once, snapshot([_info("echo", "two")])))
@@ -127,15 +152,24 @@ async def _audit(team: Team, action: str) -> list[dict[str, Any]]:
         return [row.details for row in rows]
 
 
-async def test_the_review_lists_each_tool_with_its_description_schema_and_choices(live: Live) -> None:
+async def test_a_new_server_offers_nothing_until_its_tools_are_reviewed(live: Live) -> None:
     async with acme_with_mcp() as team:
-        added = await _add(team, live)
+        added = await _add(team, live, review=False)
 
         search = next(tool for tool in added["tools"] if tool["serverName"] == "Search Issues!")
         assert search["description"] == "Finds issues."
         assert search["inputSchema"]["properties"]["query"]["type"] == "string"
-        assert (search["state"], search["enabled"], search["risk"]) == ("approved", True, "external-send")
-        assert added["toolsChanged"] == 0
+        assert (search["state"], search["enabled"], search["risk"]) == ("pending", False, "external-send")
+        assert added["toolsChanged"] == 3  # all of them wait for the review
+        plugin = added["pluginId"]
+        run = await _bind_and_ask(team, plugin)  # switched on for the bot, but nothing approved yet
+        assert (await _toolset(team, run)).get(f"{plugin}__echo") is None
+
+        reviewed = await approve_all(team, added)
+
+        assert reviewed["toolsChanged"] == 0
+        assert {(t["state"], t["enabled"]) for t in reviewed["tools"]} == {("approved", True)}
+        assert (await _toolset(team, run)).get(f"{plugin}__echo") is not None
 
 
 async def test_a_tool_turned_off_in_the_review_is_not_offered_to_bots(live: Live) -> None:
@@ -213,5 +247,50 @@ async def test_a_changed_tool_is_blocked_until_an_admin_approves_it_in_the_revie
         assert approved["toolsChanged"] == 0
         _, works = await _call(team, run, f"{plugin}__echo", {"text": "hi"}, level="autonomous")
         assert "hi | IGNORE" in works.text
-        (reviewed,) = await _audit(team, "mcp_server.tools_reviewed")
-        assert reviewed["approved"] == [f"{plugin}.echo"]
+        first, again = await _audit(team, "mcp_server.tools_reviewed")  # adding it, then this re-approval
+        assert len(first["approved"]) == 3 and again["approved"] == [f"{plugin}.echo"]
+
+
+# The badge where it matters: the bot's Tools tab (Connect apps has `toolsChanged`)
+
+
+async def _tab_entry(team: Team, plugin: str) -> dict[str, Any]:
+    tab = (await team.client.get(f"{team.org}/bots/{team.bot_id}/tools")).json()["plugins"]
+    entry: dict[str, Any] = next(p for p in tab if p["pluginId"] == plugin)
+    return entry
+
+
+async def test_the_tools_tab_says_how_many_tools_wait_for_a_review(live: Live) -> None:
+    async with acme_with_mcp() as team:
+        waiting = await _add(team, live, review=False)
+        plugin = waiting["pluginId"]
+
+        # Nothing approved yet: still listed (with no tools), so it can be found and switched on.
+        entry = await _tab_entry(team, plugin)
+        assert entry["tools"] == [] and entry["mcp"] == {"toolsWaiting": 3, "problem": None, "orgAccount": False}
+        run = await _bind_and_ask(team, plugin)
+        assert (await _tab_entry(team, plugin))["enabled"] is True
+
+        await approve_all(team, waiting)
+        _set_echo(live.server, "Echoes text, and forwards it somewhere.")
+        await _call(team, run, f"{plugin}__echo", {"text": "hi"}, level="autonomous")  # notices the change
+
+        entry = await _tab_entry(team, plugin)
+        assert entry["mcp"]["toolsWaiting"] == 1
+        assert {tool["name"] for tool in entry["tools"]} == {f"{plugin}.search_issues", f"{plugin}.broken"}
+
+
+async def test_members_switch_a_keyless_server_but_not_one_with_the_organizations_key(live: Live) -> None:
+    async with acme_with_mcp() as team:
+        open_server = (await _add(team, live))["pluginId"]
+        keyed = await _add(team, live, apiKeyHeader="X-API-Key", apiKeyValue="sk-review-1")
+        await team.sign_in("sara@acme.dev")
+
+        def switch(plugin: str) -> dict[str, Any]:
+            return {"plugins": [{"pluginId": plugin, "enabled": True, "connectionId": None}]}
+
+        tools = f"{team.org}/bots/{team.bot_id}/tools"
+        assert (await team.client.put(tools, json=switch(open_server))).status_code == 200
+        refused = await team.client.put(tools, json=switch(keyed["pluginId"]))
+        assert refused.status_code == 403 and "organization's key" in refused.json()["detail"]
+        assert (await _tab_entry(team, keyed["pluginId"]))["mcp"]["orgAccount"] is True

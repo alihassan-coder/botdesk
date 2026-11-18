@@ -34,8 +34,10 @@ POLICY: dict[SecurityLevel, dict[RiskClass, Decision]] = {
     "autonomous": _row("auto", "auto", "auto", "auto", "ask", "ask", "ask"),
 }
 
-# Above this, a tainted run always asks (§5).
-_TAINT_FREE: frozenset[RiskClass] = frozenset({"read", "write-internal"})
+# Risk classes whose calls change nothing outside BotDesk. Above them, a tainted run always asks
+# (§5), and a call that may have half run stops for a person (tool_pipeline, §2).
+STAYS_INSIDE: frozenset[RiskClass] = frozenset({"read", "write-internal"})
+_TAINT_FREE = STAYS_INSIDE
 
 
 @dataclass(frozen=True)

@@ -8,15 +8,20 @@ Google and Gmail answered by `FakeGoogle` (tests/test_oauth.py).
 """
 
 import uuid
+from collections.abc import Callable
 from datetime import timedelta
 from typing import Any
 
-from src.models import Run
+import httpx
+import pytest
+
+from src.models import Run, ToolExecution
 from src.models.bot import SecurityLevel
 from src.runtime import tool_pipeline, toolset
 from src.runtime.reporter import RunReporter
 from src.runtime.runner import RunManager
-from src.runtime.tool_pipeline import ExecuteDeps, ToolCallRequest
+from src.runtime.tool_pipeline import ExecuteDeps, NeedsAttention, ToolCallRequest
+from src.services import connection_service
 from src.services.tool_execution_service import RunRef
 from tests.test_oauth import GOOGLE_SETTINGS, Team, acme
 
@@ -145,7 +150,12 @@ WRITES: dict[str, dict[str, Any]] = {
     "gmail__create_draft": MAIL,
     "gmail__send": MAIL,
     "gmail__trash": {"thread_id": "18f0a0"},
-    "gmail__send_draft": {"draft_id": "r-5512", "to": ["sara@acme.dev"], "subject": "Launch review"},
+    "gmail__send_draft": {
+        "draft_id": "r-5512",
+        "to": ["sara@acme.dev"],
+        "subject": "Launch review",
+        "body": "Thursday at 3 PM works.",
+    },
 }
 
 
@@ -195,7 +205,7 @@ async def test_after_reading_mail_even_an_autonomous_bot_asks_before_every_gmail
             assert await _decide(team, run, tool, level="autonomous", tainted=True) == "ask", tool
 
 
-async def test_sending_a_draft_asks_with_its_recipients_and_subject_on_the_card() -> None:
+async def test_sending_a_draft_asks_with_its_recipients_subject_and_text_on_the_card() -> None:
     async with acme() as team:
         run = await _inbox_dm(team)
         runs: RunManager = team.app.state.runs
@@ -213,7 +223,10 @@ async def test_sending_a_draft_asks_with_its_recipients_and_subject_on_the_card(
             recorded = await tool_pipeline.record(db, run, call, tainted=True, approval_expiry=timedelta(hours=1))
             await db.commit()
         assert recorded.approval is not None
-        assert recorded.approval.summary == "Send draft r-5512 to sara@acme.dev: “Launch review”"
+        summary = "Send draft r-5512 to sara@acme.dev: “Launch review”: Thursday at 3 PM works."
+        assert recorded.approval.summary == summary
+        card = (await team.client.get(f"{team.org}/approvals/{recorded.approval.id}")).json()
+        assert {"label": "Body", "value": "Thursday at 3 PM works."} in card["preview"]
 
 
 async def test_a_send_waiting_for_approval_shows_the_exact_email_and_sends_once_approved() -> None:
@@ -255,3 +268,97 @@ async def test_a_send_waiting_for_approval_shows_the_exact_email_and_sends_once_
         (sent,) = team.google.to(f"{ME}/messages/send")
         assert sent.method == "POST"
         assert sent.headers["authorization"] == "Bearer ya29.ACCESS-1"
+
+
+# A send whose outcome is unknown (ADR 0004 §2): an Autonomous bot sends without asking, so a send
+# reported as failed after it may have gone out would be sent again by the model.
+
+
+async def _send_autonomously(team: Team, run: RunRef, tool: str, args: dict[str, Any]) -> tuple[Any, uuid.UUID]:
+    runs: RunManager = team.app.state.runs
+    async with runs.sessionmaker() as db:
+        tools = await toolset.load(db, runs.registry, run.run_id)
+    call = tool_pipeline.prepare(
+        tools,
+        ToolCallRequest(f"call-{uuid.uuid4().hex[:6]}", tool, args),
+        level="autonomous",
+        tainted=False,
+        connections=tools.connections,
+    )
+    assert call.decision == "auto", call.trace
+    async with runs.sessionmaker() as db:
+        recorded = await tool_pipeline.record(db, run, call, tainted=False, approval_expiry=timedelta(hours=1))
+        await db.commit()
+    reporter = RunReporter(runs.sessionmaker, runs.bus, run.org_id, run.thread_id, run.run_id)
+    deps = ExecuteDeps(
+        runs.sessionmaker,
+        tools,
+        reporter,
+        run,
+        timeout_seconds=5,
+        access=runs.tool_access,
+        connection_ids=tools.connection_ids,
+    )
+    return deps, recorded.execution.id
+
+
+def _gmail_answers(status: int) -> Callable[[httpx.Request], httpx.Response]:
+    return lambda _request: httpx.Response(status, json={"error": {"message": "backend"}})
+
+
+def _connection_dropped(request: httpx.Request) -> httpx.Response:
+    raise httpx.ReadError("connection reset", request=request)
+
+
+@pytest.mark.parametrize(
+    ("answer", "unknown"),
+    [
+        (_gmail_answers(500), True),  # Gmail may have sent it before failing
+        (_gmail_answers(503), True),
+        (_connection_dropped, True),  # the request left; the answer never came
+        (_gmail_answers(400), False),  # refused: nothing was sent
+        (_gmail_answers(403), False),
+    ],
+    ids=["500", "503", "dropped", "400", "403"],
+)
+async def test_a_gmail_send_that_may_have_gone_out_is_never_reported_as_failed(
+    answer: Callable[[httpx.Request], httpx.Response], unknown: bool
+) -> None:
+    async with acme() as team:
+        team.google.gmail = {f"{ME}/messages/send": answer}
+        run = await _inbox_dm(team)
+        deps, execution_id = await _send_autonomously(team, run, "gmail__send", MAIL)
+
+        if unknown:
+            with pytest.raises(NeedsAttention, match="may have been done"):
+                await tool_pipeline.execute(deps, execution_id)
+            with pytest.raises(NeedsAttention):  # coming back to it never sends again
+                await tool_pipeline.execute(deps, execution_id)
+        else:
+            outcome = await tool_pipeline.execute(deps, execution_id)
+            assert outcome.text.startswith("The tool failed: Gmail")
+
+        assert len(team.google.to(f"{ME}/messages/send")) == 1
+        async with team.app.state.sessionmaker() as db:
+            row = await db.get(ToolExecution, execution_id)
+        assert row is not None and row.status == ("started" if unknown else "failed")
+
+
+async def test_a_send_that_worked_stays_sent_when_recording_the_connections_use_fails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async with acme() as team:
+        team.google.gmail = {f"{ME}/messages/send": {"id": "18f0c1", "threadId": "18f0c0"}}
+        run = await _inbox_dm(team)
+        deps, execution_id = await _send_autonomously(team, run, "gmail__send", MAIL)
+
+        async def broken(*_args: Any, **_kwargs: Any) -> None:
+            raise RuntimeError("the database went away")
+
+        monkeypatch.setattr(connection_service, "record_use", broken)
+        outcome = await tool_pipeline.execute(deps, execution_id)
+
+        assert '"sent": true' in outcome.text
+        async with team.app.state.sessionmaker() as db:
+            row = await db.get(ToolExecution, execution_id)
+        assert row is not None and row.status == "succeeded"

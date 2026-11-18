@@ -10,7 +10,12 @@ ADR 0010 §8. A tool never sees a token; this client:
 - connects through `GuardedTransport` (core/url_guard.py) with private addresses always refused,
   so an allowed name that resolves to 10.0.0.1 or 169.254.169.254 is never reached;
 - reads at most `max_bytes` of a response and gives up after `timeout_seconds`;
-- logs method, host, path and status only: never headers, query strings or bodies.
+- logs method, host, path and status only: never headers, query strings or bodies;
+- remembers whether a request that can change something (any method but GET, HEAD and OPTIONS)
+  may have reached the other app: `may_have_changed_something`. The tool pipeline reads it when a
+  call fails, so a send that may have gone out is never reported as failed (ADR 0004 §2). Such a
+  request counts from the moment it is sent, and stops counting only when it certainly had no
+  effect: no connection could be made, or the answer was a 4xx refusal.
 
 Every refusal is an SDK `HttpError` whose message is safe for the model and for people.
 """
@@ -30,6 +35,10 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_MAX_BYTES = 10 * 1024 * 1024
 REDIRECTS = {301, 302, 303, 307, 308}
+# Methods that only read (RFC 9110 "safe"): a request with any other method may change something.
+SAFE_METHODS = frozenset({"GET", "HEAD", "OPTIONS"})
+# Failures that mean the request never left: no connection was made.
+_NEVER_SENT = (httpx.ConnectError, httpx.ConnectTimeout, httpx.PoolTimeout)
 
 
 class RebaseHosts(httpx.AsyncBaseTransport):
@@ -88,6 +97,15 @@ class AuthorisedHttp:
         self._credential: Credential | None = None
         self._max_bytes = max_bytes
         self.used = False  # at least one request reached the service
+        # Requests that can change something (POST, PUT, PATCH, DELETE…) that were sent and didn't
+        # certainly fail before the service acted on them. A count, not a flag: requests sent at
+        # once (asyncio.gather) are each taken back only by their own certain failure.
+        self._may_have_acted = 0
+
+    @property
+    def may_have_changed_something(self) -> bool:
+        """A request that can change something was sent and the service may have done it."""
+        return self._may_have_acted > 0
 
     def __repr__(self) -> str:
         return f"AuthorisedHttp(hosts={sorted(self._hosts)})"
@@ -109,24 +127,44 @@ class AuthorisedHttp:
             taken = {name.lower() for name in auth}
             # The tool can't set (or overwrite) the credential's own header.
             merged = {name: value for name, value in merged.items() if name.lower() not in taken} | auth
+        # Built first, so a request that can't even be built (say, a body that isn't JSON) is
+        # refused before anything counts as sent.
+        request = self._client.build_request(
+            method.upper(), target, params=dict(params or {}), json=json, data=data, headers=merged
+        )
+        counted = request.method not in SAFE_METHODS
+        if counted:
+            self._may_have_acted += 1  # from here on the service may act on it
+
+        def had_no_effect() -> None:
+            nonlocal counted
+            if counted:
+                self._may_have_acted -= 1
+                counted = False
+
         try:
-            async with self._client.stream(
-                method.upper(), target, params=dict(params or {}), json=json, data=data, headers=merged
-            ) as response:
+            response = await self._client.send(request, stream=True)
+            try:
+                if 400 <= response.status_code < 500:
+                    had_no_effect()  # refused: the service didn't do it
                 if response.status_code in REDIRECTS:
                     raise HttpError(
                         f"{target.host} answered with a redirect ({response.status_code}). "
                         "Tools never follow redirects; call the final address directly."
                     )
                 content = await self._read_capped(response, target.host)
-        except UnsafeUrl as error:
+            finally:
+                await response.aclose()
+        except UnsafeUrl as error:  # refused before connecting
+            had_no_effect()
             raise HostNotAllowed(
                 f"{target.host} resolves to a private network address, which tools can't reach."
             ) from error
-        except httpx.TimeoutException as error:
-            raise HttpError(f"{target.host} took too long to answer.") from error
+        except _NEVER_SENT as error:
+            had_no_effect()
+            raise HttpError(_failure_text(error, target.host)) from error
         except httpx.HTTPError as error:
-            raise HttpError(f"Couldn't reach {target.host} ({type(error).__name__}).") from error
+            raise HttpError(_failure_text(error, target.host)) from error
         self.used = True
         logger.info("Tool request %s %s%s → %s", method.upper(), target.host, target.path, response.status_code)
         return HttpResponse(
@@ -171,3 +209,9 @@ class AuthorisedHttp:
                 raise too_large
             chunks.append(chunk)
         return b"".join(chunks)
+
+
+def _failure_text(error: httpx.HTTPError, host: str) -> str:
+    if isinstance(error, httpx.TimeoutException):
+        return f"{host} took too long to answer."
+    return f"Couldn't reach {host} ({type(error).__name__})."

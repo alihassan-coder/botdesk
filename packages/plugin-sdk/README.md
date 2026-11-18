@@ -132,7 +132,9 @@ Also set:
 - `egress="open"` when the tool can reach any address (a "fetch this URL" tool). In a run that has read outside text it then counts as `external-send`.
 - `untrusted_output=True` when it returns text written by someone outside (an email body, a web page). Reading it "taints" the run, and risky tools ask from then on.
 - `idempotent=True` only when running it twice does no harm. Other tools stop and ask a person after a crash instead of running again. For services that accept an idempotency key, pass on `ctx.idempotency_key`; it stays the same across retries of one call.
+- When a tool that isn't idempotent fails, BotDesk must know whether it may still have done its thing (an email out before the answer was lost), because the model would otherwise try again. With `egress`, BotDesk sees every `ctx.http` request and works it out itself: a request that can change something (not GET, HEAD or OPTIONS) counts unless it got a 4xx answer or never connected. So reach other apps only through `ctx.http`. Without `egress`, raise `NotDone("…")` when you stopped before changing anything; any other exception stops the run for a person to check.
 - `summarize=lambda args: f"Send an email to {args.to}"` for a clearer approval card.
+- Text that goes out as written (a subject, a message): refuse characters that don't show on the card or reorder the text around it with `hidden_characters(text, layout=True)` (indexes; `describe_character` names one for the error). BotDesk also writes any that reach a card as `[U+202E]` (`show_hidden`).
 
 ## Calling another app: auth, egress and `ctx.http` (manifest version 2)
 
@@ -170,7 +172,7 @@ All optional, so a version-1 plugin loads unchanged:
 | `settings_model`, `bot_settings_model` | Pydantic models for the organization's and each bot's settings; their JSON Schema drives the forms. The bot's validated settings arrive as `ctx.settings`. |
 | `triggers` | `TriggerSpec(name, title, description, poll, interval_seconds=300, untrusted_payload=True)`: things in the other app that start a run. Declared now; BotDesk runs them later (roadmap 6.3). |
 
-`ctx.http.request(method, url, *, params, json, data, headers) -> HttpResponse` (`status_code`, `headers`, `content`, `.text`, `.json()`, `.ok`). It allows only `https` to your `egress` hosts, never follows redirects, refuses private network addresses, caps the response at 10 MB and times out with the tool. Refusals raise `HttpError` subclasses (`HostNotAllowed`, `ResponseTooLarge`, `NotConnected` when no account is connected); let them propagate and the bot sees the message. `ctx.connection` (`ConnectionInfo`: id, connector, account label, owner kind, granted scopes) says which account the call works on; it never holds a secret.
+`ctx.http.request(method, url, *, params, json, data, headers) -> HttpResponse` (`status_code`, `headers`, `content`, `.text`, `.json()`, `.ok`). It allows only `https` to your `egress` hosts, never follows redirects, refuses private network addresses, caps the response at 10 MB and times out with the tool. Refusals raise `HttpError` subclasses (`HostNotAllowed`, `ResponseTooLarge`, `NotConnected` when no account is connected; `HostNotAllowed` and `NotConnected` are also `NotDone`: nothing was sent); let them propagate and the bot sees the message. `ctx.connection` (`ConnectionInfo`: id, connector, account label, owner kind, granted scopes) says which account the call works on; it never holds a secret.
 
 Test without a network or a token:
 

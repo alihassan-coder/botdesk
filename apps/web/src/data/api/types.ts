@@ -292,7 +292,7 @@ export type ApiRunEvent = {
   | { kind: "tool_started"; data: { toolExecutionId: string; tool: string; risk: ApiRiskClass; args: Record<string, unknown> } }
   | {
       kind: "tool_finished";
-      data: { toolExecutionId: string; tool: string; status: "succeeded" | "failed" | "denied"; result: unknown; error: string | null };
+      data: { toolExecutionId: string; tool: string; status: "succeeded" | "failed" | "denied" | "unknown"; result: unknown; error: string | null };
     }
   | { kind: "approval_requested"; data: { approval: ApiApproval } }
   | { kind: "approval_decided"; data: { approval: ApiApproval } }
@@ -357,9 +357,9 @@ export interface ApiMcpServer {
   statusReason: string | null;
   tools: {
     name: string; serverName: string; title: string | null; description: string | null; annotations: Record<string, unknown>;
-    inputSchema: Record<string, unknown>; state: "approved" | "changed" | "pending" | "removed"; enabled: boolean;
+    inputSchema: Record<string, unknown>; outputSchema?: Record<string, unknown> | null; state: "approved" | "changed" | "pending" | "removed"; enabled: boolean;
     risk: "read" | "write-internal" | "write-external" | "external-send" | "destructive";
-    previous: { title: string | null; description: string | null; inputSchema: Record<string, unknown> | null } | null;
+    previous: { title: string | null; description: string | null; inputSchema: Record<string, unknown> | null; outputSchema?: Record<string, unknown> | null } | null;
   }[];
   toolsHash: string;
   toolsChanged: number;
@@ -426,6 +426,8 @@ export interface ApiBotTools {
     connectionId: string | null;
     tools: ApiTool[];
     triggers?: { name: string; title: string; description: string; enabled: boolean; subscriberId: string | null; problem: string | null }[];
+    /** MCP servers only (slice 7.4). */
+    mcp?: { toolsWaiting: number; problem: string | null; orgAccount: boolean } | null;
   }[];
 }
 

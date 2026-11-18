@@ -10,6 +10,7 @@ import uuid
 from dataclasses import dataclass
 from typing import Any
 
+from botdesk_plugin_sdk import show_hidden
 from pydantic import ValidationError
 from sqlalchemy import Select, exists, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -267,7 +268,10 @@ async def expire_for_run(db: AsyncSession, run_id: uuid.UUID) -> list[uuid.UUID]
 
 def _preview(args: dict[str, Any]) -> list[PreviewLine]:
     return [
-        PreviewLine(label=key.replace("_", " ").capitalize(), value=value if isinstance(value, str) else str(value))
+        PreviewLine(
+            label=key.replace("_", " ").capitalize(),
+            value=show_hidden(value if isinstance(value, str) else str(value)),
+        )
         for key, value in args.items()
     ]
 
@@ -282,8 +286,10 @@ def approval_out(view: ApprovalView, registry: ToolRegistry) -> ApprovalOut:
         bot_id=approval.bot_id,
         tool_execution_id=approval.tool_execution_id,
         tool=approval.tool_name,
-        title=approval.title,
-        summary=approval.summary,
+        # A character that doesn't show, or reorders the text around it, is written as [U+202E]:
+        # the card reads like what is sent (an MCP tool's arguments too).
+        title=show_hidden(approval.title),
+        summary=show_hidden(approval.summary),
         risk_class=approval.risk,
         reason=approval.reason,
         tainted=approval.tainted,

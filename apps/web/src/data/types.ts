@@ -159,7 +159,8 @@ export interface ToolCallPart {
   toolExecutionId: ID;
   /** Plugin id + tool name, like "demo.send_email". */
   tool: string;
-  status: "running" | "succeeded" | "failed" | "denied";
+  /** `unknown`: it failed after it may have been done (an email that may be out); its run waits for a person. */
+  status: "running" | "succeeded" | "failed" | "denied" | "unknown";
   error?: string;
 }
 
@@ -345,13 +346,22 @@ export interface McpTool {
   title: string | null;
   description: string | null;
   inputSchema: Record<string, unknown>;
+  outputSchema: Record<string, unknown> | null;
   /** The server's own claims (readOnlyHint…): shown, never trusted. */
   annotations: Record<string, unknown>;
   state: "approved" | "changed" | "pending" | "removed";
   enabled: boolean;
   risk: McpToolRisk;
-  /** For a changed tool: what an admin approved before. */
-  previous: { title: string | null; description: string | null; inputSchema: Record<string, unknown> | null } | null;
+  /** For a changed tool: what an admin approved before (the drift diff compares it with now). */
+  previous: McpToolDefinition | null;
+}
+
+/** The parts of an MCP tool its hash covers, as an admin last approved them. */
+export interface McpToolDefinition {
+  title: string | null;
+  description: string | null;
+  inputSchema: Record<string, unknown> | null;
+  outputSchema: Record<string, unknown> | null;
 }
 
 /** The risks an admin may give an MCP tool on the review screen (never below read). */
@@ -442,6 +452,18 @@ export interface BotToolPlugin {
   tools: PluginTool[];
   /** Things in the app the bot can react to ("React to new email"). API mode only. */
   triggers?: BotTrigger[];
+  /** An MCP server's extras (API mode only; null for other plugins). */
+  mcp?: BotToolMcp | null;
+}
+
+/** What a bot's Tools tab says about an MCP server besides the tools it offers (ADR 0012). */
+export interface BotToolMcp {
+  /** Changed or new tools no bot gets until an owner or admin approves them (Review tools). */
+  toolsWaiting: number;
+  /** Why its tools may not work now ("Needs signing in again: …"), or null. */
+  problem: string | null;
+  /** It uses the organization's key or sign-in, so only owners and admins switch it on or off. */
+  orgAccount: boolean;
 }
 
 /** One of a plugin's triggers for this bot. When on, its events come to the DM of whoever switched it on. */

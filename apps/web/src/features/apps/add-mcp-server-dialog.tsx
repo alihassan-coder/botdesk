@@ -1,29 +1,60 @@
 import { useState } from "react";
-import { TriangleAlert } from "lucide-react";
-import { toast } from "sonner";
+import Link from "next/link";
+import { ListChecks, TriangleAlert } from "lucide-react";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Field, FieldDescription, FieldLabel, FieldLegend, FieldSet } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
-import { actions } from "@/data/store";
+import { actions, useMcpServers } from "@/data/store";
+import { waitingLabel } from "@/lib/mcp-review";
 
 /**
  * Owners and admins: add a remote MCP server. The API connects and lists its tools before
  * saving, so a wrong address or key fails here. The key is optional and never shown again.
  * A server that wants a sign-in (it answers 401, or "Uses sign-in" is ticked) sends the tab to
  * its sign-in page; a client ID is only needed when the server can't register BotDesk itself.
+ * Step 2 leads to Review tools: no tool is offered to a bot before that (ADR 0012 §4).
  */
 export function AddMcpServerDialog({ open, onClose }: { open: boolean; onClose: () => void }) {
+  const [addedId, setAddedId] = useState<string | null>(null);
+  const close = () => {
+    setAddedId(null);
+    onClose();
+  };
   return (
-    <Dialog open={open} onOpenChange={(next) => !next && onClose()}>
-      <DialogContent>{open && <AddForm onClose={onClose} />}</DialogContent>
+    <Dialog open={open} onOpenChange={(next) => !next && close()}>
+      <DialogContent>
+        {open && (addedId ? <ReviewNext serverId={addedId} onClose={close} /> : <AddForm onAdded={setAddedId} onClose={close} />)}
+      </DialogContent>
     </Dialog>
   );
 }
 
-function AddForm({ onClose }: { onClose: () => void }) {
+/** Step 2: the server is saved; its tools wait for the review. */
+function ReviewNext({ serverId, onClose }: { serverId: string; onClose: () => void }) {
+  const server = useMcpServers().items.find((s) => s.id === serverId);
+  const waiting = server ? waitingLabel(server.tools) : null;
+  return (
+    <div className="flex flex-col gap-5">
+      <DialogHeader>
+        <DialogTitle>{server?.name ?? "Server"} added</DialogTitle>
+        <DialogDescription>
+          {waiting ? `${waiting}. ` : ""}No bot gets its tools until you&apos;ve read what each one says and chosen which to offer. Then turn the server on in a bot&apos;s Tools.
+        </DialogDescription>
+      </DialogHeader>
+      <DialogFooter>
+        <Button type="button" variant="ghost" onClick={onClose}>Later</Button>
+        <Button asChild>
+          <Link href={`/apps/mcp/${serverId}`} onClick={onClose}><ListChecks /> Review tools</Link>
+        </Button>
+      </DialogFooter>
+    </div>
+  );
+}
+
+function AddForm({ onAdded, onClose }: { onAdded: (serverId: string) => void; onClose: () => void }) {
   const [name, setName] = useState("");
   const [url, setUrl] = useState("");
   const [header, setHeader] = useState("");
@@ -46,8 +77,8 @@ function AddForm({ onClose }: { onClose: () => void }) {
     const result = await actions.addMcpServer({ name: name.trim(), url: url.trim(), ...withKey, ...withClient });
     setBusy(false);
     if (!result.ok) return setError(result.error);
-    toast.success(`${name.trim()} added. Turn it on for a bot in its Tools.`);
-    onClose();
+    if (result.signingIn) return onClose(); // the tab is leaving for the sign-in page
+    onAdded(result.serverId);
   }
 
   return (
@@ -60,7 +91,7 @@ function AddForm({ onClose }: { onClose: () => void }) {
     >
       <DialogHeader>
         <DialogTitle>Add MCP server</DialogTitle>
-        <DialogDescription>BotDesk connects to it now and lists its tools. Bots get them only when you turn the server on in their Tools.</DialogDescription>
+        <DialogDescription>BotDesk connects to it now and lists its tools. You review them next; bots get them only once you have, and the server is on in their Tools.</DialogDescription>
       </DialogHeader>
 
       <Field>
@@ -100,7 +131,7 @@ function AddForm({ onClose }: { onClose: () => void }) {
 
       <Alert>
         <TriangleAlert />
-        <AlertDescription>Every tool from this server starts by asking before acting (you can review each one&apos;s risk afterwards), and what it returns is treated as outside text: after it, risky actions always wait for approval.</AlertDescription>
+        <AlertDescription>Every tool from this server starts by asking before acting (you can change each one&apos;s risk in the review), and what it returns is treated as outside text: after it, risky actions always wait for approval.</AlertDescription>
       </Alert>
 
       {error && <p role="alert" className="text-sm text-destructive">{error}</p>}

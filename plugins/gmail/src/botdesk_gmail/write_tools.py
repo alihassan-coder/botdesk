@@ -27,7 +27,7 @@ import re
 from email.message import EmailMessage
 from typing import Any, Literal
 
-from botdesk_plugin_sdk import ToolContext, ToolResult, ToolSpec
+from botdesk_plugin_sdk import ToolContext, ToolResult, ToolSpec, describe_character, hidden_characters
 from pydantic import BaseModel, Field, field_validator, model_validator
 
 from botdesk_gmail import api
@@ -52,12 +52,26 @@ _MESSAGE_ID = re.compile(r"<[^<>\s]{1,250}>")
 
 def _addresses(values: list[str]) -> list[str]:
     for value in values:
-        if not _ADDRESS.fullmatch(value):
+        if not _ADDRESS.fullmatch(value):  # plain ASCII only: nothing invisible fits either
             raise ValueError(
                 f"{value!r} isn't a plain email address. Give one address per entry, like sara@acme.dev, "
                 "without a name or anything else."
             )
     return values
+
+
+def shows_as_written(value: str, *, what: str, layout: bool = False) -> str:
+    """`value`, or a refusal when it holds a character that doesn't show (a zero-width space, a
+    hidden "tag" letter) or reorders the text around it (a right-to-left override): the approval
+    card would read differently from what is sent. Emoji and scripts that need joiners are fine.
+    `layout`: line breaks and tabs are allowed (a body)."""
+    if hidden := hidden_characters(value, layout=layout):
+        raise ValueError(
+            f"The {what} has a character that doesn't show on the approval card "
+            f"({describe_character(value[hidden[0]])}). Remove it: hidden characters could make the card "
+            "read differently from what is sent."
+        )
+    return value
 
 
 class LabelArgs(BaseModel):
@@ -109,7 +123,7 @@ class Recipients(BaseModel):
     def _one_line(cls, value: str) -> str:
         if _CONTROL.search(value):
             raise ValueError("The subject must be one line, without line breaks or control characters.")
-        return value
+        return shows_as_written(value, what="subject")
 
     @model_validator(mode="after")
     def _not_too_many(self) -> "Recipients":
@@ -133,6 +147,11 @@ class MailArgs(Recipients):
         pattern=ID_PATTERN,
         description="To reply in a thread: its threadId. The reply answers the thread's newest message.",
     )
+
+    @field_validator("body")
+    @classmethod
+    def _visible(cls, value: str) -> str:
+        return shows_as_written(value, what="body", layout=True)
 
 
 def _account(ctx: ToolContext) -> str | None:
@@ -258,16 +277,19 @@ def recipients_line(args: Recipients) -> str:
     return ", ".join(args.to) + (f" ({'; '.join(copies)})" if copies else "")
 
 
+def body_preview(text: str) -> str:
+    """The start of a body on one line, for a card's summary (the card shows all of it below)."""
+    body = " ".join(text.split())
+    return body if len(body) <= PREVIEW else body[:PREVIEW].rstrip() + "…"
+
+
 def _mail_summary(draft: bool) -> Any:
     def summarize(args: MailArgs) -> str:
         if args.reply_to_thread_id:
             action = f"{'Draft a reply' if draft else 'Reply'} in email thread {args.reply_to_thread_id} to"
         else:
             action = f"{'Draft' if draft else 'Send'} an email to"
-        recipients = recipients_line(args)
-        body = " ".join(args.body.split())
-        preview = body if len(body) <= PREVIEW else body[:PREVIEW].rstrip() + "…"
-        return f"{action} {recipients}: “{args.subject}”: {preview}"
+        return f"{action} {recipients_line(args)}: “{args.subject}”: {body_preview(args.body)}"
 
     return summarize
 

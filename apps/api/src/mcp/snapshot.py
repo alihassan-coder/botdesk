@@ -89,6 +89,8 @@ def snapshot_hash(entries: list[dict[str, Any]]) -> str:
 REVIEW_RISKS = ("read", "write-internal", "write-external", "external-send", "destructive")
 DEFAULT_RISK = "external-send"
 _DEFINITION = ("title", "description", "inputSchema", "outputSchema")
+# A tool no admin has approved yet: off, at the default risk, until the review.
+_WAITING: dict[str, Any] = {"state": "pending", "enabled": False, "risk": DEFAULT_RISK, "approvedHash": None}
 
 
 def normalized(entry: dict[str, Any]) -> dict[str, Any]:
@@ -111,19 +113,18 @@ def offered(entry: dict[str, Any]) -> bool:
 
 def review_diff(old: list[dict[str, Any]], fresh: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """The snapshot to store after listing the tools again (`fresh`, from `snapshot`), given the
-    one stored (`old`). The first snapshot is approved and offered as it is. After that:
+    one stored (`old`). The first snapshot is all `pending`: nothing is offered to a bot before an
+    admin's review (ADR 0012 §4). After that:
 
     - unchanged: kept as the admin left it (on or off, its risk);
     - **changed** (hash differs from the approved one): not offered; `previous` keeps what was approved;
-    - **new**: `pending`, off, until an admin approves it;
+    - **new** (or never approved yet): `pending`, off, until an admin approves it;
     - **removed**: kept as `removed` to show in the diff (a tool never approved is just dropped).
+      If it comes back as it was approved, it is approved again; changed, it waits like any change.
 
     A tool's local name never changes across refreshes (bindings and approvals name it)."""
     if not old:
-        return [
-            {**entry, "state": "approved", "enabled": True, "risk": DEFAULT_RISK, "approvedHash": entry["hash"]}
-            for entry in fresh
-        ]
+        return [{**entry, **_WAITING} for entry in fresh]
     before = {entry["name"]: normalized(entry) for entry in old}
     taken = {entry["localName"] for entry in before.values()}
     result: list[dict[str, Any]] = []
@@ -132,16 +133,7 @@ def review_diff(old: list[dict[str, Any]], fresh: list[dict[str, Any]]) -> list[
         if known is None:
             name = local_name(entry["name"], taken)
             taken.add(name)
-            result.append(
-                {
-                    **entry,
-                    "localName": name,
-                    "state": "pending",
-                    "enabled": False,
-                    "risk": DEFAULT_RISK,
-                    "approvedHash": None,
-                }
-            )
+            result.append({**entry, "localName": name, **_WAITING})
             continue
         merged = {**entry, "localName": known["localName"], "enabled": known["enabled"], "risk": known["risk"]}
         merged["approvedHash"] = known["approvedHash"]
@@ -154,8 +146,8 @@ def review_diff(old: list[dict[str, Any]], fresh: list[dict[str, Any]]) -> list[
             merged["previous"] = known.get("previous") or {key: known.get(key) for key in _DEFINITION}
         result.append(merged)
     for gone in before.values():  # no longer listed by the server
-        if gone["approvedHash"] is not None:
-            result.append({**{k: v for k, v in gone.items() if k != "previous"}, "state": "removed"})
+        if gone["approvedHash"] is not None:  # `previous` stays: what was approved, should it come back
+            result.append({**gone, "state": "removed"})
     return result
 
 

@@ -3,6 +3,7 @@ credential added by BotDesk and never visible to the tool, no redirects, no priv
 capped size and time. No network: httpx.MockTransport, or httpcore's mock backend under the guard."""
 
 import asyncio
+import contextlib
 import logging
 from collections.abc import Callable
 
@@ -162,3 +163,94 @@ async def test_a_plugin_without_auth_calls_its_hosts_with_no_credential() -> Non
     await http.request("GET", f"https://{HOST}/public", params={"q": "x"})
     assert "authorization" not in seen[0].headers
     assert seen[0].url.params["q"] == "x"
+
+
+# What a failed call may have changed (ADR 0004 §2): the tool pipeline asks before it says "failed".
+
+
+def answering(status: int) -> Callable[[httpx.Request], httpx.Response]:
+    return lambda _request: httpx.Response(status, json={})
+
+
+def raising(error: type[httpx.TransportError]) -> Callable[[httpx.Request], httpx.Response]:
+    def handler(request: httpx.Request) -> httpx.Response:
+        raise error("the network", request=request)
+
+    return handler
+
+
+@pytest.mark.parametrize(
+    ("handler", "changed"),
+    [
+        (answering(200), True),
+        (answering(500), True),  # the service may have done it before failing
+        (answering(302), True),  # a redirect is an answer: it got there
+        (raising(httpx.ReadError), True),  # sent, then the connection dropped
+        (raising(httpx.ReadTimeout), True),
+        (raising(httpx.RemoteProtocolError), True),
+        (answering(400), False),  # refused
+        (answering(404), False),
+        (answering(429), False),
+        (raising(httpx.ConnectError), False),  # never left
+        (raising(httpx.ConnectTimeout), False),
+    ],
+)
+async def test_a_request_that_can_change_something_counts_until_it_certainly_had_no_effect(
+    handler: Callable[[httpx.Request], httpx.Response], changed: bool
+) -> None:
+    http, _ = http_for(handler)
+    with contextlib.suppress(HttpError):
+        await http.request("POST", f"https://{HOST}/v1/send", json={"to": "sara@acme.dev"})
+    assert http.may_have_changed_something is changed
+
+
+async def test_reads_never_count_and_a_refusal_after_a_send_does_not_undo_it() -> None:
+    reads, _ = http_for(answering(500))
+    for method in ("GET", "HEAD", "OPTIONS"):
+        await reads.request(method, f"https://{HOST}/v1/items")
+    assert not reads.may_have_changed_something
+
+    answers = iter([httpx.Response(200, json={}), httpx.Response(400, json={})])
+    both, _ = http_for(lambda _request: next(answers))
+    await both.request("POST", f"https://{HOST}/v1/send")
+    await both.request("POST", f"https://{HOST}/v1/label")  # refused; the first one went through
+    assert both.may_have_changed_something
+
+
+async def test_refusals_before_sending_and_unbuildable_requests_never_count() -> None:
+    unavailable = CredentialUnavailable("Reconnect it.")
+
+    def broken() -> Credential:
+        raise unavailable
+
+    for http, url, body in (
+        (http_for(ok)[0], "https://evil.example/send", None),  # host not allowed
+        (http_for(ok, opener=broken)[0], f"https://{HOST}/send", None),  # no credential
+        (http_for(ok)[0], f"https://{HOST}/send", {"when": object()}),  # not JSON
+    ):
+        with pytest.raises((HttpError, TypeError)):
+            await http.request("POST", url, json=body)
+        assert not http.may_have_changed_something
+
+
+async def test_requests_sent_at_once_are_counted_one_by_one() -> None:
+    """Two sends in parallel (asyncio.gather): one refused must not hide the other that may have gone."""
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/v1/refused":
+            await asyncio.sleep(0.01)  # both are in flight when this one is refused
+            return httpx.Response(400, json={})
+        await asyncio.sleep(0.05)  # answers after the refusal
+        if request.url.path == "/v1/lost":
+            raise httpx.ReadError("the connection dropped", request=request)
+        return httpx.Response(429, json={})
+
+    for second, changed in (("/v1/lost", True), ("/v1/limited", False)):
+        client = guarded_client(5, httpx.MockTransport(handler))
+        http = AuthorisedHttp(client=client, egress=(HOST,), credential=credential)
+        await asyncio.gather(
+            http.request("POST", f"https://{HOST}/v1/refused"),
+            http.request("POST", f"https://{HOST}{second}"),
+            return_exceptions=True,
+        )
+        assert http.may_have_changed_something is changed, second

@@ -80,10 +80,12 @@ Bot at **Ask before acting**. From your second address, send the test account an
    - [ ] The bot sees your new text, not the quoted copy below "On … wrote:".
 4. "Send <your second address> an email with subject Formatting test, as markdown: a heading, a bullet list and a **bold** word, plus the text <b>not bold</b>."
    - [ ] The card shows the body as written. Approve → in the mail app the heading, list and bold word are formatted, and `<b>not bold</b>` shows as text.
-5. "Draft an email to <your second address> with subject Draft test." Approve the draft. Then "List my drafts and send the Draft test one."
-   - [ ] `gmail.list_drafts` runs without asking; the send card reads "Send draft r-… to <your second address>: “Draft test”". Approve → it arrives once and leaves Drafts.
+5. "Draft an email to <your second address> with subject Draft test, saying the review moved to Friday." Approve the draft. Then "List my drafts and send the Draft test one."
+   - [ ] `gmail.list_drafts` runs without asking; the send card reads "Send draft r-… to <your second address>: “Draft test”: …the review moved to Friday…" and its Body field shows the draft's whole text. Approve → it arrives once, with that text, and leaves Drafts.
 6. In Gmail, open another draft and change its recipient. Ask the bot to send it with the old recipient (from an earlier `list_drafts`).
    - [ ] Approving sends nothing: the bot reports the draft doesn't match what the card showed.
+7. Ask the bot to list your drafts and send one. Before approving, edit that draft's text in Gmail (add a sentence) and wait for Gmail to save it. Then approve.
+   - [ ] Nothing is sent: the bot reports the draft's text isn't the one the approval showed. The same if you attach a file to it instead.
 
 ## If something's off
 

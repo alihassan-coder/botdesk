@@ -1,0 +1,120 @@
+{
+  "id": "r-5512",
+  "message": {
+    "id": "18f0d1",
+    "threadId": "18f0d0",
+    "labelIds": [
+      "DRAFT"
+    ],
+    "snippet": "Hi Sara, Thursday at 3 PM works. The agenda is attached. Ali",
+    "payload": {
+      "partId": "",
+      "mimeType": "multipart/mixed",
+      "filename": "",
+      "headers": [
+        {
+          "name": "MIME-Version",
+          "value": "1.0"
+        },
+        {
+          "name": "From",
+          "value": "ali@acme.dev"
+        },
+        {
+          "name": "To",
+          "value": "Sara Lee <Sara@Acme.dev>"
+        },
+        {
+          "name": "Cc",
+          "value": "omar@acme.dev"
+        },
+        {
+          "name": "Bcc",
+          "value": "boss@acme.dev"
+        },
+        {
+          "name": "Subject",
+          "value": "Launch review"
+        },
+        {
+          "name": "Date",
+          "value": "Tue, 17 Nov 2026 10:02:00 +0000"
+        },
+        {
+          "name": "Content-Type",
+          "value": "multipart/mixed; boundary=\"000000000000a1\""
+        }
+      ],
+      "body": {
+        "size": 0
+      },
+      "parts": [
+        {
+          "partId": "0",
+          "mimeType": "multipart/alternative",
+          "filename": "",
+          "headers": [
+            {
+              "name": "Content-Type",
+              "value": "multipart/alternative; boundary=\"000000000000a0\""
+            }
+          ],
+          "body": {
+            "size": 0
+          },
+          "parts": [
+            {
+              "partId": "0.0",
+              "mimeType": "text/plain",
+              "filename": "",
+              "headers": [
+                {
+                  "name": "Content-Type",
+                  "value": "text/plain; charset=\"UTF-8\""
+                }
+              ],
+              "body": {
+                "size": 68,
+                "data": "SGkgU2FyYSwNCg0KVGh1cnNkYXkgYXQgMyBQTSB3b3Jrcy4gVGhlIGFnZW5kYSBpcyBhdHRhY2hlZC4NCg0KQWxpDQo"
+              }
+            },
+            {
+              "partId": "0.1",
+              "mimeType": "text/html",
+              "filename": "",
+              "headers": [
+                {
+                  "name": "Content-Type",
+                  "value": "text/html; charset=\"UTF-8\""
+                }
+              ],
+              "body": {
+                "size": 121,
+                "data": "PGRpdj5IaSBTYXJhLDwvZGl2PjxkaXY-PGJyPjwvZGl2PjxkaXY-VGh1cnNkYXkgYXQgMyBQTSB3b3Jrcy4gVGhlIGFnZW5kYSBpcyBhdHRhY2hlZC48L2Rpdj48ZGl2Pjxicj48L2Rpdj48ZGl2PkFsaTwvZGl2Pg"
+              }
+            }
+          ]
+        },
+        {
+          "partId": "1",
+          "mimeType": "application/pdf",
+          "filename": "agenda.pdf",
+          "headers": [
+            {
+              "name": "Content-Type",
+              "value": "application/pdf; name=\"agenda.pdf\""
+            },
+            {
+              "name": "Content-Disposition",
+              "value": "attachment; filename=\"agenda.pdf\""
+            }
+          ],
+          "body": {
+            "attachmentId": "ANGjdJ8-agenda",
+            "size": 48213
+          }
+        }
+      ]
+    }
+  }
+}

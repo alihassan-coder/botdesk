@@ -2,9 +2,11 @@
 
     challenge = parse_challenge(www_authenticate)                 # from the server's 401
     found = await discover(http, server_url, challenge, guard)    # PRM (RFC 9728) → AS metadata (RFC 8414)
-    client = await register(http, found, redirect_uri, guard)     # dynamic registration, when no client id
+    client = await register(http, found, redirect_uri, guard)     # dynamic registration (the fallback)
+    document = client_metadata_document(client_id, redirect_uri)  # or a Client ID Metadata Document
     url = authorize_url(found, client_id, redirect_uri, state=…, challenge=…)
     response = await token_request(http, found, client, form, guard)   # code or refresh_token grant
+    await revoke(http, found, client_id, secret, token, guard)    # RFC 7009, best effort
 
 - **Discovery**: the 401's `resource_metadata` (else the well-known Protected Resource Metadata
   addresses, path first) names the authorization server; its metadata is read from the RFC 8414 /
@@ -12,16 +14,23 @@
   it must offer PKCE S256. The metadata's `resource` must be the server's own origin and a prefix
   of its path: that's the `resource` (RFC 8707) sent with every authorization and token request.
   A server with no PRM (the 2025-03-26 spec) gets its origin as the authorization server.
+- **Client registration**, in the MCP spec's order: a client the admin pasted; a **Client ID
+  Metadata Document** (the client id is an https address the API serves, when the authorization
+  server says it reads them and the API's own address is public https); else dynamic registration
+  (RFC 7591), the fallback the spec keeps for older servers.
 - **Every address is guarded** (`guard`): https only (unless the network allows http: tests), no
   user info, and every address the host resolves to must be public unless ALLOW_PRIVATE_MCP_URLS.
   The HTTP client underneath is the SSRF guard's transport (the IP checked is the IP connected
-  to) and never follows redirects.
+  to) and never follows redirects. Every answer is read with a size cap (`MAX_METADATA_BYTES`).
+- **Scopes** from the server (its metadata, a 401 or 403 challenge) are kept only when they are
+  RFC 6749 scope tokens, at most `MAX_SCOPES` of them.
 - **Errors** are `McpSignInError` with a sentence people can act on; never the server's own words.
 """
 
 import base64
+import ipaddress
 import re
-from collections.abc import Awaitable, Callable, Mapping
+from collections.abc import Awaitable, Callable, Iterable, Mapping
 from dataclasses import dataclass
 from typing import Any
 from urllib.parse import quote, urlencode, urlsplit
@@ -30,8 +39,11 @@ import httpx
 
 from src.core.errors import BadRequest
 
-MAX_METADATA_BYTES = 256 * 1024
+MAX_METADATA_BYTES = 256 * 1024  # any answer from a sign-in address: metadata, registration, tokens
+MAX_SCOPES = 30
+CLIENT_NAME = "BotDesk"
 Guard = Callable[[str], Awaitable[str]]  # an address → the same address, or McpSignInError
+_SCOPE = re.compile(r"^[\x21\x23-\x5b\x5d-\x7e]{1,200}$")  # RFC 6749 §3.3 scope-token: no space, " or \
 
 
 class McpSignInError(BadRequest):
@@ -62,6 +74,29 @@ def parse_challenge(header: str | None) -> Challenge:
     )
 
 
+def safe_scopes(scopes: Iterable[object]) -> list[str]:
+    """The scope tokens among `scopes`, in order, each once, at most `MAX_SCOPES`. A server's
+    scopes go into the sign-in address and onto the Reconnect screen: nothing else gets through."""
+    kept: list[str] = []
+    for scope in scopes:
+        if isinstance(scope, str) and _SCOPE.match(scope) and scope not in kept:
+            kept.append(scope)
+    return kept[:MAX_SCOPES]
+
+
+def is_public_https(url: str) -> bool:
+    """Is this our own address as the world sees it (https, a real host name or a public IP)?
+    A Client ID Metadata Document is only any use when the authorization server can fetch it."""
+    parts = urlsplit(url.strip())
+    host = (parts.hostname or "").lower()
+    if parts.scheme != "https" or not host or host == "localhost" or host.endswith((".localhost", ".local", ".test")):
+        return False
+    try:
+        return ipaddress.ip_address(host).is_global
+    except ValueError:
+        return "." in host  # a name; the authorization server resolves it, not us
+
+
 def _origin(url: str) -> str:
     parts = urlsplit(url)
     return f"{parts.scheme}://{parts.netloc}"
@@ -71,10 +106,31 @@ def _path(url: str) -> str:
     return urlsplit(url).path.rstrip("/")
 
 
+async def _send(http: httpx.AsyncClient, method: str, url: str, **kwargs: Any) -> httpx.Response:
+    """One request to a sign-in address, its answer read up to `MAX_METADATA_BYTES` (a server
+    can't make BotDesk hold an endless body in memory). The answer comes back already read."""
+    request = http.build_request(method, url, **kwargs)
+    response = await http.send(request, stream=True)
+    try:
+        body = bytearray()
+        async for chunk in response.aiter_bytes():
+            body.extend(chunk)
+            if len(body) > MAX_METADATA_BYTES:
+                raise McpSignInError("This MCP server's sign-in answered with far more data than expected.")
+    finally:
+        await response.aclose()
+    # The body is decoded already: drop the headers that describe the encoded one.
+    headers = [(k, v) for k, v in response.headers.multi_items() if k.lower() not in _BODY_HEADERS]
+    return httpx.Response(response.status_code, headers=headers, content=bytes(body), request=request)
+
+
+_BODY_HEADERS = {"content-encoding", "content-length", "transfer-encoding"}
+
+
 async def _get_json(http: httpx.AsyncClient, url: str, guard: Guard) -> dict[str, Any] | None:
     """A metadata document, or None when there isn't one at `url` (any non-200, or not JSON)."""
-    response = await http.get(await guard(url), headers={"Accept": "application/json"})
-    if response.status_code != 200 or len(response.content) > MAX_METADATA_BYTES:
+    response = await _send(http, "GET", await guard(url), headers={"Accept": "application/json"})
+    if response.status_code != 200:
         return None
     try:
         body = response.json()
@@ -89,8 +145,9 @@ def _str(value: object) -> str | None:
 
 async def discover(http: httpx.AsyncClient, server_url: str, challenge: Challenge, guard: Guard) -> dict[str, Any]:
     """What signing in to `server_url` needs, as stored in `mcp_servers.oauth` (no secrets):
-    `issuer`, `authorizationEndpoint`, `tokenEndpoint`, `registrationEndpoint`, `resource`,
-    `scopes`, `issParameter` (RFC 9207 `iss` required) and the token endpoint's auth methods."""
+    `issuer`, `authorizationEndpoint`, `tokenEndpoint`, `registrationEndpoint`,
+    `revocationEndpoint`, `resource`, `scopes`, `issParameter` (RFC 9207 `iss` required),
+    `metadataDocuments` (it reads Client ID Metadata Documents) and the token endpoint's auth methods."""
     server_url = server_url.strip()
     origin, path = _origin(server_url), _path(server_url)
     candidates = [challenge.resource_metadata] if challenge.resource_metadata else []
@@ -111,22 +168,25 @@ async def discover(http: httpx.AsyncClient, server_url: str, challenge: Challeng
         if _origin(resource) != origin or not (path + "/").startswith(_path(resource) + "/"):
             raise McpSignInError("This MCP server's sign-in details are for another address.")
         supported = prm.get("scopes_supported")
-        scopes = [s for s in supported if isinstance(s, str)] if isinstance(supported, list) else []
+        scopes = safe_scopes(supported) if isinstance(supported, list) else []
     else:  # the 2025-03-26 spec: the server's origin is its own authorization server
         issuer, resource, scopes = origin, server_url, []
     if challenge.scope:
-        scopes = challenge.scope.split()
+        scopes = safe_scopes(challenge.scope.split())
 
     metadata = await _authorization_server(http, issuer.rstrip("/"), guard)
     methods = metadata.get("token_endpoint_auth_methods_supported")
+    revocation = _str(metadata.get("revocation_endpoint"))
     return {
         "issuer": issuer.rstrip("/"),
         "authorizationEndpoint": await guard(str(metadata["authorization_endpoint"])),
         "tokenEndpoint": await guard(str(metadata["token_endpoint"])),
         "registrationEndpoint": _str(metadata.get("registration_endpoint")),
+        "revocationEndpoint": await guard(revocation) if revocation else None,
         "resource": resource,
         "scopes": scopes,
         "issParameter": metadata.get("authorization_response_iss_parameter_supported") is True,
+        "metadataDocuments": metadata.get("client_id_metadata_document_supported") is True,
         "tokenAuthMethods": [m for m in methods if isinstance(m, str)] if isinstance(methods, list) else [],
     }
 
@@ -155,6 +215,23 @@ async def _authorization_server(http: httpx.AsyncClient, issuer: str, guard: Gua
     raise McpSignInError("Couldn't find this MCP server's authorization server.")
 
 
+def _client_fields(redirect_uri: str) -> dict[str, Any]:
+    """BotDesk as a public client using PKCE: what registration and the metadata document say."""
+    return {
+        "client_name": CLIENT_NAME,
+        "redirect_uris": [redirect_uri],
+        "grant_types": ["authorization_code", "refresh_token"],
+        "response_types": ["code"],
+        "token_endpoint_auth_method": "none",
+    }
+
+
+def client_metadata_document(client_id: str, redirect_uri: str) -> dict[str, Any]:
+    """The Client ID Metadata Document served at `client_id` (an https address of the API): the
+    authorization server fetches it instead of a registration. Nothing in it is secret."""
+    return {"client_id": client_id, **_client_fields(redirect_uri)}
+
+
 async def register(
     http: httpx.AsyncClient, found: Mapping[str, Any], redirect_uri: str, guard: Guard
 ) -> tuple[str, str | None]:
@@ -166,16 +243,10 @@ async def register(
             "This MCP server doesn't let BotDesk register itself. Create an OAuth client in its "
             "settings and paste the client ID (and secret) here."
         )
-    body = {
-        "client_name": "BotDesk",
-        "redirect_uris": [redirect_uri],
-        "grant_types": ["authorization_code", "refresh_token"],
-        "response_types": ["code"],
-        "token_endpoint_auth_method": "none",
-    }
+    body = _client_fields(redirect_uri)
     if found.get("scopes"):
         body["scope"] = " ".join(found["scopes"])
-    response = await http.post(await guard(str(endpoint)), json=body, headers={"Accept": "application/json"})
+    response = await _send(http, "POST", await guard(str(endpoint)), json=body, headers={"Accept": "application/json"})
     try:
         answer = response.json() if response.status_code in (200, 201) else None
     except ValueError:
@@ -204,6 +275,23 @@ def authorize_url(
     return f"{endpoint}{'&' if '?' in endpoint else '?'}{urlencode(params)}"
 
 
+def _client_auth(
+    found: Mapping[str, Any], client_id: str, client_secret: str | None, data: dict[str, str]
+) -> dict[str, str]:
+    """Add the client to a token or revocation request: its id in the form, and its secret (when
+    there is one) in a Basic header if the server doesn't take it in the form. Returns the headers."""
+    headers = {"Accept": "application/json"}
+    data["client_id"] = client_id
+    if client_secret:
+        methods = found.get("tokenAuthMethods") or []
+        if methods and "client_secret_post" not in methods and "client_secret_basic" in methods:
+            pair = f"{quote(client_id, safe='')}:{quote(client_secret, safe='')}".encode()  # RFC 6749 §2.3.1
+            headers["Authorization"] = "Basic " + base64.b64encode(pair).decode()
+        else:
+            data["client_secret"] = client_secret
+    return headers
+
+
 async def token_request(
     http: httpx.AsyncClient,
     found: Mapping[str, Any],
@@ -212,15 +300,28 @@ async def token_request(
     form: Mapping[str, str],
     guard: Guard,
 ) -> httpx.Response:
-    """POST the token endpoint with `form` plus the client and the `resource`. A client secret
-    goes in a Basic header when the server doesn't take it in the form."""
-    data = {**form, "client_id": client_id, "resource": str(found["resource"])}
-    headers = {"Accept": "application/json"}
-    if client_secret:
-        methods = found.get("tokenAuthMethods") or []
-        if methods and "client_secret_post" not in methods and "client_secret_basic" in methods:
-            pair = f"{quote(client_id, safe='')}:{quote(client_secret, safe='')}".encode()  # RFC 6749 §2.3.1
-            headers["Authorization"] = "Basic " + base64.b64encode(pair).decode()
-        else:
-            data["client_secret"] = client_secret
-    return await http.post(await guard(str(found["tokenEndpoint"])), data=data, headers=headers)
+    """POST the token endpoint with `form` plus the client and the `resource`."""
+    data = {**form, "resource": str(found["resource"])}
+    headers = _client_auth(found, client_id, client_secret, data)
+    return await _send(http, "POST", await guard(str(found["tokenEndpoint"])), data=data, headers=headers)
+
+
+async def revoke(
+    http: httpx.AsyncClient,
+    found: Mapping[str, Any],
+    client_id: str,
+    client_secret: str | None,
+    token: str,
+    guard: Guard,
+    *,
+    hint: str = "refresh_token",
+) -> bool:
+    """Ask the authorization server to forget `token` (RFC 7009). False when it has no
+    revocation endpoint or didn't say yes; the caller treats this as best effort."""
+    endpoint = found.get("revocationEndpoint")
+    if not endpoint:
+        return False
+    data = {"token": token, "token_type_hint": hint}
+    headers = _client_auth(found, client_id, client_secret, data)
+    response = await _send(http, "POST", await guard(str(endpoint)), data=data, headers=headers)
+    return response.status_code == 200

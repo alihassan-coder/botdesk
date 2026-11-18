@@ -28,15 +28,16 @@ from mcp.server.transport_security import TransportSecuritySettings
 from sqlalchemy import select, update
 from starlette.types import ASGIApp, Receive, Scope, Send
 
+from src.core.config import Settings
 from src.core.database import utcnow
 from src.mcp.client import McpNetwork
-from src.mcp.oauth import McpSignInError, parse_challenge
+from src.mcp.oauth import McpSignInError, is_public_https, parse_challenge, safe_scopes
 from src.models import Connection, McpServer, Membership
 from src.runtime.runner import RunManager
 from src.services.mcp_server_service import McpRuntime
 from tests.test_mcp_client import _free_port
-from tests.test_mcp_servers import _bind_and_ask, _call
-from tests.test_oauth import Team, acme
+from tests.test_mcp_servers import _bind_and_ask, _call, approve_all
+from tests.test_oauth import GOOGLE_SETTINGS, Team, acme
 
 ISSUER = "https://auth.example"
 SECRET_MARK = "zq9tok"  # every token and client secret here contains it: none may leak
@@ -49,6 +50,7 @@ SECRET_MARK = "zq9tok"  # every token and client secret here contains it: none m
 class Guarded:
     port: int
     accepted: set[str] = field(default_factory=set)
+    narrow: set[str] = field(default_factory=set)  # accepted tokens the server says need more scopes
     seen: list[str] = field(default_factory=list)  # Authorization headers that reached it
 
     @property
@@ -80,6 +82,17 @@ def guarded() -> Iterator[Guarded]:
                 headers = {k.decode().lower(): v.decode() for k, v in scope["headers"]}
                 auth = headers.get("authorization", "")
                 state.seen.append(auth)
+                if auth.removeprefix("Bearer ") in state.narrow:  # MCP step-up authorization
+                    challenge = 'Bearer error="insufficient_scope", scope="tracker.read tracker.write"'
+                    await send(
+                        {
+                            "type": "http.response.start",
+                            "status": 403,
+                            "headers": [(b"www-authenticate", challenge.encode())],
+                        }
+                    )
+                    await send({"type": "http.response.body", "body": b""})
+                    return
                 if auth.removeprefix("Bearer ") not in state.accepted:
                     challenge = (
                         f'Bearer resource_metadata="{state.origin}/.well-known/oauth-protected-resource/mcp", '
@@ -123,6 +136,9 @@ class FakeAuthServer:
     refresh_tokens: set[str] = field(default_factory=set)
     refuse_refresh: bool = False
     issued: int = 0
+    metadata_documents: bool = False  # it says it reads Client ID Metadata Documents
+    revocation: bool = True  # it has an RFC 7009 revocation endpoint
+    revoked: list[dict[str, str]] = field(default_factory=list)
 
     def sign_in(self, authorize_url: str) -> tuple[str, str]:
         """The person signs in on the authorization server's page: (state, code) come back."""
@@ -143,17 +159,22 @@ class FakeAuthServer:
                 },
             )
         if url == f"{ISSUER}/.well-known/oauth-authorization-server":
-            return httpx.Response(
-                200,
-                json={
-                    "issuer": ISSUER,
-                    "authorization_endpoint": f"{ISSUER}/authorize",
-                    "token_endpoint": f"{ISSUER}/token",
-                    "registration_endpoint": f"{ISSUER}/register",
-                    "code_challenge_methods_supported": ["S256"],
-                    "authorization_response_iss_parameter_supported": True,
-                },
-            )
+            metadata: dict[str, Any] = {
+                "issuer": ISSUER,
+                "authorization_endpoint": f"{ISSUER}/authorize",
+                "token_endpoint": f"{ISSUER}/token",
+                "registration_endpoint": f"{ISSUER}/register",
+                "code_challenge_methods_supported": ["S256"],
+                "authorization_response_iss_parameter_supported": True,
+            }
+            if self.metadata_documents:
+                metadata["client_id_metadata_document_supported"] = True
+            if self.revocation:
+                metadata["revocation_endpoint"] = f"{ISSUER}/revoke"
+            return httpx.Response(200, json=metadata)
+        if url == f"{ISSUER}/revoke":
+            self.revoked.append({k: v[0] for k, v in parse_qs(request.content.decode()).items()})
+            return httpx.Response(200)
         if url == f"{ISSUER}/register":
             self.registrations.append(json.loads(request.content))
             return httpx.Response(201, json={"client_id": "dyn-client"})
@@ -190,10 +211,13 @@ TEST_NETWORK = McpNetwork(allow_private=True, allow_http=True, resolve=_anywhere
 
 
 @asynccontextmanager
-async def acme_with_sign_in(guarded: Guarded) -> AsyncIterator[tuple[Team, FakeAuthServer]]:
+async def acme_with_sign_in(
+    guarded: Guarded, settings: Settings = GOOGLE_SETTINGS, **fake_options: Any
+) -> AsyncIterator[tuple[Team, FakeAuthServer]]:
     guarded.accepted.clear()
-    fake = FakeAuthServer(mcp=guarded)
-    async with acme() as team:
+    guarded.narrow.clear()
+    fake = FakeAuthServer(mcp=guarded, **fake_options)
+    async with acme(settings) as team:
         runs: RunManager = team.app.state.runs
         runs.mcp = replace(runs.mcp, network=TEST_NETWORK, oauth_transport=httpx.MockTransport(fake.handle))
         yield team, fake
@@ -214,7 +238,7 @@ async def _signed_in(team: Team, fake: FakeAuthServer, guarded: Guarded, **body:
         "connector": added.json()["pluginId"],
     }
     (server,) = (await team.client.get(f"{team.org}/mcp-servers")).json()
-    return cast(dict[str, Any], server)
+    return await approve_all(team, server)  # the callback page leads to Review tools
 
 
 # Adding and signing in
@@ -395,6 +419,159 @@ async def test_a_callback_with_a_missing_or_other_issuer_fails(guarded: Guarded)
         assert fake.token_forms == []
 
 
+# Client registration: a Client ID Metadata Document when it can be used
+
+
+PUBLIC_SETTINGS = GOOGLE_SETTINGS.model_copy(update={"api_public_url": "https://botdesk.example"})
+
+
+async def test_a_metadata_document_is_the_client_when_the_server_reads_them_and_the_api_is_public(
+    guarded: Guarded,
+) -> None:
+    async with acme_with_sign_in(guarded, PUBLIC_SETTINGS, metadata_documents=True) as (team, fake):
+        added = (await team.client.post(f"{team.org}/mcp-servers", json={"name": "Tracker", "url": guarded.url})).json()
+
+        document_url = f"https://botdesk.example/api/v1/oauth/client-metadata/{added['id']}.json"
+        query = {k: v[0] for k, v in parse_qs(urlsplit(added["authorizeUrl"]).query).items()}
+        assert query["client_id"] == document_url and fake.registrations == []
+        team.client.cookies.clear()  # the authorization server fetches it: no session
+        served = await team.client.get(urlsplit(document_url).path)
+        assert served.status_code == 200, served.text
+        assert served.json() == {
+            "client_id": document_url,
+            "client_name": "BotDesk",
+            "redirect_uris": ["https://botdesk.example/api/v1/oauth/callback"],
+            "grant_types": ["authorization_code", "refresh_token"],
+            "response_types": ["code"],
+            "token_endpoint_auth_method": "none",
+        }
+        await team.sign_in("ali@acme.dev")
+        state, code = fake.sign_in(added["authorizeUrl"])
+        assert (await _callback(team, state=state, code=code, iss=ISSUER))["result"] == "connected"
+        assert fake.token_forms[0]["client_id"] == document_url and "client_secret" not in fake.token_forms[0]
+
+
+async def test_no_metadata_document_for_a_local_api_or_a_server_that_registered(guarded: Guarded) -> None:
+    async with acme_with_sign_in(guarded, metadata_documents=True) as (team, fake):  # API on http://localhost
+        added = (await team.client.post(f"{team.org}/mcp-servers", json={"name": "Tracker", "url": guarded.url})).json()
+
+        assert len(fake.registrations) == 1  # registered dynamically: nobody could fetch a localhost document
+        for name in (f"{added['id']}.json", f"{uuid.uuid4()}.json", "nonsense.json", str(added["id"])):
+            refused = await team.client.get(f"/api/v1/oauth/client-metadata/{name}")
+            assert refused.status_code == 404, name
+
+
+@pytest.mark.parametrize(
+    ("url", "public"),
+    [
+        ("https://botdesk.example", True),
+        ("https://botdesk.example:8443/base", True),
+        ("http://botdesk.example", False),
+        ("https://localhost:8000", False),
+        ("https://api.localhost", False),
+        ("https://10.0.0.4", False),
+        ("https://8.8.8.8", True),
+        ("https://intranet", False),
+    ],
+)
+def test_only_a_public_https_api_address_can_serve_a_metadata_document(url: str, public: bool) -> None:
+    assert is_public_https(url) is public
+
+
+# Revoking at the authorization server
+
+
+async def test_removing_a_server_revokes_its_sign_in_at_the_authorization_server(
+    guarded: Guarded, caplog: pytest.LogCaptureFixture
+) -> None:
+    caplog.set_level(logging.DEBUG)
+    async with acme_with_sign_in(guarded) as (team, fake):
+        server = await _signed_in(team, fake, guarded)
+
+        removed = await team.client.delete(f"{team.org}/mcp-servers/{server['id']}")
+
+        assert removed.status_code == 204, removed.text
+        assert fake.revoked == [
+            {"token": f"mcp-refresh-{SECRET_MARK}-1", "token_type_hint": "refresh_token", "client_id": "dyn-client"}
+        ]
+        async with team.app.state.sessionmaker() as db:
+            (connection,) = await db.scalars(select(Connection).where(Connection.connector_id == server["pluginId"]))
+        assert connection.status == "revoked" and connection.encrypted_secret is None
+        assert SECRET_MARK not in caplog.text
+
+
+async def test_disconnecting_the_sign_in_revokes_it_and_the_server_needs_signing_in(guarded: Guarded) -> None:
+    async with acme_with_sign_in(guarded) as (team, fake):
+        server = await _signed_in(team, fake, guarded)
+        plugin = server["pluginId"]
+        run = await _bind_and_ask(team, plugin)
+        listed = (await team.client.get(f"{team.org}/connections")).json()
+        (connection,) = [c for c in listed if c["connectorId"] == plugin]
+
+        assert (await team.client.delete(f"{team.org}/connections/{connection['id']}")).status_code == 204
+
+        assert [r["token"] for r in fake.revoked] == [f"mcp-refresh-{SECRET_MARK}-1"]
+        (after,) = (await team.client.get(f"{team.org}/mcp-servers")).json()
+        assert after["status"] == "needs_sign_in"
+        _, outcome = await _call(team, run, f"{plugin}__echo", {"text": "hi"}, level="autonomous")
+        assert "needs signing in again" in outcome.text
+
+
+async def test_a_server_without_a_revocation_endpoint_is_still_removed(guarded: Guarded) -> None:
+    async with acme_with_sign_in(guarded, revocation=False) as (team, fake):
+        server = await _signed_in(team, fake, guarded)
+
+        assert (await team.client.delete(f"{team.org}/mcp-servers/{server['id']}")).status_code == 204
+        assert fake.revoked == [] and (await team.client.get(f"{team.org}/mcp-servers")).json() == []
+
+
+# More access (403 insufficient_scope): not fixed inside the run
+
+
+async def test_a_call_that_needs_more_access_fails_and_reconnect_asks_for_the_extra_scopes(guarded: Guarded) -> None:
+    async with acme_with_sign_in(guarded) as (team, fake):
+        server = await _signed_in(team, fake, guarded)
+        plugin = server["pluginId"]
+        run = await _bind_and_ask(team, plugin)
+        guarded.narrow.add(f"mcp-access-{SECRET_MARK}-1")
+
+        _, outcome = await _call(team, run, f"{plugin}__echo", {"text": "hi"}, level="autonomous")
+
+        assert "needs more access" in outcome.text and "tracker.write" in outcome.text
+        (listed,) = (await team.client.get(f"{team.org}/mcp-servers")).json()
+        assert listed["status"] == "needs_reconnect" and "tracker.write" in listed["statusReason"]
+        reconnect = (await team.client.post(f"{team.org}/mcp-servers/{server['id']}/sign-in")).json()
+        query = {k: v[0] for k, v in parse_qs(urlsplit(reconnect["authorizeUrl"]).query).items()}
+        assert query["scope"] == "tracker.read tracker.write"
+        state, code = fake.sign_in(reconnect["authorizeUrl"])
+        assert (await _callback(team, state=state, code=code, iss=ISSUER))["result"] == "connected"
+        _, works = await _call(team, run, f"{plugin}__echo", {"text": "again"}, level="autonomous")
+        assert "echo: again" in works.text
+        assert "connection.needs_reconnect" in await team.actions()
+
+
+# The bot's Tools tab: the organization's sign-in is an org-owned account (ADR 0010 §3)
+
+
+async def test_only_owners_and_admins_switch_a_signed_in_server_on_for_a_bot(guarded: Guarded) -> None:
+    async with acme_with_sign_in(guarded) as (team, fake):
+        plugin = (await _signed_in(team, fake, guarded))["pluginId"]
+        await team.sign_in("sara@acme.dev")
+        tab = (await team.client.get(f"{team.org}/bots/{team.bot_id}/tools")).json()["plugins"]
+        entry = next(p for p in tab if p["pluginId"] == plugin)
+        assert entry["mcp"] == {"toolsWaiting": 0, "problem": None, "orgAccount": True}
+
+        change = {"plugins": [{"pluginId": plugin, "enabled": True, "connectionId": None}]}
+        refused = await team.client.put(f"{team.org}/bots/{team.bot_id}/tools", json=change)
+
+        assert refused.status_code == 403
+        assert refused.json()["detail"] == (
+            "Only owners and admins can switch Tracker on or off for a bot: it uses the organization's sign-in."
+        )
+        await team.sign_in("ali@acme.dev")
+        assert (await team.client.put(f"{team.org}/bots/{team.bot_id}/tools", json=change)).status_code == 200
+
+
 # Discovery and the SSRF guard, without a server
 
 
@@ -492,3 +669,23 @@ def test_the_challenge_is_read_from_www_authenticate() -> None:
     assert (challenge.scope, challenge.error) == ("a b", "invalid_token")
     assert parse_challenge('Basic realm="x"').resource_metadata is None
     assert parse_challenge(None).scope is None
+
+
+def test_only_scope_tokens_from_a_server_are_kept() -> None:
+    assert safe_scopes(["a", "b c", 'd"', "e\\", "", "a", 7, "x" * 201, "repo:read"]) == ["a", "repo:read"]
+    assert len(safe_scopes([f"s{i}" for i in range(100)])) == 30
+
+
+async def test_a_revocation_endpoint_on_a_private_network_is_refused() -> None:
+    with pytest.raises(McpSignInError, match="private network"):
+        await _discover(_serving(PRM, _metadata(revocation_endpoint="https://10.1.2.3/revoke")))
+
+
+async def test_an_endless_metadata_answer_is_cut_off() -> None:
+    def handle(request: httpx.Request) -> httpx.Response:
+        if "oauth-protected-resource" in request.url.path:
+            return httpx.Response(200, content=b"{" + b" " * (300 * 1024) + b"}")
+        return httpx.Response(404)
+
+    with pytest.raises(McpSignInError, match="far more data"):
+        await _discover(handle)

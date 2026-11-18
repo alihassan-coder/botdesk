@@ -14,6 +14,7 @@ from botdesk_plugin_sdk.auth import (
     OAuth2Auth,
     OwnerKind,
 )
+from botdesk_plugin_sdk.characters import describe_character, hidden_characters, show_hidden
 from botdesk_plugin_sdk.http import (
     HostNotAllowed,
     HttpClient,
@@ -65,7 +66,10 @@ __all__ = [
     "TriggerPoll",
     "TriggerPollResult",
     "TriggerSpec",
+    "describe_character",
+    "hidden_characters",
     "manifest_json",
     "manifest_problems",
+    "show_hidden",
     "validate_manifest",
 ]

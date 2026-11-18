@@ -9,8 +9,10 @@ import base64
 import email
 import email.policy
 import json
+import re
 import uuid
 from email.message import EmailMessage
+from html import unescape
 from pathlib import Path
 from typing import Any
 
@@ -208,6 +210,31 @@ def test_markdown_links_keep_underscores_and_stars_in_their_address() -> None:
     assert '<a href="https://x.example/_a_/b**c**">docs</a> and <em>after</em>' in html
 
 
+MARKUP_TRICKS = (
+    '[Your bank](https://evil.example/"onmouseover="steal) '  # break out of the href
+    "<img src=https://track.example/p.gif> "  # a tracking pixel
+    '<a href="https://evil.example">hidden link</a> '
+    '<span style="display:none">hidden</span> '
+    "&lt;b&gt;not bold&lt;/b&gt; &#x202E; "  # entities stay text, not characters
+    "[x](JAVASCRIPT:alert(1)) [y](data:text/html,hi) [z](//evil.example) [w](https://ok.example/a)"
+)
+
+
+def test_the_html_part_shows_nothing_the_approved_text_does_not() -> None:
+    html = markdown_to_html(MARKUP_TRICKS)
+
+    tags = set(re.findall(r"</?([a-z0-9]+)", html.split("<body>", 1)[1]))
+    assert tags <= {"body", "html", "p", "br", "a", "strong", "em", "code", "h1", "h2", "h3", "ul", "ol", "li"}
+    assert "<img" not in html and "<span" not in html and 'href="https://evil.example">' not in html
+    assert 'href="https://evil.example/&quot;onmouseover=&quot;steal"' in html  # one attribute, quotes as text
+    assert "&amp;lt;b&amp;gt;not bold" in html and "&amp;#x202E;" in html
+    # Only http(s) and mailto become links, and every link's address is written in the text the
+    # card showed, so nothing in the HTML points somewhere the person didn't see.
+    addresses = [unescape(href) for href in re.findall(r'href="([^"]*)"', html)]
+    assert addresses == ['https://evil.example/"onmouseover="steal', "https://ok.example/a"]
+    assert all(address in MARKUP_TRICKS for address in addresses)
+
+
 async def test_plain_is_the_default_and_a_markdown_draft_is_multipart_too() -> None:
     http = gmail()
     http.route("POST", f"{USERS_ME}/drafts", json=fixture("draft_created"))
@@ -272,6 +299,50 @@ async def test_at_most_20_recipients_in_all() -> None:
     many = {"to": [f"p{n}@acme.dev" for n in range(10)], "cc": [f"c{n}@acme.dev" for n in range(11)]}
     with pytest.raises(ValidationError, match="20"):
         await run(gmail(), "send", {**MAIL, **many})
+
+
+# Characters that don't show, or reorder the text around them, would make the approval card read
+# differently from what is sent (or carry hidden text past the person). Written as codes here.
+RTL_OVERRIDE, ZERO_WIDTH_SPACE, LINE_SEPARATOR, NEXT_LINE = chr(0x202E), chr(0x200B), chr(0x2028), chr(0x85)
+TAG_A, TAG_B = chr(0xE0041), chr(0xE0042)  # invisible letters a model can read
+ZWJ, ZWNJ, EMOJI_STYLE = chr(0x200D), chr(0x200C), chr(0xFE0F)
+
+
+@pytest.mark.parametrize(
+    "change",
+    [
+        {"subject": f"Invoice {RTL_OVERRIDE}fdp.exe"},
+        {"subject": f"Launch{ZERO_WIDTH_SPACE} review"},
+        {"subject": f"Hi{LINE_SEPARATOR}Bcc: spy@evil.example"},
+        {"subject": f"Hi{NEXT_LINE}Bcc: spy@evil.example"},
+        {"body": f"Pay it to account {RTL_OVERRIDE}4321"},
+        {"body": f"Thanks, see you Thursday.{TAG_A}{TAG_B}"},
+        {"body": f"pass{ZERO_WIDTH_SPACE}word"},
+        {"body": f"Hi{ZWJ} there"},  # a joiner between Latin letters joins nothing: it only hides
+    ],
+)
+async def test_characters_that_hide_or_reorder_text_are_refused_before_anything_is_sent(
+    change: dict[str, Any],
+) -> None:
+    http = gmail()
+    for tool in ("send", "create_draft"):
+        with pytest.raises(ValidationError, match="doesn't show"):
+            await run(http, tool, {**MAIL, **change})
+    assert http.requests == []
+
+
+async def test_emoji_and_scripts_that_need_joiners_are_sent_as_written() -> None:
+    technologist = chr(0x1F469) + ZWJ + chr(0x1F4BB)
+    heart = chr(0x2764) + EMOJI_STYLE
+    persian = chr(0x0645) + chr(0x06CC) + ZWNJ + chr(0x062E) + chr(0x0648) + chr(0x0627) + chr(0x0647) + chr(0x0645)
+    http = gmail()
+    http.route("POST", f"{USERS_ME}/messages/send", json=fixture("message_sent"))
+
+    await run(http, "send", {**MAIL, "subject": f"Launch {heart}", "body": f"{technologist} {persian}\nAli"})
+
+    mail = sent_mail(http.requests[0].json["raw"])
+    assert mail["Subject"] == f"Launch {heart}"
+    assert mail.get_content().replace("\r\n", "\n").strip() == f"{technologist} {persian}\nAli"
 
 
 def test_the_send_summary_shows_every_recipient_the_subject_and_the_start_of_the_body() -> None:

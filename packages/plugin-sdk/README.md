@@ -134,6 +134,7 @@ Also set:
 - `idempotent=True` only when running it twice does no harm. Other tools stop and ask a person after a crash instead of running again. For services that accept an idempotency key, pass on `ctx.idempotency_key`; it stays the same across retries of one call.
 - When a tool that isn't idempotent fails, BotDesk must know whether it may still have done its thing (an email out before the answer was lost), because the model would otherwise try again. With `egress`, BotDesk sees every `ctx.http` request and works it out itself: a request that can change something (not GET, HEAD or OPTIONS) counts unless it got a 4xx answer or never connected. So reach other apps only through `ctx.http`. Without `egress`, raise `NotDone("…")` when you stopped before changing anything; any other exception stops the run for a person to check.
 - `summarize=lambda args: f"Send an email to {args.to}"` for a clearer approval card.
+- Text that goes out as written (a subject, a message): refuse characters that don't show on the card or reorder the text around it with `hidden_characters(text, layout=True)` (indexes; `describe_character` names one for the error). BotDesk also writes any that reach a card as `[U+202E]` (`show_hidden`).
 
 ## Calling another app: auth, egress and `ctx.http` (manifest version 2)
 

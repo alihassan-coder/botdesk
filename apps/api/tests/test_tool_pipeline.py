@@ -335,6 +335,25 @@ async def test_pending_approvals_are_listed_with_what_the_card_needs(world: Worl
     assert len(by_thread.json()) == 1
 
 
+async def test_a_card_shows_characters_that_would_hide_or_reorder_text(world: World) -> None:
+    # Any tool's card (an MCP server's too): a person never approves text that reads differently
+    # from what is sent. Emoji keep their joiners; line breaks stay line breaks.
+    override, zero_width, joiner = chr(0x202E), chr(0x200B), chr(0x200D)
+    technologist = chr(0x1F469) + joiner + chr(0x1F4BB)
+    args = {"to": "sara@acme.dev", "subject": f"Pay {override}4321", "body": f"Hi{zero_width}\n{technologist}"}
+    await world.record("demo.send_email", args)
+
+    (approval,) = (await world.client.get(f"{world.org}/approvals")).json()
+
+    assert approval["summary"] == "Send an email to sara@acme.dev: Pay [U+202E]4321"
+    assert approval["preview"] == [
+        {"label": "To", "value": "sara@acme.dev"},
+        {"label": "Subject", "value": "Pay [U+202E]4321"},
+        {"label": "Body", "value": f"Hi[U+200B]\n{technologist}"},
+    ]
+    assert approval["args"]["subject"] == f"Pay {override}4321"  # what runs is unchanged
+
+
 async def test_an_approval_can_be_decided_only_once(world: World) -> None:
     recorded = await world.record("demo.send_email", {"to": "sara@acme.dev", "subject": "Hi"})
     decide = f"{world.org}/approvals/{recorded.approval.id}/decide"

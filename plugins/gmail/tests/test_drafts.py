@@ -241,3 +241,17 @@ async def test_the_text_is_required_so_the_card_always_shows_it() -> None:
     without_body = {key: value for key, value in SEND.items() if key != "body"}
     with pytest.raises(ValidationError, match="body"):
         await run(mailbox(), "send_draft", without_body)
+
+
+@pytest.mark.parametrize(
+    "change",
+    [
+        {"body": "Hi Sara, " + chr(0x202E) + "4321 tnuocca"},  # reads backwards on the card
+        {"body": "Thanks" + chr(0xE0041) + chr(0xE0042)},  # hidden letters a model can read
+        {"subject": "Launch" + chr(0x200B) + " review"},
+        {"attachments": ["agenda" + chr(0x202E) + "fdp.exe"]},
+    ],
+)
+async def test_a_draft_with_characters_the_card_cannot_show_is_refused(change: dict[str, Any]) -> None:
+    with pytest.raises(ValidationError, match="doesn't show"):
+        await run(mailbox(), "send_draft", {**SEND, **change})

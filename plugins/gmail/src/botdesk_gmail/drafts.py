@@ -10,7 +10,8 @@
   shows them all (ADR 0015 §3, updated 2026-11-18). Right before sending, the tool fetches the
   draft and sends it (`drafts.send`, once, never retried) only when its To, Cc, Bcc and Subject
   are exactly those, its text is the same (line breaks and spacing aside) and it has the same
-  attachments; otherwise nothing is sent and the error says why.
+  attachments; otherwise nothing is sent and the error says why. Like `send`, the text, subject
+  and names may hold no character that doesn't show on the card (`write_tools.shows_as_written`).
 """
 
 import asyncio
@@ -24,7 +25,14 @@ from pydantic import BaseModel, Field, field_validator
 from botdesk_gmail import api
 from botdesk_gmail.text import MESSAGE_CAP, RESULT_CAP, Body, body_of, defuse, email_block, kept_headers
 from botdesk_gmail.tools import ID_PATTERN, MAX_SEARCH_RESULTS, NOTE, READ_SCOPE
-from botdesk_gmail.write_tools import MAX_BODY, MODIFY_SCOPE, Recipients, body_preview, recipients_line
+from botdesk_gmail.write_tools import (
+    MAX_BODY,
+    MODIFY_SCOPE,
+    Recipients,
+    body_preview,
+    recipients_line,
+    shows_as_written,
+)
 
 _ID = re.compile(ID_PATTERN)
 _DRAFT_HEADERS = ("To", "Cc", "Bcc", "Subject")
@@ -60,7 +68,7 @@ class SendDraftArgs(Recipients):
     def _without_block(cls, value: str) -> str:
         """The text as `list_drafts` showed it, with or without its `<email>` block: the card shows the text."""
         block = _BLOCK.match(value)
-        return block.group(1) if block else value
+        return shows_as_written(block.group(1) if block else value, what="body", layout=True)
 
     @field_validator("attachments")
     @classmethod
@@ -68,6 +76,7 @@ class SendDraftArgs(Recipients):
         for value in values:
             if not value or len(value) > 255 or _CONTROL.search(value):
                 raise ValueError(f"{value!r} isn't an attachment name as gmail.list_drafts shows it.")
+            shows_as_written(value, what="attachment name")
         return values
 
 

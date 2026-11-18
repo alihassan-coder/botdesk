@@ -24,13 +24,14 @@ from mcp.server.transport_security import TransportSecuritySettings
 from sqlalchemy import select
 from starlette.types import ASGIApp, Receive, Scope, Send
 
-from src.mcp.client import McpToolInfo
+from src.mcp import client as mcp_client
+from src.mcp.client import McpProtocolError, McpRefused, McpToolInfo
 from src.mcp.snapshot import local_name, snapshot
 from src.models import BotTool, McpServer, Run
 from src.runtime import tool_pipeline, toolset
 from src.runtime.reporter import RunReporter
 from src.runtime.runner import RunManager
-from src.runtime.tool_pipeline import ExecuteDeps, ToolCallRequest
+from src.runtime.tool_pipeline import ExecuteDeps, NeedsAttention, ToolCallRequest
 from src.services.tool_execution_service import RunRef
 from tests.test_mcp_client import TEST_NETWORK, _free_port
 from tests.test_oauth import Team, acme
@@ -292,6 +293,51 @@ async def test_a_tool_that_fails_on_the_server_still_reaches_the_model(live: Liv
 
         assert outcome.tainted
         assert '"isError": true' in outcome.text and "the database is on fire" in outcome.text
+
+
+@pytest.mark.parametrize(
+    "answer",
+    [
+        McpProtocolError("mcp.test answered with an error: Internal error (after the email went out)"),
+        McpProtocolError("mcp.test sent an answer that isn't valid MCP."),
+        McpProtocolError("The tool echo asked for more input, which BotDesk doesn't support."),
+    ],
+    ids=["internal-error", "not-mcp", "asked-for-input"],
+)
+async def test_an_answer_that_cant_be_used_may_mean_the_tool_ran_so_a_person_checks(
+    live: Live, answer: McpProtocolError, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """ADR 0004 §2: an internal error, an answer that isn't MCP or a request for input can come
+    after the tool did its thing. As an `isError` result the model would try the send again."""
+    async with acme_with_mcp() as team:
+        plugin = (await _add(team, live))["pluginId"]
+        run = await _bind_and_ask(team, plugin)
+
+        async def answers_badly(*_args: Any, **_kwargs: Any) -> Any:
+            raise answer
+
+        monkeypatch.setattr(mcp_client, "call_tool", answers_badly)
+        with pytest.raises(NeedsAttention, match="may have been done") as stopped:
+            await _call(team, run, f"{plugin}__echo", {"text": "hi"}, level="autonomous")
+        assert "Internal error" not in str(stopped.value)  # the server's own words aren't the reason shown
+
+
+async def test_a_call_the_server_refused_before_running_reaches_the_model_as_an_error(
+    live: Live, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """JSON-RPC "method not found" and "invalid params" (an unknown tool, bad arguments): nothing ran."""
+    async with acme_with_mcp() as team:
+        plugin = (await _add(team, live))["pluginId"]
+        run = await _bind_and_ask(team, plugin)
+
+        async def refuses(*_args: Any, **_kwargs: Any) -> Any:
+            raise McpRefused("mcp.test answered with an error: Invalid params: text is required")
+
+        monkeypatch.setattr(mcp_client, "call_tool", refuses)
+        _, outcome = await _call(team, run, f"{plugin}__echo", {"text": "hi"}, level="autonomous")
+
+        assert outcome.tainted  # the server's words: outside text
+        assert '"isError": true' in outcome.text and "text is required" in outcome.text
 
 
 async def test_a_tool_that_changed_on_the_server_is_refused_until_an_admin_approves_it(live: Live) -> None:

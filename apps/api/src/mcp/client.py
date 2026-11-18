@@ -15,7 +15,9 @@ What callers get for free:
 - **The protocol**: the SDK's `auto` mode speaks 2026-07-28 and falls back to the handshake
   versions. Sampling, elicitation and roots are never offered; a tool that asks for input fails.
 - **Errors**: everything that goes wrong is an `McpClientError` subclass with a message that's safe
-  for people and the model. A tool that ran and failed is not an error: it's `is_error=True`.
+  for people and the model. A tool that ran and failed is not an error: it's `is_error=True`. Of
+  the MCP errors a call can get, only `McpRefused` (method not found, invalid params) says the tool
+  didn't run; any other `McpProtocolError` may come after it did.
 
 Each operation opens its own connection (stateless): no session outlives a call.
 
@@ -52,6 +54,8 @@ MAX_RESULT_TEXT = 256 * 1024
 MAX_RESPONSE_BYTES = 8 * 1024 * 1024
 MAX_CALL_TIMEOUT = 300.0
 CLIENT_INFO = mcp_types.Implementation(name="botdesk", version="0.1.0")
+# JSON-RPC errors that mean the request was turned down before anything ran.
+_REFUSALS = frozenset({mcp_types.METHOD_NOT_FOUND, mcp_types.INVALID_PARAMS})
 
 
 # Errors
@@ -102,7 +106,14 @@ class McpInsufficientScope(McpClientError):
 
 
 class McpProtocolError(McpClientError):
-    """The server answered, but with an MCP error (unknown tool, bad arguments, asked for input…)."""
+    """The server answered, but with an MCP error, or with something that isn't MCP, or the tool
+    asked for input. For a call this can come after the tool did its thing (an internal error once
+    the email is out): unless it's an `McpRefused`, whether the tool ran is unknown."""
+
+
+class McpRefused(McpProtocolError):
+    """The server refused the call before running anything: JSON-RPC "method not found" or
+    "invalid params" (an unknown tool, arguments that don't fit). Nothing ran."""
 
 
 # Inputs and outputs
@@ -283,7 +294,8 @@ def _translate(error: Exception, host: str) -> McpClientError:
         if timed_out or isinstance(leaf, TimeoutError | httpx2.TimeoutException):
             return McpTimeout(f"{host} took too long to answer.")
         if isinstance(leaf, MCPError):
-            return McpProtocolError(f"{host} answered with an error: {leaf.error.message}")
+            refused = leaf.error.code in _REFUSALS
+            return (McpRefused if refused else McpProtocolError)(f"{host} answered with an error: {leaf.error.message}")
         if isinstance(leaf, httpx2.HTTPError):
             return McpUnreachable(f"Couldn't reach {host} ({type(leaf).__name__}).")
         if isinstance(leaf, ValidationError):

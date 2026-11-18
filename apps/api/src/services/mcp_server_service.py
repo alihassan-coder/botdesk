@@ -69,6 +69,7 @@ from src.mcp.client import (
     McpInsufficientScope,
     McpNetwork,
     McpProtocolError,
+    McpRefused,
     McpServerConfig,
     McpUnsafeUrl,
 )
@@ -890,9 +891,14 @@ def _tool(ref: _ServerRef, entry: Mapping[str, Any], runtime: McpRuntime) -> Too
             raise ToolChanged(CHANGED)
         try:
             result = await mcp.call_tool(config, remote_name, args.model_dump(mode="json"), network=runtime.network)
-        except McpProtocolError as error:
-            # Its message carries the server's own words: give it to the model as (tainting) output.
+        except McpRefused as error:
+            # Turned down before anything ran (unknown tool, bad arguments). Its message carries the
+            # server's own words: give it to the model as (tainting) output; trying again is safe.
             return {"text": str(error)[:MAX_RESULT_TEXT], "isError": True}
+        except McpProtocolError as error:
+            # Any other MCP error, an answer that isn't MCP, or a request for input may come after
+            # the tool did its thing: not `NotDone`, so the run stops for a person (ADR 0004 §2).
+            raise AnswerUnusable(ANSWER_UNUSABLE) from error
         except (McpAuthRequired, McpInsufficientScope, McpUnsafeUrl) as error:
             # Refused before the tool ran: signing in (or more access) was needed, or the guard
             # wouldn't connect. Anything else (a timeout, a dropped connection) may have happened.
@@ -941,6 +947,14 @@ async def _record_drift(runtime: McpRuntime, server_id: uuid.UUID, tools: list[m
                 await db.commit()
     except Exception as failed:  # the refusal is what matters to the run
         logger.warning("Couldn't record an MCP server's changed tools (%s).", type(failed).__name__)
+
+
+ANSWER_UNUSABLE = "The MCP server's answer to this call couldn't be used, so it may or may not have run."
+
+
+class AnswerUnusable(Exception):
+    """The server answered a call with an error that doesn't say the tool didn't run. Its message
+    is our own sentence, never the server's words (they would reach the needs-attention notice)."""
 
 
 class ToolChanged(NotDone):

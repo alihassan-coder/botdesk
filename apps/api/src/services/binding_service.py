@@ -2,13 +2,15 @@
 connection. Read by the Tools tab and, through `runtime.toolset`, by every run.
 
 Who may change what (the contract, ADR 0010 §3): any member may switch a plugin on or off (the
-same rule as editing a bot). Choosing a connection follows who may use it: a member's own only
-by that member; a bot's by owners, admins and the bot's creator; the organization's by owners
-and admins. Leaving the connection as it is is never refused. Callers own the transaction.
+same rule as editing a bot), except an MCP server that uses the organization's key or sign-in:
+switching it is binding an org-owned account, so owners and admins only (`check_switch`).
+Choosing a connection follows who may use it: a member's own only by that member; a bot's by
+owners, admins and the bot's creator; the organization's by owners and admins. Leaving the
+connection as it is is never refused. Callers own the transaction.
 """
 
 import uuid
-from collections.abc import Iterable, Sequence
+from collections.abc import Callable, Collection, Iterable, Mapping, Sequence
 
 from botdesk_plugin_sdk import OAuth2Auth, PluginManifest
 from sqlalchemy import select
@@ -18,10 +20,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src.core.errors import BadRequest, Conflict, Forbidden, NotFound
 from src.models import Bot, BotTool, Connection, Run, Thread, TriggerSubscription
 from src.plugins.registry import ToolRegistry
-from src.schemas.bot_tool import BotToolChange, BotToolOut, BotToolsOut, BotTriggerOut
+from src.schemas.bot_tool import BotToolChange, BotToolMcpOut, BotToolOut, BotToolsOut, BotTriggerOut
 from src.schemas.plugin import PluginToolOut
 from src.services import connection_service
 from src.services.connection_service import Actor
+from src.services.mcp_server_service import ToolsTabEntry
 
 UNKNOWN_PLUGIN = "There's no such app on this server."
 OTHER_CONNECTOR = "That account is for another app."
@@ -37,18 +40,52 @@ async def bindings_of(db: AsyncSession, bot_id: uuid.UUID) -> dict[str, BotTool]
 
 
 def tools_out(
-    registry: ToolRegistry, bindings: dict[str, BotTool], subscriptions: Iterable[TriggerSubscription] = ()
+    registry: ToolRegistry,
+    bindings: dict[str, BotTool],
+    subscriptions: Iterable[TriggerSubscription] = (),
+    mcp: Mapping[str, ToolsTabEntry] | None = None,
 ) -> BotToolsOut:
     """One entry per loaded plugin. A plugin with no binding is off, with no connection. Each
-    plugin's triggers say whether this bot reacts to them (`subscriptions`, slice 6.3)."""
+    plugin's triggers say whether this bot reacts to them (`subscriptions`, slice 6.3).
+
+    `mcp`: the organization's MCP servers (slice 7.4). Their entries say how many tools wait for
+    a review and what's wrong with the sign-in; a server none of whose tools is offered right now
+    (all of them changed or new) is still listed, with no tools, so it doesn't just vanish."""
     on = {(row.binding_id, row.trigger): row for row in subscriptions}
-    return BotToolsOut(plugins=[_plugin_out(plugin, bindings.get(plugin.id), on) for plugin in registry.plugins()])
+    servers = mcp or {}
+    plugins = [
+        _plugin_out(plugin, bindings.get(plugin.id), on, servers.get(plugin.id)) for plugin in registry.plugins()
+    ]
+    for entry in servers.values():
+        if registry.plugin(entry.plugin_id) is None:
+            plugins.append(_waiting_server_out(entry, bindings.get(entry.plugin_id)))
+    return BotToolsOut(plugins=plugins)
+
+
+def _mcp_out(entry: ToolsTabEntry | None) -> BotToolMcpOut | None:
+    if entry is None:
+        return None
+    return BotToolMcpOut(tools_waiting=entry.waiting, problem=entry.problem, org_account=entry.org_account)
+
+
+def _waiting_server_out(entry: ToolsTabEntry, binding: BotTool | None) -> BotToolOut:
+    return BotToolOut(
+        plugin_id=entry.plugin_id,
+        name=entry.name,
+        description=entry.description,
+        auth_type=None,
+        enabled=binding.enabled if binding else False,
+        connection_id=None,
+        tools=[],
+        mcp=_mcp_out(entry),
+    )
 
 
 def _plugin_out(
     plugin: PluginManifest,
     binding: BotTool | None,
     on: dict[tuple[uuid.UUID, str], TriggerSubscription],
+    mcp: ToolsTabEntry | None = None,
 ) -> BotToolOut:
     auth = plugin.auth
     triggers = []
@@ -78,6 +115,7 @@ def _plugin_out(
             for tool in plugin.tools
         ],
         triggers=triggers,
+        mcp=_mcp_out(mcp),
     )
 
 
@@ -114,16 +152,32 @@ def add_defaults(db: AsyncSession, bot: Bot, plugins: Iterable[PluginManifest]) 
 
 
 async def update_bindings(
-    db: AsyncSession, actor: Actor, bot: Bot, registry: ToolRegistry, changes: Sequence[BotToolChange]
+    db: AsyncSession,
+    actor: Actor,
+    bot: Bot,
+    registry: ToolRegistry,
+    changes: Sequence[BotToolChange],
+    *,
+    known: Collection[str] = (),
+    check_switch: Callable[[Actor, str], None] | None = None,
 ) -> dict[str, BotTool]:
     """Apply the changes sent (other plugins stay as they are), with `connection.bound` and
-    `connection.unbound` audit lines. Checks everything before changing anything."""
+    `connection.unbound` audit lines. Checks everything before changing anything.
+
+    `known`: plugin ids that may be bound though the registry has no tools for them now (an MCP
+    server whose tools all wait for a review). `check_switch(actor, plugin_id)` raises when the
+    actor may not switch that plugin on or off (an MCP server with the organization's account)."""
     if len({change.plugin_id for change in changes}) != len(changes):
         raise BadRequest(DUPLICATE)
     for change in changes:
-        if registry.plugin(change.plugin_id) is None:
+        if registry.plugin(change.plugin_id) is None and change.plugin_id not in known:
             raise NotFound(UNKNOWN_PLUGIN)
     current = await bindings_of(db, bot.id)
+    if check_switch is not None:
+        for change in changes:
+            binding = current.get(change.plugin_id)
+            if change.enabled != (binding.enabled if binding else False):
+                check_switch(actor, change.plugin_id)
     moved = [change for change in changes if change.connection_id != _connection_of(current.get(change.plugin_id))]
     involved = {_connection_of(current.get(change.plugin_id)) for change in moved}
     involved |= {change.connection_id for change in moved}

@@ -17,6 +17,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { actions } from "@/data/store";
 import type { McpServer } from "@/data/types";
+import { offeredLabel, offeredTools, waitingLabel } from "@/lib/mcp-review";
 import { ToolList } from "./tool-list";
 
 const STATUS: Record<McpServer["status"], { label: string; problem: boolean }> = {
@@ -31,7 +32,8 @@ export function McpServerRow({ server, canManage }: { server: McpServer; canMana
   const [busy, setBusy] = useState<"refresh" | "sign-in" | null>(null);
   const status = STATUS[server.status];
   const needsSignIn = server.status === "needs_sign_in" || server.status === "needs_reconnect";
-  const offered = server.tools.filter((t) => t.state === "approved" && t.enabled);
+  const offered = offeredTools(server.tools);
+  const waiting = waitingLabel(server.tools);
 
   async function refresh() {
     setBusy("refresh");
@@ -53,16 +55,14 @@ export function McpServerRow({ server, canManage }: { server: McpServer; canMana
       <div className="flex flex-wrap items-center gap-3">
         <div className="min-w-0 flex-1">
           <p className="font-medium">{server.name}</p>
-          <p className="truncate text-sm text-muted-foreground">
-            {server.url} · {offered.length === 1 ? "1 tool on" : `${offered.length} tools on`}
-            {server.status === "unreachable" && server.statusReason ? ` · ${server.statusReason}` : ""}
-          </p>
+          <p className="truncate text-sm text-muted-foreground">{server.url} · {offeredLabel(server.tools)}</p>
         </div>
-        {server.toolsChanged > 0 && (
-          <Badge variant="outline">{server.toolsChanged === 1 ? "1 tool changed" : `${server.toolsChanged} tools changed`}</Badge>
-        )}
+        {waiting && <Badge variant="outline">{waiting}</Badge>}
         <Badge variant={status.problem ? "destructive" : "secondary"}>{status.label}</Badge>
       </div>
+      {/* Why it's unreachable, or why its sign-in stopped working ("needs more access…"). */}
+      {status.problem && server.statusReason && <p role="status" className="text-sm text-destructive">{server.statusReason}</p>}
+      {waiting && !canManage && <p className="text-sm text-muted-foreground">Its changed or new tools wait for an owner or admin to review them.</p>}
       {canManage && (
         <div className="flex flex-wrap items-center gap-1">
           {needsSignIn && (
@@ -70,7 +70,7 @@ export function McpServerRow({ server, canManage }: { server: McpServer; canMana
               <LogIn /> {server.status === "needs_reconnect" ? "Reconnect" : "Sign in"}
             </Button>
           )}
-          <Button size="sm" variant={server.toolsChanged > 0 ? "default" : "ghost"} asChild>
+          <Button size="sm" variant={waiting ? "default" : "ghost"} asChild>
             <Link href={`/apps/mcp/${server.id}`}><ListChecks /> Review tools</Link>
           </Button>
           <Button size="sm" variant="ghost" onClick={() => void refresh()} disabled={busy !== null} aria-label={`Refresh ${server.name}`}>

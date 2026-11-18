@@ -1,6 +1,7 @@
 import { screen } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 import { renderUI } from "@/test/render";
+import { signInOnApi, withFakeApi } from "@/test/fake-api";
 import { OAuthCallbackScreen } from "./oauth-callback-screen";
 
 describe("The OAuth callback page", () => {
@@ -25,5 +26,29 @@ describe("The OAuth callback page", () => {
     renderUI(<OAuthCallbackScreen result="error" code="provider_said_<b>no</b>" connector={null} />);
     expect(screen.getByText("Couldn't finish connecting the app. Try again.")).toBeInTheDocument();
     expect(screen.queryByText(/provider_said/)).not.toBeInTheDocument();
+  });
+});
+
+
+describe("The OAuth callback page after an MCP server's sign-in", () => {
+  const api = withFakeApi();
+
+  it("says it's signed in and leads to Review tools, since nothing is offered before that", async () => {
+    api.routes["GET /api/v1/orgs/o1/mcp-servers"] = {
+      status: 200,
+      body: [{
+        id: "m1", pluginId: "mcp-1a2b3c4d", name: "Tracker", url: "https://mcp.example.com/mcp", authKind: "oauth", authHeader: null,
+        status: "active", statusReason: null, lastCheckedAt: null, createdAt: "2026-11-18T08:00:00Z", createdBy: "u1", toolsHash: "h", toolsChanged: 1,
+        tools: [{ name: "mcp-1a2b3c4d.echo", serverName: "echo", title: null, description: "Echoes.", annotations: {}, inputSchema: { type: "object" },
+          outputSchema: null, state: "pending", enabled: false, risk: "external-send", previous: null }],
+      }],
+    };
+    await signInOnApi();
+    renderUI(<OAuthCallbackScreen result="connected" code={null} connector="mcp-1a2b3c4d" />);
+
+    expect(await screen.findByText("Signed in to Tracker")).toBeInTheDocument();
+    expect(screen.getByText(/1 tool to review\. No bot gets this MCP server's tools until an owner or admin has reviewed them/)).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Review tools" })).toHaveAttribute("href", "/apps/mcp/m1");
+    expect(screen.getByRole("link", { name: "Back to Connect apps" })).toHaveAttribute("href", "/apps");
   });
 });

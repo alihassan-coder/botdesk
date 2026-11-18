@@ -24,6 +24,14 @@ class BotTriggerIn(ApiModel):
     enabled: bool
 
 
+class BotToolMcpOut(ApiModel):
+    """For an MCP server (ADR 0012, slice 7.4): what its card says besides the tools offered."""
+
+    tools_waiting: int  # changed or new tools no bot gets until an owner or admin reviews them
+    problem: str | None  # "Needs signing in again: …", or the server couldn't be reached
+    org_account: bool  # it uses the organization's key or sign-in: only owners and admins switch it
+
+
 class BotToolOut(ApiModel):
     plugin_id: str
     name: str
@@ -31,8 +39,9 @@ class BotToolOut(ApiModel):
     auth_type: Literal["api_key", "oauth2"] | None
     enabled: bool  # false for a plugin the bot has no binding for
     connection_id: uuid.UUID | None
-    tools: list[PluginToolOut]
+    tools: list[PluginToolOut]  # an MCP server whose tools all wait for a review has none
     triggers: list[BotTriggerOut] = Field(default_factory=list)
+    mcp: BotToolMcpOut | None = None  # MCP servers only
 
 
 class BotToolsOut(ApiModel):

@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { ConnectorLogo } from "@/components/connector-logo";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { NativeSelect, NativeSelectOption } from "@/components/ui/native-select";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -18,7 +19,9 @@ import { bindableConnections } from "@/lib/connections";
 export function BotTools({ bot }: { bot: Bot }) {
   const tools = useBotTools(bot.id);
   const accounts = useAccountConnections().items;
-  const me = useCurrentUser().id;
+  const user = useCurrentUser();
+  const me = user.id;
+  const isAdmin = user.role !== "member";
   const [error, setError] = useState("");
 
   useEffect(() => {
@@ -62,6 +65,7 @@ export function BotTools({ bot }: { bot: Bot }) {
           onChange={(patch) => void change(plugin, patch)}
           botName={bot.name}
           me={me}
+          isAdmin={isAdmin}
           onTrigger={(trigger, enabled) => void switchTrigger(plugin, trigger, enabled)}
         />
       ))}
@@ -75,6 +79,7 @@ function PluginCard({
   onChange,
   botName,
   me,
+  isAdmin,
   onTrigger,
 }: {
   plugin: BotToolPlugin;
@@ -82,11 +87,14 @@ function PluginCard({
   onChange: (patch: Partial<Pick<BotToolPlugin, "enabled" | "connectionId">>) => void;
   botName: string;
   me: string;
+  isAdmin: boolean;
   onTrigger: (trigger: BotTrigger, enabled: boolean) => void;
 }) {
   // The account in use may be another member's (it isn't offered, but it's still shown).
   const current = p.connectionId && !choices.some((c) => c.id === p.connectionId) ? p.connectionId : null;
   const selectId = `account-${p.pluginId}`;
+  // An MCP server with the organization's key or sign-in: switching it binds an org account (owners and admins).
+  const locked = Boolean(p.mcp?.orgAccount) && !isAdmin;
 
   return (
     <article className="flex flex-col gap-3 rounded-xl border p-3" aria-label={p.name}>
@@ -96,8 +104,10 @@ function PluginCard({
           <p className="text-sm font-medium">{p.name}</p>
           <p className="text-xs text-muted-foreground">{p.description}</p>
         </div>
-        <Switch checked={p.enabled} onCheckedChange={(enabled) => onChange({ enabled })} aria-label={`Use ${p.name}`} />
+        {p.mcp && p.mcp.toolsWaiting > 0 && <Badge variant="outline">{p.mcp.toolsWaiting === 1 ? "1 tool to review" : `${p.mcp.toolsWaiting} tools to review`}</Badge>}
+        <Switch checked={p.enabled} disabled={locked} onCheckedChange={(enabled) => onChange({ enabled })} aria-label={`Use ${p.name}`} />
       </div>
+      {p.mcp && <McpNotes mcp={p.mcp} locked={locked} isAdmin={isAdmin} />}
       {p.authType && (
         <div className="flex flex-col gap-1.5">
           <label htmlFor={selectId} className="text-xs font-medium text-muted-foreground">Account</label>
@@ -123,6 +133,22 @@ function PluginCard({
       ))}
       {p.tools.length > 0 && <ToolList tools={p.tools.map((t) => ({ name: t.name, label: t.title, risk: t.risk }))} />}
     </article>
+  );
+}
+
+/** What an MCP server's card adds: tools paused for a review, a sign-in problem, who may switch it. */
+function McpNotes({ mcp, locked, isAdmin }: { mcp: NonNullable<BotToolPlugin["mcp"]>; locked: boolean; isAdmin: boolean }) {
+  return (
+    <>
+      {mcp.toolsWaiting > 0 && (
+        <p className="text-xs text-muted-foreground">
+          {mcp.toolsWaiting === 1 ? "1 tool changed or is new on the server" : `${mcp.toolsWaiting} tools changed or are new on the server`}: bots don&apos;t get {mcp.toolsWaiting === 1 ? "it" : "them"} until {isAdmin ? "you review them" : "an owner or admin reviews them"} in{" "}
+          <Link href="/apps" className="font-medium text-foreground underline underline-offset-4">Connect apps</Link>.
+        </p>
+      )}
+      {mcp.problem && <p role="status" className="text-xs text-destructive">{mcp.problem}</p>}
+      {locked && <p className="text-xs text-muted-foreground">It uses the organization&apos;s key or sign-in, so only owners and admins switch it on or off.</p>}
+    </>
   );
 }
 

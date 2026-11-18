@@ -20,7 +20,7 @@ from src.schemas.mcp_server import (
 )
 from src.services import mcp_server_service
 from src.services.connection_service import Actor
-from src.services.mcp_server_service import McpRuntime
+from src.services.mcp_server_service import McpRuntime, SignIn
 
 
 def _actor(access: Access) -> Actor:
@@ -37,6 +37,7 @@ def _tool_out(server: McpServer, raw: dict[str, Any]) -> McpToolOut:
         description=entry.get("description"),
         annotations=entry.get("annotations") or {},
         input_schema=entry.get("inputSchema") or {"type": "object"},
+        output_schema=entry.get("outputSchema"),
         state=entry["state"],
         enabled=entry["enabled"],
         risk=entry["risk"],
@@ -44,14 +45,16 @@ def _tool_out(server: McpServer, raw: dict[str, Any]) -> McpToolOut:
             title=previous.get("title"),
             description=previous.get("description"),
             input_schema=previous.get("inputSchema"),
+            output_schema=previous.get("outputSchema"),
         )
         if entry["state"] == "changed" and isinstance(previous, dict)
         else None,
     )
 
 
-def server_out(server: McpServer, sign_in: str | None = None) -> McpServerOut:
+def server_out(server: McpServer, sign_in: SignIn | None = None) -> McpServerOut:
     tools = [_tool_out(server, entry) for entry in server.tools]
+    status = mcp_server_service.status_of(server, sign_in)
     return McpServerOut(
         id=server.id,
         plugin_id=server.plugin_id,
@@ -59,8 +62,9 @@ def server_out(server: McpServer, sign_in: str | None = None) -> McpServerOut:
         url=server.url,
         auth_kind="oauth" if server.auth_kind == "oauth" else "header" if server.auth_kind == "header" else "none",
         auth_header=server.auth_header,
-        status=mcp_server_service.status_of(server, sign_in),  # one of the four
-        status_reason=server.status_reason,
+        status=status,  # one of the four
+        # Why the sign-in stopped working ("needs more access…") comes from its connection.
+        status_reason=sign_in.reason if status == "needs_reconnect" and sign_in else server.status_reason,
         tools=tools,
         tools_hash=server.tools_hash,
         tools_changed=sum(1 for tool in tools if tool.state != "approved"),
@@ -107,5 +111,11 @@ async def start_sign_in(db: AsyncSession, access: Access, server_id: uuid.UUID, 
 
 
 async def remove_server(db: AsyncSession, access: Access, server_id: uuid.UUID, runtime: McpRuntime) -> None:
-    await mcp_server_service.remove(db, runtime, _actor(access), server_id)
+    revocations = await mcp_server_service.remove(db, runtime, _actor(access), server_id)
     await db.commit()
+    # Now that nothing can use the sign-in, tell its authorization server too (best effort).
+    await mcp_server_service.revoke_at_server(runtime, revocations)
+
+
+async def client_metadata(db: AsyncSession, file_name: str, runtime: McpRuntime) -> dict[str, Any]:
+    return await mcp_server_service.client_metadata(db, runtime, file_name)

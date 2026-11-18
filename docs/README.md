@@ -50,6 +50,7 @@ BotDesk is an open-source (MIT) team of always-on AI bots that work in your apps
 | [adr/0009-bots-working-together.md](adr/0009-bots-working-together.md) | ADR 0009: bots @mention each other (hop limit 3), guests in DMs, a lead bot per group |
 | [adr/0014-handoffs-and-tasks.md](adr/0014-handoffs-and-tasks.md) | ADR 0014: handoffs and tasks; the parent waits for results |
 | [adr/0015-gmail-attachments-formatting-and-drafts.md](adr/0015-gmail-attachments-formatting-and-drafts.md) | ADR 0015: Gmail reads text attachments, sends formatted mail from Markdown, sends saved drafts only if they still match |
+| [adr/0016-mcp-sign-in-and-review-as-built.md](adr/0016-mcp-sign-in-and-review-as-built.md) | ADR 0016 (proposed): MCP sign-in on BotDesk's own OAuth flow (metadata documents, revocation, step-up), the organization's sign-in only for now, nothing offered before the review, drift checked on every call |
 | [backend/README.md](backend/README.md) | Backend guide: run it, folders, request flow, routes, security |
 
 ## Building

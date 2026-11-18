@@ -1,9 +1,10 @@
 """MCP servers as bot tools (slice 7.2, ADR 0012), end to end on SQLite against a real MCP server
 (the SDK's server side, served by uvicorn on 127.0.0.1 as in tests/test_mcp_client.py).
 
-Ali (owner) adds the server, binds it to Scout in the Tools tab, and Scout calls its tools through
-the tool pipeline: every MCP tool is external-send (it asks), its result taints the run, and a tool
-whose definition changed on the server is refused until an admin refreshes the server.
+Ali (owner) adds the server and approves its tools (Review tools, slice 7.4), binds it to Scout in
+the Tools tab, and Scout calls its tools through the tool pipeline: every MCP tool is external-send
+(it asks), its result taints the run, and a tool whose definition changed on the server is refused
+until an admin approves it again.
 """
 
 import threading
@@ -122,10 +123,29 @@ async def acme_with_mcp() -> AsyncIterator[Team]:
         yield team
 
 
-async def _add(team: Team, live: Live, expect: int = 201, **body: Any) -> dict[str, Any]:
+async def _add(team: Team, live: Live, expect: int = 201, *, review: bool = True, **body: Any) -> dict[str, Any]:
+    """Add the test server as Ali, then (`review`) approve every tool as listed, the way the web's
+    add dialog leads straight to Review tools (slice 7.4: nothing is offered before that)."""
     response = await team.client.post(f"{team.org}/mcp-servers", json={"name": "Tracker", "url": live.url, **body})
     assert response.status_code == expect, response.text
     data: dict[str, Any] = response.json()
+    if expect != 201 or not review:
+        return data
+    return await approve_all(team, data)
+
+
+async def approve_all(team: Team, server: dict[str, Any], risk: str = "external-send") -> dict[str, Any]:
+    """The review screen's save with every tool on at `risk` (tests/test_mcp_oauth.py too)."""
+    choices = [
+        {"serverName": tool["serverName"], "enabled": True, "risk": risk}
+        for tool in server["tools"]
+        if tool["state"] != "removed"
+    ]
+    reviewed = await team.client.put(
+        f"{team.org}/mcp-servers/{server['id']}/tools", json={"toolsHash": server["toolsHash"], "tools": choices}
+    )
+    assert reviewed.status_code == 200, reviewed.text
+    data: dict[str, Any] = reviewed.json()
     return data
 
 
@@ -360,4 +380,7 @@ async def test_a_server_with_no_tools_or_an_odd_snapshot_never_breaks_the_tools_
         tab = await team.client.get(f"{team.org}/bots/{team.bot_id}/tools")
 
         assert tab.status_code == 200
-        assert not {p["pluginId"] for p in tab.json()["plugins"]} & {added["pluginId"], "mcp-00000000"}
+        # Listed so they can be found (slice 7.4), but with no tools a bot could be offered.
+        listed = {p["pluginId"]: p for p in tab.json()["plugins"]}
+        assert listed[added["pluginId"]]["tools"] == [] and listed["mcp-00000000"]["tools"] == []
+        assert "demo" in listed  # the rest of the tab is as it was

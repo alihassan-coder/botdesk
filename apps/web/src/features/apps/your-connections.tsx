@@ -14,14 +14,15 @@ import {
 import { ConnectorLogo } from "@/components/connector-logo";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { actions, useBots, useCurrentUser } from "@/data/store";
-import type { AccountConnection, ServerConnector } from "@/data/types";
+import { actions, useBots, useCurrentUser, useMcpServers } from "@/data/store";
+import type { AccountConnection, McpServer, ServerConnector } from "@/data/types";
 import { ownerLabel, ownerOf } from "@/lib/connections";
 
 /** API only: the connected accounts you may see, with Reconnect (when broken) and Disconnect. */
 export function YourConnections({ accounts, connectors }: { accounts: AccountConnection[]; connectors: ServerConnector[] }) {
   const me = useCurrentUser();
   const bots = useBots();
+  const mcpServers = useMcpServers().items;
   const botName = useCallback((botId: string) => bots.find((b) => b.id === botId)?.name, [bots]);
 
   return (
@@ -33,7 +34,9 @@ export function YourConnections({ accounts, connectors }: { accounts: AccountCon
         <ul className="flex flex-col gap-2">
           {accounts.map((account) => {
             const connector = connectors.find((c) => c.id === account.connectorId);
-            const name = connector?.name ?? account.connectorId;
+            // An MCP server's sign-in is named after the server (it isn't a built-in connector).
+            const mcp = mcpServers.find((m) => m.pluginId === account.connectorId);
+            const name = connector?.name ?? (mcp ? `${mcp.name} (MCP)` : account.connectorId);
             const broken = account.status === "needs_reconnect";
             return (
               <li key={account.id} className="flex flex-wrap items-center gap-3 rounded-2xl border bg-card p-4">
@@ -47,7 +50,7 @@ export function YourConnections({ accounts, connectors }: { accounts: AccountCon
                 </div>
                 <Badge variant={broken ? "destructive" : "secondary"}>{broken ? "Needs reconnect" : "Connected"}</Badge>
                 {broken && account.authType === "oauth2" && (
-                  <Button size="sm" onClick={() => void reconnect(account)}>Reconnect</Button>
+                  <Button size="sm" onClick={() => void reconnect(account, mcp)}>Reconnect</Button>
                 )}
                 <DisconnectButton name={name} account={account} />
               </li>
@@ -59,8 +62,9 @@ export function YourConnections({ accounts, connectors }: { accounts: AccountCon
   );
 }
 
-async function reconnect(account: AccountConnection) {
-  const result = await actions.startOAuth(account.connectorId, ownerOf(account));
+async function reconnect(account: AccountConnection, mcp: McpServer | undefined) {
+  // An MCP server signs in again through its own route (its client and scopes live on the server).
+  const result = mcp ? await actions.signInMcpServer(mcp.id) : await actions.startOAuth(account.connectorId, ownerOf(account));
   if (!result.ok) toast.error(result.error);
 }
 

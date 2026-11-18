@@ -19,11 +19,12 @@ What callers get for free:
 
 Each operation opens its own connection (stateless): no session outlives a call.
 
-OAuth (slice 7.3): a server that answers 401 raises `McpAuthRequired` with its challenge; once
-signed in, the access token goes in `headers` like a header key (`services/mcp_server_service.py`
-refreshes it first). The SDK's `OAuthClientProvider` isn't used: its discovery and token requests
-would go through this origin-locked transport, and our callback, vault and refresh lease already
-exist (5.3). `McpServerConfig.auth` stays as a seam.
+OAuth (slice 7.3): a server that answers 401 raises `McpAuthRequired` with its challenge, and
+403 `insufficient_scope` raises `McpInsufficientScope`; once signed in, the access token goes in
+`headers` like a header key (`services/mcp_server_service.py` refreshes it first). The SDK's
+`OAuthClientProvider` isn't used (ADR 0016): its discovery and token requests would go through
+this origin-locked transport, and our callback, vault and refresh lease already exist (5.3).
+`McpServerConfig.auth` stays as a seam.
 """
 
 import json
@@ -85,6 +86,15 @@ class McpResponseTooLarge(McpClientError):
 class McpAuthRequired(McpClientError):
     """The server answered 401: it wants an OAuth sign-in (slice 7.3), or the token it had was
     refused. `challenge` is its `WWW-Authenticate` header (not a secret: where to sign in)."""
+
+    def __init__(self, message: str, challenge: str) -> None:
+        super().__init__(message)
+        self.challenge = challenge
+
+
+class McpInsufficientScope(McpClientError):
+    """The server answered 403 `insufficient_scope`: the token works but needs more access (MCP
+    step-up authorization). `challenge` is its `WWW-Authenticate` header, naming the scopes."""
 
     def __init__(self, message: str, challenge: str) -> None:
         super().__init__(message)
@@ -191,11 +201,12 @@ async def _with_client[T](
 ) -> T:
     url = _checked_url(server.url, network)
     call_timeout = _call_timeout(server)
-    refused: list[str] = []  # a 401's WWW-Authenticate: the SDK only reports "an error response"
+    # A 401's or 403's WWW-Authenticate: the SDK only reports "an error response".
+    refused: list[tuple[int, str]] = []
 
     async def on_response(response: httpx2.Response) -> None:
-        if response.status_code == 401 and not refused:
-            refused.append(response.headers.get("www-authenticate", "")[:2000])
+        if response.status_code in (401, 403) and not refused:
+            refused.append((response.status_code, response.headers.get("www-authenticate", "")[:2000]))
 
     transport = GuardedTransport(
         server_url=url,
@@ -228,8 +239,11 @@ async def _with_client[T](
             ):
                 return await operation(client)
     except Exception as error:
-        if refused:
-            raise McpAuthRequired(f"{url.host} needs signing in.", refused[0]) from error
+        status, challenge = refused[0] if refused else (0, "")
+        if status == 401:
+            raise McpAuthRequired(f"{url.host} needs signing in.", challenge) from error
+        if status == 403 and "insufficient_scope" in challenge.lower():
+            raise McpInsufficientScope(f"{url.host} needs more access.", challenge) from error
         raise _translate(error, url.host) from error
 
 

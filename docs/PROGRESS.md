@@ -11,6 +11,16 @@ Details: [backend guide](backend/README.md#tools-and-approvals), [plugin README]
 - **No hidden characters on a card.** Gmail refuses zero-width characters, right-to-left overrides, invisible "tag" letters and line separators in subjects, bodies and attachment names; every card writes any that reach it as `[U+202E]` (SDK: `hidden_characters`, `show_hidden`). Emoji and scripts keep the joiners they need. Also checked: summaries already list cc and bcc, Markdown HTML already escapes the model's markup, header injection was already refused; tests added for each.
 - **Later:** a needs-attention run still only offers Stop (no "it was sent / it wasn't" answer that lets it go on); the send-draft card reads the plain-text part when a draft has both plain text and HTML.
 
+## 2026-11-18: MCP sign-in with OAuth, and reviewing MCP tools (slices 7.3, 7.4)
+
+[ADR 0012](adr/0012-mcp-servers.md); what changed while building: [ADR 0016](adr/0016-mcp-sign-in-and-review-as-built.md) (proposed). Details: [backend guide](backend/README.md#mcp-servers), [frontend guide](frontend/README.md); manual test: [testing/mcp.md](testing/mcp.md).
+
+- **Review before anything is offered:** a new MCP server's tools are pending until an owner or admin approves them on **Review tools** (`/apps/mcp/[serverId]`): which tools bots get, and each one's risk (lowering below "sends outside your org" is audited). The add dialog's second step leads there.
+- **Drift:** every call re-lists the server's tools and compares hashes; a changed tool fails the call and stops being offered until re-approved, a new one waits, a removed one shows until the next review. The review shows the diff: description word by word, schemas line by line. Connect apps has a "1 tool changed" / "2 new tools" badge, and a bot's Tools says "N tools to review".
+- **OAuth sign-in:** discovery (Protected Resource Metadata, authorization-server metadata, PKCE S256, `resource`, `iss`), client by the spec's order (pasted, Client ID Metadata Document served at `/api/v1/oauth/client-metadata/<id>.json` when the API is public https, dynamic registration), tokens in the vault and refreshed with the shared lease, Reconnect, revocation at the authorization server on remove or disconnect, and "needs more access" (403 `insufficient_scope`) asking for the extra scopes on Reconnect. Every sign-in address goes through the SSRF guard, answers are capped at 256 KB, and no token reaches a log line or a response.
+- **Who may:** switching a server that uses the organization's key or sign-in on or off for a bot now takes an owner or admin (it binds an org-owned account, ADR 0010 §3); keyless servers stay open to every member.
+- **Later:** member- and bot-owned MCP sign-ins; noticing drift without a call or a Refresh; trying it against a real OAuth MCP server (tests use the SDK's server and a fake authorization server).
+
 ## 2026-11-17: Unread counts, managing groups, dated model prices
 
 Details: [backend guide](backend/README.md#unread-counts), [frontend guide](frontend/README.md#talking-to-the-api).

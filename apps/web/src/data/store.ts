@@ -1880,8 +1880,12 @@ export const actions = {
     );
   },
 
-  /** Owners and admins: add an MCP server. The API connects and lists its tools before saving. */
-  async addMcpServer(input: McpServerInput): Promise<ActionResult> {
+  /**
+   * Owners and admins: add an MCP server. The API connects and lists its tools before saving;
+   * none is offered to bots until they're reviewed (`serverId` → /apps/mcp/[serverId]). A server
+   * that wants a sign-in sends the tab to its sign-in page (`signingIn`), back on /apps/callback.
+   */
+  async addMcpServer(input: McpServerInput): Promise<{ ok: true; serverId: string; signingIn: boolean } | { ok: false; error: string }> {
     if (isDemoMode()) return { ok: false, error: "Adding MCP servers works once botdesk is connected to its API." };
     const orgId = state.org.id;
     try {
@@ -1889,9 +1893,8 @@ export const actions = {
       const saved = toMcpServer(added);
       // Bots' Tools tabs now have one more plugin: they load again when next opened.
       set((st) => (st.org.id !== orgId ? st : { ...st, mcpServers: { status: "ready", items: [...st.mcpServers.items, saved] }, botTools: {} }));
-      // It wants a sign-in (it answered 401, or you said so): off to its sign-in page, back on /apps/callback.
       if (added.authorizeUrl) browser.leaveFor(added.authorizeUrl);
-      return { ok: true };
+      return { ok: true, serverId: saved.id, signingIn: Boolean(added.authorizeUrl) };
     } catch (error) {
       return failure(error);
     }

@@ -86,3 +86,20 @@ async def test_a_new_organization_shares_nothing_with_your_others(client: httpx.
 
     assert (await client.get(f"{second}/bots")).json() == []
     assert (await client.get(second)).json()["maxSecurityLevel"] == "autonomous"
+
+
+async def test_creating_organizations_is_limited_per_person(client: httpx.AsyncClient) -> None:
+    await sign_up(client, name="Ali", email="ali@acme.dev")
+    for n in range(5):
+        assert (await client.post(ORGS, json={"name": f"Team {n}"})).status_code == 201
+
+    refused = await client.post(ORGS, json={"name": "One more"})
+
+    assert refused.status_code == 429
+    assert 3500 < int(refused.headers["retry-after"]) <= 3600  # seconds
+    assert refused.json()["detail"] == "You've created a lot of organizations just now. Try again in 1 hour."
+    assert [o["name"] for o in (await client.get(ORGS)).json()][-1] == "Team 4"
+    # Someone else isn't held up.
+    client.cookies.clear()
+    await sign_up(client, name="Sara", email="sara@acme.dev")
+    assert (await client.post(ORGS, json={"name": "Sara's lab"})).status_code == 201

@@ -5,9 +5,10 @@ import uuid
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.api.deps import Access
+from src.core.rate_limit import RateLimiter
 from src.models import User
 from src.schemas.organization import MemberOut, MemberRoleUpdate, OrgCreate, OrgOut, OrgUpdate
-from src.services import organization_service
+from src.services import auth_limits, organization_service
 from src.services.model_catalog import ModelCatalog
 
 
@@ -15,7 +16,8 @@ async def list_mine(db: AsyncSession, user: User) -> list[OrgOut]:
     return await organization_service.orgs_for_user(db, user)
 
 
-async def create(db: AsyncSession, user: User, body: OrgCreate) -> OrgOut:
+async def create(db: AsyncSession, user: User, body: OrgCreate, *, limiter: RateLimiter) -> OrgOut:
+    auth_limits.create_org(limiter, user_id=user.id)  # 429 after a handful an hour
     org = await organization_service.create_org(db, user, name=body.name, slug=body.slug)
     await db.commit()
     return organization_service.org_out(org, "owner")

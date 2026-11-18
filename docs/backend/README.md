@@ -265,7 +265,7 @@ A **routine** (`routines`, migration `e1c4d7a92b30`) is a saved task a bot repea
 | `POST /api/v1/auth/forgot-password` | Emails a reset link if the account exists. Always the same 202 answer (doesn't reveal accounts). 429 after 5 an hour for one email or 20 an hour from one address |
 | `POST /api/v1/auth/reset-password` | `{token, password}`: sets a new password from the link (once, before it expires) and signs out every device. 429 after 20 an hour from one address |
 | `GET /api/v1/orgs` | Your organizations |
-| `POST /api/v1/orgs` | `{name, slug?}`: create another organization; you're its owner (201). Without `slug` one is made from the name (`acme`, `acme-2`…, at most 56 characters before the number); a chosen `slug` that's taken is 409 "That address is taken. Try another."; a blank name 400. It starts empty: no bots, no keys, no ceiling, the default level `ask-before-acting` |
+| `POST /api/v1/orgs` | `{name, slug?}`: create another organization; you're its owner (201). Without `slug` one is made from the name (`acme`, `acme-2`…, at most 56 characters before the number); a chosen `slug` that's taken is 409 "That address is taken. Try another."; a blank name 400. It starts empty: no bots, no keys, no ceiling, the default level `ask-before-acting`. At most 5 an hour per person (429 "You've created a lot of organizations just now. Try again in 1 hour.", with `Retry-After`) |
 | `GET /api/v1/orgs/{id}` | One organization, with `defaultSecurityLevel` and `maxSecurityLevel` (the ceiling) |
 | `PATCH /api/v1/orgs/{id}` | Rename / change address / set the monthly budget `monthlyBudgetUsd` (null or 0 = no limit) / set `defaultSecurityLevel` / set `maxSecurityLevel` (owner or admin; members 403). See [The security ceiling](#the-security-ceiling) |
 | `GET /api/v1/orgs/{id}/members` | People and their roles |
@@ -694,6 +694,7 @@ The invite flow is the one that already existed: the link is `/invite/<token>`; 
 | sign-up | 20 an hour | |
 | forgot-password | 20 an hour | 5 an hour |
 | reset-password | 20 an hour | |
+| create organization (`POST /orgs`) | per person (signed in): 5 an hour | |
 
 - **Nothing leaks:** unknown emails are counted exactly like known ones, and the limit is checked before the database, so a 429 says nothing about accounts. A refused attempt isn't counted, so waiting out `Retry-After` always works; the right password also waits (the point is to stop guessing). The trade-off: someone who knows an email can keep that person from signing in, one minute at a time, while they keep trying; the per-email limits are short for that reason.
 - **Bounded memory:** a key keeps at most its limit's timestamps; keys whose window has passed are swept out every 1,000 attempts, and past 50,000 keys the least recently used go first.

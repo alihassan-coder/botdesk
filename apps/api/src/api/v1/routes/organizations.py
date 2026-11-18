@@ -2,7 +2,7 @@ import uuid
 
 from fastapi import APIRouter, status
 
-from src.api.deps import Catalog, CurrentUser, Db, OrgAccess
+from src.api.deps import Catalog, CurrentUser, Db, Limiter, OrgAccess
 from src.controllers import organization_controller
 from src.schemas.organization import MemberOut, MemberRoleUpdate, OrgCreate, OrgOut, OrgUpdate
 
@@ -16,9 +16,10 @@ async def list_my_orgs(user: CurrentUser, db: Db) -> list[OrgOut]:
 
 
 @router.post("", status_code=status.HTTP_201_CREATED)
-async def create_org(body: OrgCreate, user: CurrentUser, db: Db) -> OrgOut:
-    """A new organization. Whoever creates it is its owner, as with the first one at sign-up."""
-    return await organization_controller.create(db, user, body)
+async def create_org(body: OrgCreate, user: CurrentUser, db: Db, limiter: Limiter) -> OrgOut:
+    """A new organization. Whoever creates it is its owner, as with the first one at sign-up.
+    At most 5 an hour per person (429 with Retry-After)."""
+    return await organization_controller.create(db, user, body, limiter=limiter)
 
 
 @router.get("/{org_id}")

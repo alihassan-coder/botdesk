@@ -316,6 +316,10 @@ class RunManager:
             if run is None:
                 return True
             ticket, status = RunTicket.of(run), run.status
+            left = status == "queued" and await run_service.left_its_group(db, run)
+        if left:  # its bot was taken out of the group after this run was queued: it never starts
+            await self.stop(run_id)
+            return True
         reporter = self._reporter(ticket)
         graph_input: Any
         if status == "queued":

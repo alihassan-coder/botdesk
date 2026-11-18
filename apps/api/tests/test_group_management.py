@@ -10,8 +10,12 @@ from typing import Any
 import httpx
 import pytest
 from fastapi import FastAPI
+from sqlalchemy import delete
 
 from src.controllers import thread_controller
+from src.core.database import utcnow
+from src.models import Run, Task, ThreadParticipant
+from src.services import run_service
 from tests.conftest import TEST_SETTINGS, FakeProviders, api_client, sign_up, sql_statements
 
 
@@ -271,3 +275,76 @@ async def test_deleting_a_bot_locks_its_groups_first_as_group_changes_do(acme: O
     lock = next(i for i, s in enumerate(seen) if s.startswith("SELECT threads.id FROM threads") and "ORDER BY" in s)
     leave = next(i for i, s in enumerate(seen) if s.startswith("DELETE FROM thread_participants"))
     assert lock < leave
+
+
+async def _run(acme: Org, run_id: str) -> dict[str, Any]:
+    run: dict[str, Any] = (await acme.client.get(f"{acme.org}/runs/{run_id}")).json()
+    return run
+
+
+async def test_a_run_for_a_bot_that_has_left_the_group_never_starts(acme: Org) -> None:
+    """A message sent at the moment a bot is removed may still have queued a run for it, after the
+    removal listed the runs to stop. The run checks when it would start, and is cancelled instead."""
+    group = await acme.group(bots=["Chief", "Scout"], people=[])
+    run_id = (await acme.client.post(acme.path(group, "/messages"), json={"text": "@scout hi"})).json()["runIds"][0]
+    async with acme.app.state.sessionmaker() as db:  # the removal, committed just after the run was queued
+        await db.execute(
+            delete(ThreadParticipant).where(
+                ThreadParticipant.thread_id == uuid.UUID(group["id"]),
+                ThreadParticipant.participant_id == uuid.UUID(acme.bots["Scout"]),
+            )
+        )
+        await db.commit()
+
+    assert await acme.app.state.runs.take_turn(uuid.UUID(run_id)) is True
+    assert (await _run(acme, run_id))["status"] == "cancelled"
+    events = (await acme.client.get(acme.path(group, "/events"), params={"after": 0, "follow": "false"})).text
+    assert "event: run_started" not in events
+
+
+async def test_runs_that_work_in_a_chat_they_arent_in_may_still_start(acme: Org) -> None:
+    """Only a group bot's own runs need it in the group: a guest in a DM and a task's child (a
+    teammate a bot handed work to) work in a chat they're not in."""
+    group = await acme.group(bots=["Chief", "Scout"], people=[])
+    dm = (await acme.client.post(f"{acme.org}/threads/dm", json={"botId": acme.bots["Chief"]})).json()
+    guest = (await acme.client.post(f"{acme.org}/threads/{dm['id']}/messages", json={"text": "@scout hi"})).json()
+    lead = (await acme.client.post(acme.path(group, "/messages"), json={"text": "Plan it"})).json()["runIds"][0]
+    scout_run = ""
+    for run_id in guest["runIds"]:
+        if (await _run(acme, run_id))["botId"] == acme.bots["Scout"]:
+            scout_run = run_id
+    async with acme.app.state.sessionmaker() as db:
+        writer = uuid.UUID(acme.bots["Writer"])
+        lead_run = await db.get(Run, uuid.UUID(lead))
+        assert lead_run is not None
+        child = Run(
+            org_id=lead_run.org_id,
+            thread_id=lead_run.thread_id,
+            bot_id=writer,
+            trigger_message_id=lead_run.trigger_message_id,
+            parent_run_id=lead_run.id,
+            hop=1,
+            status="queued",
+            max_steps=lead_run.max_steps,
+            max_seconds=lead_run.max_seconds,
+        )
+        db.add(child)
+        await db.flush()
+        db.add(
+            Task(
+                org_id=lead_run.org_id,
+                thread_id=lead_run.thread_id,
+                parent_run_id=lead_run.id,
+                tool_call_id="call-1",
+                from_bot_id=lead_run.bot_id,
+                to_bot_id=writer,
+                child_run_id=child.id,
+                task="Write the launch post",
+                deadline_at=utcnow(),
+            )
+        )
+        await db.flush()
+        assert await run_service.left_its_group(db, child) is False
+        assert await run_service.left_its_group(db, lead_run) is False
+        guest_run = await db.get(Run, uuid.UUID(scout_run))
+        assert guest_run is not None and await run_service.left_its_group(db, guest_run) is False

@@ -93,17 +93,20 @@ async def remove_participant(
     kind: ParticipantType,
     participant_id: uuid.UUID,
 ) -> ThreadOut:
-    """A bot taken out of a group stops what it was doing there (its unfinished runs in the group,
-    stopped after the change is saved, each in its own transaction like the Stop button), so it
-    doesn't post into a group it's no longer in."""
+    """A bot taken out of a group stops what it was doing there, so it doesn't post into a group
+    it's no longer in: its unfinished runs in the group are listed once the change is saved (so a
+    run queued while it was saving is in the list) and stopped, each in its own transaction like
+    the Stop button. One queued even later never starts (`run_service.left_its_group`)."""
     thread = await thread_service.get_thread(db, org_id=access.org.id, user_id=access.user.id, thread_id=thread_id)
     await thread_service.remove_participant(
         db, thread, user_id=access.user.id, role=access.role, kind=kind, participant_id=participant_id
     )
-    going = await run_service.unfinished_in_thread(db, thread.id, bot_id=participant_id) if kind == "bot" else []
     out = await _saved_change(db, access, runs, thread)
-    for run_id in going:
-        await runs.stop(run_id)
+    if kind == "bot":
+        going = await run_service.unfinished_in_thread(db, thread.id, bot_id=participant_id)
+        await db.commit()  # end the read before stopping
+        for run_id in going:
+            await runs.stop(run_id)
     return out
 
 

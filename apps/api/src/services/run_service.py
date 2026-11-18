@@ -664,6 +664,23 @@ class ThreadRuns:
     replay_from: int  # just before the queued/running runs' first events (`last_event_id` if none)
 
 
+async def left_its_group(db: AsyncSession, run: Run) -> bool:
+    """A group run whose bot is no longer in the group, so it must not start: a message sent as
+    the bot was removed can queue its run after the removal listed the runs to stop. A task's child
+    works in its parent's chat without being in it (a handoff may go to any bot of the org), and so
+    does a guest in a DM; those never count. One query."""
+    in_group = exists().where(
+        ThreadParticipant.thread_id == run.thread_id,
+        ThreadParticipant.participant_type == "bot",
+        ThreadParticipant.participant_id == run.bot_id,
+    )
+    a_tasks_child = exists().where(Task.child_run_id == run.id)
+    left = await db.scalar(
+        select(Thread.id).where(Thread.id == run.thread_id, Thread.kind == "group", ~in_group, ~a_tasks_child)
+    )
+    return left is not None
+
+
 async def unfinished_in_thread(db: AsyncSession, thread_id: uuid.UUID, *, bot_id: uuid.UUID) -> list[uuid.UUID]:
     """A bot's runs in one chat that haven't ended (queued, running or paused), oldest first: what
     taking it out of a group stops."""

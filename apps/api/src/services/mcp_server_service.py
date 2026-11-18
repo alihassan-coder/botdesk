@@ -36,7 +36,15 @@ from dataclasses import dataclass
 from typing import Any, ClassVar
 
 import httpx
-from botdesk_plugin_sdk import RISK_CLASSES, PluginError, PluginManifest, ToolContext, ToolSpec, validate_manifest
+from botdesk_plugin_sdk import (
+    RISK_CLASSES,
+    NotDone,
+    PluginError,
+    PluginManifest,
+    ToolContext,
+    ToolSpec,
+    validate_manifest,
+)
 from pydantic import BaseModel, ConfigDict, SecretStr
 from sqlalchemy import delete, select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -55,6 +63,7 @@ from src.mcp.client import (
     McpNetwork,
     McpProtocolError,
     McpServerConfig,
+    McpUnsafeUrl,
 )
 from src.mcp.oauth import McpSignInError
 from src.mcp.snapshot import approve, normalized, offered, review_diff, snapshot, snapshot_hash, tool_hash
@@ -635,13 +644,17 @@ def _tool(ref: _ServerRef, entry: Mapping[str, Any], runtime: McpRuntime) -> Too
     remote_name, pinned = str(entry["name"]), str(entry["hash"])
 
     async def call(args: BaseModel, _ctx: ToolContext) -> dict[str, Any]:
-        config = await _config_for(ref, runtime)  # the key or token is read only now, inside the call
+        # BotDesk can't see an MCP call's requests, so whatever fails before the tool is called
+        # says so (`NotDone`): the call then fails instead of stopping the run (ADR 0004 §2).
         try:
+            config = await _config_for(ref, runtime)  # the key or token is read only now, inside the call
             current = await mcp.list_tools(config, network=runtime.network)
-        except McpAuthRequired:
+        except McpAuthRequired as error:
             if ref.auth_kind == "oauth":
                 await _sign_in_refused(runtime, ref.org_id, ref.plugin_id)
-            raise
+            raise NotDone(str(error)) from error
+        except Exception as error:
+            raise NotDone(str(error) or type(error).__name__) from error
         found = next((tool for tool in current if tool.name == remote_name), None)
         if found is None or tool_hash(found) != pinned:
             await _record_drift(runtime, ref.id, current)
@@ -651,6 +664,10 @@ def _tool(ref: _ServerRef, entry: Mapping[str, Any], runtime: McpRuntime) -> Too
         except McpProtocolError as error:
             # Its message carries the server's own words: give it to the model as (tainting) output.
             return {"text": str(error)[:MAX_RESULT_TEXT], "isError": True}
+        except (McpAuthRequired, McpUnsafeUrl) as error:
+            # Refused before the tool ran: signing in was needed, or the guard wouldn't connect.
+            # Anything else (a timeout, a dropped connection) may have happened on the server.
+            raise NotDone(str(error)) from error
         answer: dict[str, Any] = {"text": result.text}
         if result.is_error:
             answer["isError"] = True  # the tool ran and failed: the model still reads why
@@ -686,8 +703,8 @@ async def _record_drift(runtime: McpRuntime, server_id: uuid.UUID, tools: list[m
         logger.warning("Couldn't record an MCP server's changed tools (%s).", type(failed).__name__)
 
 
-class ToolChanged(Exception):
-    """The tool's definition on the server isn't the one an admin trusted."""
+class ToolChanged(NotDone):
+    """The tool's definition on the server isn't the one an admin trusted. It wasn't called."""
 
 
 class _McpArgs(BaseModel):

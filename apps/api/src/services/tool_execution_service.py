@@ -165,6 +165,16 @@ async def finish(
     )
 
 
+async def note_unknown_outcome(db: AsyncSession, execution_id: uuid.UUID, *, error: str) -> None:
+    """The call failed after it may have done its thing: it stays `started` (never run again
+    without a person), with why saved next to it."""
+    await db.execute(
+        update(ToolExecution)
+        .where(ToolExecution.id == execution_id, ToolExecution.status == "started")
+        .values(error=error)
+    )
+
+
 async def mark_run_tainted(db: AsyncSession, run_id: uuid.UUID) -> None:
     """The run has read outside text. From now on, risky calls ask (ADR 0004 §5)."""
     await db.execute(update(Run).where(Run.id == run_id).values(tainted=True))

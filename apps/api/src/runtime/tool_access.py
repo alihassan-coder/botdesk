@@ -5,6 +5,9 @@
         ctx = ToolContext(..., http=access.http, connection=access.connection)
 
 - A plugin with no `egress` gets an `http` that refuses every request.
+- A plugin with `egress` reaches other apps only through `http`, so `ToolAccess` can tell whether a
+  failed call may still have changed something there (`sees_every_request`,
+  `may_have_changed_something`; ADR 0004 §2).
 - A plugin with `egress` but no `auth` gets an `AuthorisedHttp` with no credential.
 - A plugin with `auth` gets the connection the run's toolset chose for it (`connection_id`, from
   the bot's binding; `runtime.toolset` already checked the run may use it) and an
@@ -42,6 +45,14 @@ from src.services.tool_execution_service import RunRef
 class ToolAccess:
     http: HttpClient
     connection: ConnectionInfo | None = None
+    # The plugin declares hosts (`egress`), so `http` is how this call reaches other apps and
+    # BotDesk sees every request it makes (even when `http` refuses them all: no account).
+    sees_every_request: bool = False
+
+    def may_have_changed_something(self) -> bool:
+        """A request through `http` that can change something (not GET, HEAD or OPTIONS) was sent
+        and may have been acted on (ADR 0004 §2)."""
+        return isinstance(self.http, AuthorisedHttp) and self.http.may_have_changed_something
 
 
 NO_ACCESS = ToolAccess(http=NoHttp())
@@ -108,7 +119,7 @@ class ToolAccessProvider:
                 # at a time; `invalid_grant` comes back as needs_reconnect).
                 connection = await self.oauth.refresh(self.sessionmaker, connection, plugin, transport=self.transport)
             if connection is None or connection.status != "active":
-                yield ToolAccess(http=NoHttp(_unavailable(plugin, connection)))
+                yield ToolAccess(http=NoHttp(_unavailable(plugin, connection)), sees_every_request=True)
                 return
 
         async with guarded_client(timeout_seconds, self.transport, rebase=self.rebase) as client:
@@ -118,7 +129,9 @@ class ToolAccessProvider:
                 client=client, egress=plugin.egress, credential=opener, max_bytes=self.max_response_bytes
             )
             try:
-                yield ToolAccess(http=http, connection=_info(connection) if connection else None)
+                yield ToolAccess(
+                    http=http, connection=_info(connection) if connection else None, sees_every_request=True
+                )
             finally:
                 if connection is not None and http.used:
                     await self._record_use(connection.id)

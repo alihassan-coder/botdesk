@@ -8,15 +8,19 @@ Google and Gmail answered by `FakeGoogle` (tests/test_oauth.py).
 """
 
 import uuid
+from collections.abc import Callable
 from datetime import timedelta
 from typing import Any
 
-from src.models import Run
+import httpx
+import pytest
+
+from src.models import Run, ToolExecution
 from src.models.bot import SecurityLevel
 from src.runtime import tool_pipeline, toolset
 from src.runtime.reporter import RunReporter
 from src.runtime.runner import RunManager
-from src.runtime.tool_pipeline import ExecuteDeps, ToolCallRequest
+from src.runtime.tool_pipeline import ExecuteDeps, NeedsAttention, ToolCallRequest
 from src.services.tool_execution_service import RunRef
 from tests.test_oauth import GOOGLE_SETTINGS, Team, acme
 
@@ -255,3 +259,77 @@ async def test_a_send_waiting_for_approval_shows_the_exact_email_and_sends_once_
         (sent,) = team.google.to(f"{ME}/messages/send")
         assert sent.method == "POST"
         assert sent.headers["authorization"] == "Bearer ya29.ACCESS-1"
+
+
+# A send whose outcome is unknown (ADR 0004 §2): an Autonomous bot sends without asking, so a send
+# reported as failed after it may have gone out would be sent again by the model.
+
+
+async def _send_autonomously(team: Team, run: RunRef, tool: str, args: dict[str, Any]) -> tuple[Any, uuid.UUID]:
+    runs: RunManager = team.app.state.runs
+    async with runs.sessionmaker() as db:
+        tools = await toolset.load(db, runs.registry, run.run_id)
+    call = tool_pipeline.prepare(
+        tools,
+        ToolCallRequest(f"call-{uuid.uuid4().hex[:6]}", tool, args),
+        level="autonomous",
+        tainted=False,
+        connections=tools.connections,
+    )
+    assert call.decision == "auto", call.trace
+    async with runs.sessionmaker() as db:
+        recorded = await tool_pipeline.record(db, run, call, tainted=False, approval_expiry=timedelta(hours=1))
+        await db.commit()
+    reporter = RunReporter(runs.sessionmaker, runs.bus, run.org_id, run.thread_id, run.run_id)
+    deps = ExecuteDeps(
+        runs.sessionmaker,
+        tools,
+        reporter,
+        run,
+        timeout_seconds=5,
+        access=runs.tool_access,
+        connection_ids=tools.connection_ids,
+    )
+    return deps, recorded.execution.id
+
+
+def _gmail_answers(status: int) -> Callable[[httpx.Request], httpx.Response]:
+    return lambda _request: httpx.Response(status, json={"error": {"message": "backend"}})
+
+
+def _connection_dropped(request: httpx.Request) -> httpx.Response:
+    raise httpx.ReadError("connection reset", request=request)
+
+
+@pytest.mark.parametrize(
+    ("answer", "unknown"),
+    [
+        (_gmail_answers(500), True),  # Gmail may have sent it before failing
+        (_gmail_answers(503), True),
+        (_connection_dropped, True),  # the request left; the answer never came
+        (_gmail_answers(400), False),  # refused: nothing was sent
+        (_gmail_answers(403), False),
+    ],
+    ids=["500", "503", "dropped", "400", "403"],
+)
+async def test_a_gmail_send_that_may_have_gone_out_is_never_reported_as_failed(
+    answer: Callable[[httpx.Request], httpx.Response], unknown: bool
+) -> None:
+    async with acme() as team:
+        team.google.gmail = {f"{ME}/messages/send": answer}
+        run = await _inbox_dm(team)
+        deps, execution_id = await _send_autonomously(team, run, "gmail__send", MAIL)
+
+        if unknown:
+            with pytest.raises(NeedsAttention, match="may have been done"):
+                await tool_pipeline.execute(deps, execution_id)
+            with pytest.raises(NeedsAttention):  # coming back to it never sends again
+                await tool_pipeline.execute(deps, execution_id)
+        else:
+            outcome = await tool_pipeline.execute(deps, execution_id)
+            assert outcome.text.startswith("The tool failed: Gmail")
+
+        assert len(team.google.to(f"{ME}/messages/send")) == 1
+        async with team.app.state.sessionmaker() as db:
+            row = await db.get(ToolExecution, execution_id)
+        assert row is not None and row.status == ("started" if unknown else "failed")

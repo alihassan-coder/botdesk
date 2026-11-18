@@ -100,7 +100,7 @@ const apiApproval = (patch: Partial<ApiApproval> = {}): ApiApproval => ({
 
 const toolStarted = (id = "x0", tool = "demo.read_inbox") =>
   event({ kind: "tool_started", data: { toolExecutionId: id, tool, risk: "read", args: {} } });
-const toolFinished = (status: "succeeded" | "failed" | "denied", id = "x0", error: string | null = null) =>
+const toolFinished = (status: "succeeded" | "failed" | "denied" | "unknown", id = "x0", error: string | null = null) =>
   event({ kind: "tool_finished", data: { toolExecutionId: id, tool: "demo.read_inbox", status, result: null, error } });
 const requested = (patch: Partial<ApiApproval> = {}) => event({ kind: "approval_requested", data: { approval: apiApproval(patch) } });
 const decided = (patch: Partial<ApiApproval>) => event({ kind: "approval_decided", data: { approval: apiApproval(patch) } });
@@ -187,6 +187,13 @@ describe("tools and approvals in a chat", () => {
     const chat = play(started, delta("Sending"), needsAttention);
     expect(chat.runs[0]).toMatchObject({ status: "needs_attention", error: "Check the outbox." });
     expect(only(chat).status).toBe("complete");
+  });
+
+  it("a send that may have gone out stops spinning and says so, and the run waits for a person", () => {
+    const why = "gmail.send may have been done: it took longer than 30 seconds.";
+    const chat = play(started, toolStarted(), toolFinished("unknown", "x0", why), needsAttention);
+    expect(only(chat).parts?.[0]).toEqual({ type: "tool-call", toolExecutionId: "x0", tool: "demo.read_inbox", status: "unknown", error: why });
+    expect(chat.runs[0]).toMatchObject({ status: "needs_attention" });
   });
 
   it("an approval for a run we never saw start still shows, in a stand-in reply", () => {

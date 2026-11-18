@@ -289,7 +289,7 @@ export type ApiRunEvent = {
   | { kind: "tool_started"; data: { toolExecutionId: string; tool: string; risk: ApiRiskClass; args: Record<string, unknown> } }
   | {
       kind: "tool_finished";
-      data: { toolExecutionId: string; tool: string; status: "succeeded" | "failed" | "denied"; result: unknown; error: string | null };
+      data: { toolExecutionId: string; tool: string; status: "succeeded" | "failed" | "denied" | "unknown"; result: unknown; error: string | null };
     }
   | { kind: "approval_requested"; data: { approval: ApiApproval } }
   | { kind: "approval_decided"; data: { approval: ApiApproval } }

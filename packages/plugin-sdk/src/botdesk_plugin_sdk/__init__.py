@@ -24,6 +24,7 @@ from botdesk_plugin_sdk.http import (
     ResponseTooLarge,
 )
 from botdesk_plugin_sdk.manifest import ENTRY_POINT_GROUP, MANIFEST_VERSION, PluginManifest, manifest_json
+from botdesk_plugin_sdk.outcome import NotDone
 from botdesk_plugin_sdk.risk import EGRESS_KINDS, RISK_CLASSES, Egress, RiskClass
 from botdesk_plugin_sdk.tool import NoArgs, ToolContext, ToolHandler, ToolResult, ToolSpec
 from botdesk_plugin_sdk.trigger import TriggerEvent, TriggerPoll, TriggerPollResult, TriggerSpec
@@ -49,6 +50,7 @@ __all__ = [
     "NoArgs",
     "NoHttp",
     "NotConnected",
+    "NotDone",
     "OAuth2Auth",
     "OwnerKind",
     "PluginError",

@@ -22,6 +22,7 @@ const everyPart: Message = {
     { type: "handoff", taskId: "task_1", fromBotId: "b_chief", toBotId: "b_sales", task: "Draft openers", status: "working" },
     { type: "tool-call", toolExecutionId: "x1", tool: "demo.send_email", status: "succeeded" },
     { type: "tool-call", toolExecutionId: "x2", tool: "demo.read_inbox", status: "failed", error: "The inbox didn't answer." },
+    { type: "tool-call", toolExecutionId: "x3", tool: "gmail.send", status: "unknown", error: "Gmail didn't answer in time." },
   ],
 };
 
@@ -33,6 +34,8 @@ describe("MessageParts", () => {
     expect(screen.getByText("Send email").parentElement).toHaveTextContent("Used Send email · done");
     expect(screen.getByText("Read inbox").parentElement).toHaveTextContent("Tried Read inbox · failed");
     expect(screen.getByText("The inbox didn't answer.")).toBeInTheDocument();
+    // A send whose outcome is unknown: no spinner, it says it may have happened.
+    expect(screen.getByText("Gmail didn't answer in time.").parentElement).toHaveTextContent("may have been done");
 
     expect(screen.getAllByText("@sales")).toHaveLength(2); // the text's highlighted mention, and the handoff card's handle
     expect(screen.getByText("Thought for 3s")).toBeInTheDocument(); // reasoning

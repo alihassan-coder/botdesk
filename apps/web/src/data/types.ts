@@ -157,7 +157,8 @@ export interface ToolCallPart {
   toolExecutionId: ID;
   /** Plugin id + tool name, like "demo.send_email". */
   tool: string;
-  status: "running" | "succeeded" | "failed" | "denied";
+  /** `unknown`: it failed after it may have been done (an email that may be out); its run waits for a person. */
+  status: "running" | "succeeded" | "failed" | "denied" | "unknown";
   error?: string;
 }
 

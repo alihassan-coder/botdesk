@@ -3,8 +3,10 @@
 The real pause and resume (LangGraph + Postgres checkpoints) is in test_approvals_postgres.py.
 """
 
+import asyncio
+import dataclasses
 import uuid
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -12,15 +14,15 @@ from typing import Any
 import httpx
 import pytest
 from botdesk_demo import demo_plugin
-from botdesk_plugin_sdk import PluginManifest, ToolContext, ToolSpec
+from botdesk_plugin_sdk import NotDone, PluginManifest, RiskClass, ToolContext, ToolSpec
 from fastapi import FastAPI
 from langchain_core.messages import BaseMessage
 from pydantic import BaseModel
-from sqlalchemy import update
+from sqlalchemy import select, update
 
 from src.core.database import utcnow
 from src.main import create_app
-from src.models import Approval, Run, ToolExecution
+from src.models import Approval, Run, RunEvent, ToolExecution
 from src.models.bot import SecurityLevel
 from src.plugins.registry import ToolRegistry, build_registry
 from src.runtime import tool_pipeline
@@ -520,3 +522,272 @@ async def test_a_tool_that_returns_something_unusable_fails_cleanly(world: World
         row = await db.get(ToolExecution, recorded.execution.id)
     assert row is not None and row.status == "failed"
     assert row.error is not None and why in row.error
+
+
+# A call whose outcome is unknown (ADR 0004 §2): a tool that isn't idempotent and failed after it
+# may have reached the other app stays `started`, and the run stops for a person. Telling the
+# model "the tool failed" would make it try again: a second email, with nobody asked.
+
+
+def slow_plugin(calls: Calls) -> PluginManifest:
+    """Tools with no web access that take longer than the pipeline waits."""
+
+    async def run(_args: CountArgs, _ctx: ToolContext) -> dict[str, Any]:
+        calls.count += 1
+        await asyncio.sleep(5)
+        return {"done": True}
+
+    def spec(name: str, *, idempotent: bool) -> ToolSpec:
+        return ToolSpec(
+            name=name,
+            title=name,
+            description=name,
+            args_model=CountArgs,
+            risk="external-send",
+            handler=run,
+            idempotent=idempotent,
+        )
+
+    return PluginManifest(
+        id="slow",
+        name="Slow",
+        version="1",
+        description="test",
+        tools=(spec("send", idempotent=False), spec("lookup", idempotent=True)),
+    )
+
+
+async def _row(world: World, execution_id: uuid.UUID) -> ToolExecution:
+    async with world.runs.sessionmaker() as db:
+        row = await db.get(ToolExecution, execution_id)
+    assert row is not None
+    return row
+
+
+async def _tool_events(world: World, execution_id: uuid.UUID) -> list[dict[str, Any]]:
+    async with world.runs.sessionmaker() as db:
+        events = await db.scalars(
+            select(RunEvent).where(RunEvent.run_id == world.run.run_id, RunEvent.kind == "tool_finished")
+        )
+        return [event.payload for event in events if event.payload["toolExecutionId"] == str(execution_id)]
+
+
+async def test_a_send_that_timed_out_may_have_gone_so_a_person_checks_and_it_never_runs_again(world: World) -> None:
+    world.registry.register(slow_plugin(world.calls))
+    risky = await world.record("slow.send", {}, level="autonomous")
+    safe = await world.record("slow.lookup", {}, level="autonomous")
+    deps = dataclasses.replace(world.execute_deps(), timeout_seconds=0.05)
+
+    with pytest.raises(NeedsAttention, match="may have been done") as stopped:
+        await tool_pipeline.execute(deps, risky.execution.id)
+    # The run comes back to this call (a resume, a restart): it still isn't run again.
+    with pytest.raises(NeedsAttention, match="can't tell whether it finished"):
+        await tool_pipeline.execute(deps, risky.execution.id)
+    timed_out = await tool_pipeline.execute(deps, safe.execution.id)
+
+    assert world.calls.count == 2  # the send once, the lookup once
+    assert "took longer than 0.05 seconds" in str(stopped.value)
+    assert timed_out.text == "The tool failed: It took longer than 0.05 seconds."  # idempotent: as before
+    row = await _row(world, risky.execution.id)
+    assert (row.status, row.result, row.finished_at) == ("started", None, None)
+    assert row.error == str(stopped.value)
+    # The chat's tool line stops spinning and says it may have been done.
+    unknown = await _tool_events(world, risky.execution.id)
+    assert unknown and all(event["status"] == "unknown" and event["error"] for event in unknown)
+    assert (await _row(world, safe.execution.id)).status == "failed"
+
+
+Service = Callable[[httpx.Request], httpx.Response]
+
+
+def web_plugin(calls: Calls, *, idempotent: bool = False) -> PluginManifest:
+    """Tools that call a web service through `ctx.http`, the way Gmail's send does."""
+
+    async def send(args: CountArgs, ctx: ToolContext) -> dict[str, Any]:
+        calls.count += 1
+        response = await ctx.http.request("POST", "https://api.example.com/send", json={"text": args.text})
+        if not response.ok:
+            raise RuntimeError(f"The service answered {response.status_code}.")
+        if args.text == "unreadable":
+            raise RuntimeError("The service's answer couldn't be read.")
+        if args.text == "not done":
+            raise NotDone("Nothing was sent.")  # it was: BotDesk saw the request go through
+        return {"sent": True}
+
+    async def checked_send(_args: CountArgs, ctx: ToolContext) -> dict[str, Any]:
+        calls.count += 1
+        response = await ctx.http.request("GET", "https://api.example.com/check")
+        raise RuntimeError(f"The check answered {response.status_code}, so nothing was sent.")
+
+    def spec(name: str, handler: Any) -> ToolSpec:
+        return ToolSpec(
+            name=name,
+            title=name,
+            description=name,
+            args_model=CountArgs,
+            risk="external-send",
+            handler=handler,
+            idempotent=idempotent,
+        )
+
+    return PluginManifest(
+        id="web",
+        name="Web",
+        version="1",
+        description="test",
+        tools=(spec("send", send), spec("checked_send", checked_send)),
+        egress=("api.example.com",),
+    )
+
+
+def answers(status: int) -> Service:
+    return lambda _request: httpx.Response(status, json={})
+
+
+def fails(error: type[httpx.TransportError]) -> Service:
+    def service(request: httpx.Request) -> httpx.Response:
+        raise error("the network", request=request)
+
+    return service
+
+
+async def _web_call(world: World, service: Service, *, tool: str = "web.send", text: str = "hi") -> Any:
+    """Record a call of a `web_plugin` tool (autonomous: it runs without asking), with `service`
+    answering its requests. Returns the record and the deps to run it with."""
+    if world.registry.plugin("web") is None:
+        world.registry.register(web_plugin(world.calls))
+    world.runs.tool_access.transport = httpx.MockTransport(service)
+    recorded = await world.record(tool, {"text": text}, level="autonomous")
+    deps = dataclasses.replace(world.execute_deps(), access=world.runs.tool_access)
+    return recorded, deps
+
+
+@pytest.mark.parametrize(
+    "service",
+    [
+        answers(500),  # Gmail's "backend error": the email may be out already
+        answers(503),
+        fails(httpx.ReadError),  # the connection dropped after the request left
+        fails(httpx.RemoteProtocolError),
+        fails(httpx.ReadTimeout),  # sent, and no answer in time
+        fails(httpx.WriteError),  # dropped while it was being sent
+    ],
+    ids=["500", "503", "read-error", "protocol-error", "read-timeout", "write-error"],
+)
+async def test_a_send_whose_answer_was_lost_or_failed_on_the_server_needs_a_person(
+    world: World, service: Service
+) -> None:
+    recorded, deps = await _web_call(world, service)
+
+    with pytest.raises(NeedsAttention, match="may have been done"):
+        await tool_pipeline.execute(deps, recorded.execution.id)
+    with pytest.raises(NeedsAttention):  # never run again
+        await tool_pipeline.execute(deps, recorded.execution.id)
+
+    assert world.calls.count == 1
+    assert (await _row(world, recorded.execution.id)).status == "started"
+    assert [event["status"] for event in await _tool_events(world, recorded.execution.id)] == ["unknown", "unknown"]
+
+
+async def test_a_send_that_went_through_but_failed_afterwards_needs_a_person(world: World) -> None:
+    # Saying "nothing was done" doesn't outweigh the request BotDesk saw go through.
+    for text in ("unreadable", "not done"):
+        recorded, deps = await _web_call(world, answers(200), text=text)
+        with pytest.raises(NeedsAttention):
+            await tool_pipeline.execute(deps, recorded.execution.id)
+        assert (await _row(world, recorded.execution.id)).status == "started"
+
+
+@pytest.mark.parametrize(
+    ("service", "why"),
+    [
+        (answers(400), "answered 400"),  # refused: nothing was sent
+        (answers(403), "answered 403"),
+        (answers(404), "answered 404"),
+        (answers(429), "answered 429"),
+        (fails(httpx.ConnectError), "Couldn't reach api.example.com"),  # never connected
+        (fails(httpx.ConnectTimeout), "took too long"),
+    ],
+    ids=["400", "403", "404", "429", "connect-error", "connect-timeout"],
+)
+async def test_a_send_that_certainly_did_not_go_fails_and_the_model_may_try_again(
+    world: World, service: Service, why: str
+) -> None:
+    recorded, deps = await _web_call(world, service)
+
+    outcome = await tool_pipeline.execute(deps, recorded.execution.id)
+
+    assert outcome.text.startswith("The tool failed: ") and why in outcome.text
+    row = await _row(world, recorded.execution.id)
+    assert row.status == "failed" and row.error is not None and why in row.error
+    assert [event["status"] for event in await _tool_events(world, recorded.execution.id)] == ["failed"]
+
+
+async def test_a_tool_that_stops_after_only_reading_fails_even_when_the_read_failed(world: World) -> None:
+    for service in (answers(200), answers(503), fails(httpx.ReadError)):
+        recorded, deps = await _web_call(world, service, tool="web.checked_send")
+        outcome = await tool_pipeline.execute(deps, recorded.execution.id)
+        assert outcome.text.startswith("The tool failed: ")
+        assert (await _row(world, recorded.execution.id)).status == "failed"
+
+
+async def test_an_idempotent_tool_that_fails_fails_as_before(world: World) -> None:
+    world.registry.register(web_plugin(world.calls, idempotent=True))
+    recorded, deps = await _web_call(world, answers(503))
+
+    outcome = await tool_pipeline.execute(deps, recorded.execution.id)
+
+    assert outcome.text == "The tool failed: The service answered 503."
+    assert (await _row(world, recorded.execution.id)).status == "failed"
+
+
+def raising_plugin(risk: RiskClass, error: Exception) -> PluginManifest:
+    """A tool with no web access that raises `error`."""
+
+    async def run(_args: CountArgs, _ctx: ToolContext) -> dict[str, Any]:
+        raise error
+
+    spec = ToolSpec(name="act", title="Act", description="act", args_model=CountArgs, risk=risk, handler=run)
+    return PluginManifest(id="raising", name="Raising", version="1", description="test", tools=(spec,))
+
+
+@pytest.mark.parametrize(
+    ("risk", "error", "unknown"),
+    [
+        ("external-send", RuntimeError("the outbox broke"), True),  # BotDesk can't see what it did
+        ("external-send", NotDone("The draft changed, so nothing was sent."), False),  # the tool says so
+        ("write-external", RuntimeError("halfway"), True),
+        ("read", RuntimeError("lookup broke"), False),  # reading again changes nothing
+        ("write-internal", RuntimeError("note broke"), False),  # inside BotDesk only
+    ],
+)
+async def test_without_web_access_only_the_tool_can_say_nothing_was_done(
+    world: World, risk: RiskClass, error: Exception, unknown: bool
+) -> None:
+    world.registry.register(raising_plugin(risk, error))
+    recorded = await world.record("raising.act", {}, level="autonomous")
+    assert recorded.approval is None  # autonomous: it runs without asking
+
+    if unknown:
+        with pytest.raises(NeedsAttention, match="may have been done"):
+            await tool_pipeline.execute(world.execute_deps(), recorded.execution.id)
+        assert (await _row(world, recorded.execution.id)).status == "started"
+    else:
+        outcome = await tool_pipeline.execute(world.execute_deps(), recorded.execution.id)
+        assert outcome.text == f"The tool failed: {error}"
+        assert (await _row(world, recorded.execution.id)).status == "failed"
+
+
+async def test_a_send_that_returns_something_unusable_may_have_gone(world: World) -> None:
+    async def run(_args: CountArgs, _ctx: ToolContext) -> Any:
+        return ["sent", "maybe"]
+
+    spec = ToolSpec(
+        name="send", title="Send", description="send", args_model=CountArgs, risk="external-send", handler=run
+    )
+    world.registry.register(PluginManifest(id="odd-send", name="Odd", version="1", description="t", tools=(spec,)))
+    recorded = await world.record("odd-send.send", {}, level="autonomous")
+
+    with pytest.raises(NeedsAttention, match="returned a list"):
+        await tool_pipeline.execute(world.execute_deps(), recorded.execution.id)
+    assert (await _row(world, recorded.execution.id)).status == "started"

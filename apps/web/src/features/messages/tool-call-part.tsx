@@ -1,4 +1,4 @@
-import { Ban, Check, TriangleAlert, Wrench } from "lucide-react";
+import { Ban, Check, CircleHelp, TriangleAlert, Wrench } from "lucide-react";
 import { Spinner } from "@/components/ui/spinner";
 import type { ToolCallPart as ToolCallPartData } from "@/data/types";
 import { toolTitle } from "@/lib/approval-text";
@@ -8,6 +8,8 @@ const STATUS = {
   succeeded: { icon: <Check className="size-3.5 text-success" />, verb: "Used", outcome: "done" },
   failed: { icon: <TriangleAlert className="size-3.5 text-destructive" />, verb: "Tried", outcome: "failed" },
   denied: { icon: <Ban className="size-3.5 text-muted-foreground" />, verb: "Didn't use", outcome: "not allowed" },
+  // It failed after it may have been done (say, Gmail's answer was lost): a person checks.
+  unknown: { icon: <CircleHelp className="size-3.5 text-destructive" />, verb: "Tried", outcome: "may have been done" },
 } satisfies Record<ToolCallPartData["status"], { icon: React.ReactNode; verb: string; outcome: string }>;
 
 /** A compact line for a tool the bot used: "Used Send email · done", or why it didn't work. */

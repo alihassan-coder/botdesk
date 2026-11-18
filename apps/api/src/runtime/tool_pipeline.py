@@ -7,6 +7,16 @@
 `succeeded` returns its saved result; a call left `started` (we can't tell if it finished)
 stops the run for a person unless the tool is idempotent.
 
+A call that fails is `failed`, and the model reads why and may try again, unless it may still
+have changed something outside BotDesk: a tool that isn't idempotent, with a risk above
+`write-internal`, that timed out, broke, or answered nonsense after it may have reached the other
+app (an email that went out before Gmail's answer was lost). Saying "failed" then would let the
+model send it again, so the call stays `started` and the run stops for a person
+(`NeedsAttention`). It certainly didn't happen when the tool never ran, when every request it
+sent that could change something certainly failed before the other app acted on it (no
+connection, a 4xx refusal; `ctx.http` keeps count), or, for a plugin that reaches other apps
+without `ctx.http` (MCP, no egress), when it raised `NotDone`.
+
 Transactions stay short: none is open while a tool runs.
 """
 
@@ -20,14 +30,14 @@ from dataclasses import dataclass, field
 from datetime import timedelta
 from typing import Any, Literal, Protocol
 
-from botdesk_plugin_sdk import RiskClass, ToolContext
+from botdesk_plugin_sdk import NotDone, RiskClass, ToolContext
 from pydantic import ValidationError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from src.core.database import utcnow
 from src.models.bot import SecurityLevel
 from src.plugins.registry import RegisteredTool
-from src.runtime.policy import LEVEL_NAMES, decide
+from src.runtime.policy import LEVEL_NAMES, STAYS_INSIDE, decide
 from src.runtime.reporter import RunReporter
 from src.runtime.tool_access import NO_ACCESS, ToolAccess, ToolAccessProvider
 from src.runtime.toolset import ConnectionRow
@@ -52,6 +62,10 @@ class ToolLookup(Protocol):
 
 class NeedsAttention(Exception):
     """A tool call may have half run, and running it again could do it twice. A person decides."""
+
+
+class OutcomeUnknown(NeedsAttention):
+    """The call failed after it may have changed something outside BotDesk. Its row stays `started`."""
 
 
 @dataclass(frozen=True)
@@ -179,9 +193,11 @@ async def execute(deps: ExecuteDeps, execution_id: uuid.UUID) -> ToolOutcome:
         if row.status in ("failed", "denied"):
             return ToolOutcome(text=f"Not done: {row.error or 'not approved.'}", tainted=False)
         if row.status == "started" and not (tool and tool.spec.idempotent):
-            raise NeedsAttention(
-                f"{row.tool_name} was started but we can't tell whether it finished. Check before trying again."
-            )
+            why = f"{row.tool_name} was started but we can't tell whether it finished. Check before trying again."
+            deps.reporter.add(db, "tool_finished", finished_event(row.id, row.tool_name, error=why, status="unknown"))
+            await db.commit()
+            deps.reporter.announce()
+            raise NeedsAttention(why)
         if row.status not in ("ready", "started"):  # e.g. still waiting for approval: never run it
             raise RuntimeError(f"Tool execution {execution_id} can't run while {row.status}")
         claimed = await executions.claim(db, execution_id, from_status=row.status)
@@ -192,7 +208,18 @@ async def execute(deps: ExecuteDeps, execution_id: uuid.UUID) -> ToolOutcome:
         await db.commit()
     deps.reporter.announce()
 
-    result, error = await _run_tool(deps, tool, tool_call_id, args, decided_with=decided_with)
+    try:
+        result, error = await _run_tool(deps, tool, tool_call_id, args, decided_with=decided_with)
+    except OutcomeUnknown as unknown:
+        # The row stays `started`: whether it happened is for a person to find out. Its line in
+        # the chat says so instead of spinning.
+        async with deps.sessionmaker() as db:
+            await executions.note_unknown_outcome(db, execution_id, error=str(unknown))
+            event = finished_event(execution_id, row.tool_name, error=str(unknown), status="unknown")
+            deps.reporter.add(db, "tool_finished", event)
+            await db.commit()
+        deps.reporter.announce()
+        raise
     untrusted = bool(tool and tool.spec.untrusted_output and error is None)
     async with deps.sessionmaker() as db:
         await executions.finish(db, execution_id, result=result, error=error)
@@ -214,7 +241,8 @@ async def _run_tool(
     *,
     decided_with: uuid.UUID | None,
 ) -> tuple[dict[str, Any] | None, str | None]:
-    """Call the plugin with a timeout. Returns (result, None) or (None, why it failed).
+    """Call the plugin with a timeout. Returns (result, None) or (None, why it failed), or raises
+    `OutcomeUnknown` when it failed but may still have changed something outside BotDesk.
     `decided_with`: the connection the call was recorded (and maybe approved) with."""
     if tool is None:
         return None, "This tool isn't available any more."
@@ -224,8 +252,10 @@ async def _run_tool(
         return None, ACCOUNT_CHANGED
     # An MCP call (re-check its definition, then call) gets its own limit (ADR 0012 §6).
     timeout = MCP_CALL_TIMEOUT_SECONDS if is_mcp_plugin(tool.plugin_id) else deps.timeout_seconds
+    opened: ToolAccess | None = None  # set once the tool is about to run
     try:
         async with asyncio.timeout(timeout), _access(deps, tool, tool_call_id) as access:
+            opened = access
             # `http` reaches only the plugin's hosts and adds the connection's credential itself:
             # the tool never sees it (ADR 0010 §8).
             context = ToolContext(
@@ -239,12 +269,45 @@ async def _run_tool(
                 connection=access.connection,
             )
             result = await tool.spec.handler(tool.spec.args_model.model_validate(args), context)
-    except TimeoutError:
+    except TimeoutError as error:
+        if _may_have_happened(tool, error, opened):
+            raise OutcomeUnknown(
+                f"{tool.name} may have been done: it took longer than {timeout:g} seconds, and we can't tell "
+                "whether it finished. Check before trying again."
+            ) from None
         return None, f"It took longer than {timeout:g} seconds."
     except Exception as error:
         logger.exception("Tool %s failed in run %s", tool.name, deps.run.run_id)
-        return None, str(error) or type(error).__name__
-    return _checked_result(tool.name, result)
+        why = str(error) or type(error).__name__
+        if _may_have_happened(tool, error, opened):
+            raise OutcomeUnknown(
+                f"{tool.name} may have been done: it failed partway ({why}), and we can't tell whether it "
+                "finished. Check before trying again."
+            ) from None
+        return None, why
+    checked, problem = _checked_result(tool.name, result)
+    if problem and _changes_outside(tool):
+        # It ran to the end and did whatever it does; only its answer is unusable.
+        raise OutcomeUnknown(f"{problem} It may have been done: check before trying again.")
+    return checked, problem
+
+
+def _changes_outside(tool: RegisteredTool) -> bool:
+    """Running it twice could do something twice outside BotDesk (send two emails)."""
+    return not tool.spec.idempotent and tool.spec.risk not in STAYS_INSIDE
+
+
+def _may_have_happened(tool: RegisteredTool, error: Exception, access: ToolAccess | None) -> bool:
+    """Whether a call that raised `error` may still have changed something outside BotDesk."""
+    if not _changes_outside(tool):
+        return False  # running it again is harmless: it fails, as it always did
+    if access is None:
+        return False  # it never started (the time ran out while its account was being opened)
+    if access.may_have_changed_something():
+        return True  # a request that could change something may have been acted on
+    if access.sees_every_request:
+        return False  # it reaches other apps only through ctx.http, and nothing there changed
+    return not isinstance(error, NotDone)  # BotDesk can't see what it did: only the tool can say
 
 
 def _checked_result(tool_name: str, result: Any) -> tuple[dict[str, Any] | None, str | None]:
@@ -284,7 +347,8 @@ def finished_event(
     error: str | None = None,
     status: str | None = None,
 ) -> dict[str, Any]:
-    """`tool_finished` data. `status`: succeeded, failed, or denied (it never ran)."""
+    """`tool_finished` data. `status`: succeeded, failed, denied (it never ran), or unknown (it
+    may have been done; the run waits for a person)."""
     return {
         "toolExecutionId": str(execution_id),
         "tool": tool_name,

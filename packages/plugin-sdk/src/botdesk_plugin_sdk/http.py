@@ -14,6 +14,8 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import Any, Protocol
 
+from botdesk_plugin_sdk.outcome import NotDone
+
 Params = Mapping[str, str | int | float | bool]
 
 
@@ -22,16 +24,17 @@ class HttpError(Exception):
     and never contains a credential. A tool may let it propagate: the call then fails with it."""
 
 
-class HostNotAllowed(HttpError):
-    """The URL isn't https, or its host isn't in the plugin's `egress`."""
+class HostNotAllowed(HttpError, NotDone):
+    """The URL isn't https, or its host isn't in the plugin's `egress`. Nothing was sent."""
 
 
 class ResponseTooLarge(HttpError):
     """The answer was bigger than BotDesk accepts for one tool call."""
 
 
-class NotConnected(HttpError):
-    """There is no usable account for this call: none connected, revoked, or it needs reconnecting."""
+class NotConnected(HttpError, NotDone):
+    """There is no usable account for this call: none connected, revoked, or it needs reconnecting.
+    Nothing was sent."""
 
 
 @dataclass(frozen=True)

@@ -8,6 +8,7 @@ import uuid
 from typing import Any
 
 import httpx
+from botdesk_plugin_sdk import NoArgs, PluginManifest, ToolContext, ToolSpec
 from langchain_core.messages import BaseMessage, ToolMessage
 from sqlalchemy import select, update
 
@@ -324,3 +325,41 @@ async def test_the_model_is_looked_up_once_per_run(pg: Postgres) -> None:
     run = (await pg.client.get(f"{org}/runs/{run_id}")).json()
     assert (run["status"], run["stepsUsed"]) == ("succeeded", 3)
     assert len(lookups) == 1
+
+
+async def test_a_send_that_may_have_gone_out_stops_the_run_instead_of_being_sent_again(pg: Postgres) -> None:
+    """Autonomous sends without asking. A send that failed after it may have gone out (Gmail's
+    answer lost) must not reach the model as "failed": it would send again (ADR 0004 §2)."""
+    sent: list[str] = []
+
+    async def send(_args: NoArgs, _ctx: ToolContext) -> dict[str, Any]:
+        sent.append("email")
+        raise RuntimeError("the answer was lost")
+
+    tool = ToolSpec(
+        name="send", title="Send", description="Send it.", args_model=NoArgs, risk="external-send", handler=send
+    )
+    pg.runs.registry.register(PluginManifest(id="flaky", name="Flaky", version="1", description="test", tools=(tool,)))
+    use_model(pg, ScriptedToolModel(script=[("flaky.send", {}), ("flaky.send", {})]))  # it would try twice
+    me = await sign_up(pg.client)
+    org = f"/api/v1/orgs/{me['organizations'][0]['id']}"
+    # A new bot gets every loaded plugin without an account, so Flaky too.
+    bot = (await pg.client.post(f"{org}/bots", json={"name": "Scout", "securityLevel": "autonomous"})).json()
+    chat = (await pg.client.post(f"{org}/threads/dm", json={"botId": bot["id"]})).json()
+    thread = f"{org}/threads/{chat['id']}"
+
+    run_id = await _send(pg.client, thread, "Send the launch email")
+    await pg.runs.wait_until_idle()
+
+    run = (await pg.client.get(f"{org}/runs/{run_id}")).json()
+    assert run["status"] == "needs_attention" and "may have been done" in run["error"], run
+    assert sent == ["email"]
+    (execution,) = await _executions(pg)
+    assert execution.status == "started"
+    finished = [e["data"]["data"] for e in await _events(pg.client, thread) if e["event"] == "tool_finished"]
+    assert [event["status"] for event in finished] == ["unknown"]
+
+    await pg.runs.recover_after_restart()  # a worker restart doesn't pick it up again
+    await pg.runs.wait_until_idle()
+    assert sent == ["email"]
+    assert (await pg.client.get(f"{org}/runs/{run_id}")).json()["status"] == "needs_attention"

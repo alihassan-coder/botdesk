@@ -1,7 +1,7 @@
 """mcp servers: OAuth sign-in settings (slice 7.3)
 
 Revision ID: d4b8e1f0a372
-Revises: 73107c948749
+Revises: 4c1e9b7d2a80
 Create Date: 2026-11-17 23:10:00.000000
 
 """
@@ -14,7 +14,7 @@ from sqlalchemy.dialects import postgresql
 
 # revision identifiers, used by Alembic.
 revision: str = "d4b8e1f0a372"
-down_revision: str | Sequence[str] | None = "73107c948749"
+down_revision: str | Sequence[str] | None = "4c1e9b7d2a80"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

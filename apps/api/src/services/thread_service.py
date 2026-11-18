@@ -5,6 +5,7 @@ Bot replies come in a later slice; for now messages are stored and read back.
 """
 
 import uuid
+from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any
 
@@ -396,17 +397,50 @@ async def can_follow(db: AsyncSession, thread_id: uuid.UUID, user_id: uuid.UUID)
     return found is not None
 
 
-async def leave_groups(db: AsyncSession, *, org_id: uuid.UUID, user_id: uuid.UUID) -> None:
+@dataclass
+class LeftGroups:
+    """What someone leaving the organization did to its groups. The caller saves `changed`'s
+    `thread_updated` events, and stops the runs in `emptied` before deleting those (`delete_groups`)."""
+
+    changed: list[ThreadOut] = field(default_factory=list)  # still have people in them
+    emptied: list[uuid.UUID] = field(default_factory=list)  # nobody left: no one could reach them again
+
+
+async def leave_groups(db: AsyncSession, *, org_id: uuid.UUID, user_id: uuid.UUID) -> LeftGroups:
     """Someone leaving the organization leaves its groups too, so a group shows who can really
-    read it. Their DMs stay theirs (no one else is in them). The caller commits."""
-    groups = select(Thread.id).where(Thread.org_id == org_id, Thread.kind == "group")
+    read it. Their DMs stay theirs (no one else is in them). The groups are locked first, in id
+    order, as a group change locks its group. A group left with no person in it is to be deleted
+    rather than handed to someone: its history was only ever theirs and its bots'. The caller commits."""
+    theirs = select(ThreadParticipant.thread_id).where(
+        ThreadParticipant.participant_type == "user", ThreadParticipant.participant_id == user_id
+    )
+    locked = select(Thread).where(Thread.org_id == org_id, Thread.kind == "group", Thread.id.in_(theirs))
+    groups = list(await db.scalars(locked.order_by(Thread.id).with_for_update()))
+    if not groups:
+        return LeftGroups()
+    ids = [group.id for group in groups]
     await db.execute(
         delete(ThreadParticipant).where(
             ThreadParticipant.participant_type == "user",
             ThreadParticipant.participant_id == user_id,
-            ThreadParticipant.thread_id.in_(groups),
+            ThreadParticipant.thread_id.in_(ids),
         )
     )
+    with_people = set(
+        await db.scalars(
+            select(ThreadParticipant.thread_id)
+            .where(ThreadParticipant.thread_id.in_(ids), ThreadParticipant.participant_type == "user")
+            .distinct()
+        )
+    )
+    changed = await thread_outs(db, [group for group in groups if group.id in with_people])
+    return LeftGroups(changed=changed, emptied=[group.id for group in groups if group.id not in with_people])
+
+
+async def delete_groups(db: AsyncSession, thread_ids: list[uuid.UUID]) -> None:
+    """Delete these groups with their messages and runs (stop the runs first). The caller commits."""
+    if thread_ids:
+        await db.execute(delete(Thread).where(Thread.id.in_(thread_ids), Thread.kind == "group"))
 
 
 async def list_messages(

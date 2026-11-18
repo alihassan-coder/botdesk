@@ -14,7 +14,7 @@ from sqlalchemy import delete
 
 from src.controllers import thread_controller
 from src.core.database import utcnow
-from src.models import Run, Task, ThreadParticipant
+from src.models import Run, Task, Thread, ThreadParticipant
 from src.services import run_service
 from tests.conftest import TEST_SETTINGS, FakeProviders, api_client, sign_up, sql_statements
 
@@ -259,9 +259,10 @@ async def test_someone_removed_from_the_organization_leaves_its_groups_and_their
         )
         return [event async for event in stream]
 
-    # A tab Omar left open stops hearing either chat.
-    for thread_id in (group["id"], dm["id"]):
-        assert await asyncio.wait_for(follow(thread_id), timeout=5) == []
+    # A tab Omar left open stops hearing either chat: the group's stream sends the change that
+    # took him out (so his browser drops it) and ends; his DM's simply ends.
+    assert [e.event for e in await asyncio.wait_for(follow(group["id"]), timeout=5)] == ["thread_updated"]
+    assert await asyncio.wait_for(follow(dm["id"]), timeout=5) == []
 
 
 async def test_deleting_a_bot_locks_its_groups_first_as_group_changes_do(acme: Org) -> None:
@@ -348,3 +349,21 @@ async def test_runs_that_work_in_a_chat_they_arent_in_may_still_start(acme: Org)
         assert await run_service.left_its_group(db, lead_run) is False
         guest_run = await db.get(Run, uuid.UUID(scout_run))
         assert guest_run is not None and await run_service.left_its_group(db, guest_run) is False
+
+
+async def test_leaving_the_organization_updates_its_groups_and_ends_ones_left_with_nobody(acme: Org) -> None:
+    """Someone removed from the organization leaves its groups: the others in a group hear it live,
+    and a group they were the only person in is deleted (no one could reach it again; its bots'
+    unfinished runs there are stopped first)."""
+    shared = await acme.group(bots=["Chief"], people=["omar@acme.dev"])
+    await acme.sign_in("omar@acme.dev")
+    alone = await acme.group(bots=["Scout"], people=[])
+    await acme.client.post(acme.path(alone, "/messages"), json={"text": "Draft it"})  # a queued run for Scout
+    await acme.sign_in("sara@acme.dev")
+
+    assert (await acme.client.delete(f"{acme.org}/members/{acme.people['omar@acme.dev']}")).status_code == 204
+
+    events = (await acme.client.get(acme.path(shared, "/events"), params={"after": 0, "follow": "false"})).text
+    assert "event: thread_updated" in events and acme.people["omar@acme.dev"] not in events.split("thread_updated")[-1]
+    async with acme.app.state.sessionmaker() as db:
+        assert await db.get(Thread, uuid.UUID(alone["id"])) is None

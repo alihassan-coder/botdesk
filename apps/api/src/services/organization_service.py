@@ -119,8 +119,9 @@ async def change_role(
 
 async def remove_member(
     db: AsyncSession, *, org_id: uuid.UUID, actor_id: uuid.UUID, actor_role: str, user_id: uuid.UUID
-) -> None:
-    """Admins remove people; anyone can leave. Owners can only be removed by owners."""
+) -> thread_service.LeftGroups:
+    """Admins remove people; anyone can leave. Owners can only be removed by owners. Returns what
+    that did to the organization's groups (the caller announces and finishes it)."""
     membership = await _membership_or_404(db, org_id, user_id)
     leaving = actor_id == user_id
     if not leaving and actor_role not in ("owner", "admin"):
@@ -132,7 +133,7 @@ async def remove_member(
             raise Conflict("An organization needs at least one owner. Make someone else owner first.")
     await db.delete(membership)
     # They leave its groups too (their open chats stop: `thread_service.can_follow`).
-    await thread_service.leave_groups(db, org_id=org_id, user_id=user_id)
+    return await thread_service.leave_groups(db, org_id=org_id, user_id=user_id)
 
 
 async def list_members(db: AsyncSession, org_id: uuid.UUID) -> list[MemberOut]:

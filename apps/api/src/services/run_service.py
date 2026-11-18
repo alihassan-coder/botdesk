@@ -696,6 +696,18 @@ async def unfinished_in_thread(db: AsyncSession, thread_id: uuid.UUID, *, bot_id
     return list(await db.scalars(query))
 
 
+async def unfinished_in_threads(db: AsyncSession, thread_ids: list[uuid.UUID]) -> list[uuid.UUID]:
+    """Every run in these chats that hasn't ended, oldest first: what deleting them stops first."""
+    if not thread_ids:
+        return []
+    query = (
+        select(Run.id)
+        .where(Run.thread_id.in_(thread_ids), Run.status.in_([*ACTIVE_STATUSES, *PAUSED_STATUSES]))
+        .order_by(Run.created_at, Run.id)
+    )
+    return list(await db.scalars(query))
+
+
 async def thread_runs(db: AsyncSession, thread_id: uuid.UUID, *, active: bool) -> ThreadRuns:
     """A chat's runs, newest first (only the unfinished ones when `active`), and the chat's
     newest event id, read in one statement so they describe the same moment: a stream that

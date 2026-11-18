@@ -2,7 +2,7 @@ import uuid
 
 from fastapi import APIRouter, status
 
-from src.api.deps import CurrentUser, Db, OrgAccess
+from src.api.deps import CurrentUser, Db, OrgAccess, Runs
 from src.controllers import organization_controller
 from src.schemas.organization import MemberOut, MemberRoleUpdate, OrgOut, OrgUpdate
 
@@ -38,6 +38,7 @@ async def change_member_role(user_id: uuid.UUID, body: MemberRoleUpdate, access:
 
 
 @router.delete("/{org_id}/members/{user_id}", status_code=status.HTTP_204_NO_CONTENT)
-async def remove_member(user_id: uuid.UUID, access: OrgAccess, db: Db) -> None:
-    """Remove someone (owners and admins), or leave (your own id). The last owner can't leave."""
-    await organization_controller.remove_member(db, access, user_id)
+async def remove_member(user_id: uuid.UUID, access: OrgAccess, db: Db, runs: Runs) -> None:
+    """Remove someone (owners and admins), or leave (your own id). The last owner can't leave.
+    They leave the organization's groups; a group left with nobody in it is deleted."""
+    await organization_controller.remove_member(db, access, runs, user_id)

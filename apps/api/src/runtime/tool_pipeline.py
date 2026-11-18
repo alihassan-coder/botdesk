@@ -27,7 +27,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from src.core.database import utcnow
 from src.models.bot import SecurityLevel
 from src.plugins.registry import RegisteredTool
-from src.runtime.policy import LEVEL_NAMES, decide
+from src.runtime.policy import LEVEL_NAMES, PolicyDecision, decide
 from src.runtime.reporter import RunReporter
 from src.runtime.tool_access import NO_ACCESS, ToolAccess, ToolAccessProvider
 from src.runtime.toolset import ConnectionRow
@@ -83,9 +83,11 @@ def prepare(
     level: SecurityLevel,
     tainted: bool,
     connections: Mapping[str, ConnectionRow] | None = None,
+    capped_by_ceiling: bool = False,
 ) -> PreparedCall:
     """Validate the arguments, work out the risk and ask the policy. No side effects.
-    `connections`: the toolset's connection for each plugin (by plugin id)."""
+    `connections`: the toolset's connection for each plugin (by plugin id). `capped_by_ceiling`:
+    `level` is the organization's ceiling, below the bot's own (a refusal names the right one)."""
     tool = tools.get(request.name)
     if tool is None:
         unknown = f"There is no tool called {request.name}."
@@ -102,8 +104,9 @@ def prepare(
     policy = decide(level, tool.spec.risk, tainted=tainted, egress=tool.spec.egress)
     refusal: str | None = None
     if policy.decision == "deny":
+        whose = "your organization's highest security level" if capped_by_ceiling else "this bot's security level"
         refusal = (
-            f"Not allowed: this bot's security level ({LEVEL_NAMES[level]}) doesn't allow "
+            f"Not allowed: {whose} ({LEVEL_NAMES[level]}) doesn't allow "
             f"{policy.risk} actions. Tell the person what you would have done instead."
         )
     trace = policy.trace + (_via(tool.plugin_id, connection) if connection else "")
@@ -112,6 +115,23 @@ def prepare(
 
 def _via(plugin_id: str, connection: ConnectionRow) -> str:
     return f" · via={plugin_id}:{connection.account_label} ({connection.owner_kind})"
+
+
+def recheck_after_approval(level: SecurityLevel, risk: RiskClass, *, tainted: bool) -> PolicyDecision | None:
+    """An approved call meets the policy again, at the run's level now (the organization's
+    ceiling may have dropped while it waited). The approval stands for `ask` and `auto`; a `deny`
+    comes back with what the model and the tool line are told. `risk` is the one recorded with
+    the call (taint rules already applied)."""
+    policy = decide(level, risk, tainted=tainted)
+    return policy if policy.decision == "deny" else None
+
+
+def lowered_ceiling_refusal(level: SecurityLevel, risk: RiskClass) -> str:
+    return (
+        f"Not done: your organization's highest security level was lowered to {LEVEL_NAMES[level]} after this "
+        f"was approved, and {LEVEL_NAMES[level]} doesn't allow {risk} actions. "
+        "Tell the person what you would have done instead."
+    )
 
 
 async def record(

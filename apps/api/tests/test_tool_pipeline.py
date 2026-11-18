@@ -520,3 +520,17 @@ async def test_a_tool_that_returns_something_unusable_fails_cleanly(world: World
         row = await db.get(ToolExecution, recorded.execution.id)
     assert row is not None and row.status == "failed"
     assert row.error is not None and why in row.error
+
+
+def test_a_refusal_says_whether_the_bot_or_the_organization_set_the_level() -> None:
+    send = ToolCallRequest("c1", "demo.send_email", {"to": "sara@acme.dev", "subject": "Hi"})
+    registry = build_registry(["demo"])
+
+    by_bot = tool_pipeline.prepare(registry, send, level="read-only", tainted=False)
+    by_org = tool_pipeline.prepare(registry, send, level="read-only", tainted=False, capped_by_ceiling=True)
+
+    assert by_bot.refusal is not None and by_bot.refusal.startswith(
+        "Not allowed: this bot's security level (Read only)"
+    )
+    assert by_org.refusal is not None
+    assert by_org.refusal.startswith("Not allowed: your organization's highest security level (Read only)")

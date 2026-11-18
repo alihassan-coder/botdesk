@@ -233,6 +233,9 @@ class RunContext:
     task: TaskBrief | None = None
     teammates: list[Teammate] = field(default_factory=list)
     more_teammates: int = 0
+    # The strictest of the bot's level and the run's own, without the organization's ceiling:
+    # when it's looser than `security_level`, the ceiling is what limits the run (and refusals say so).
+    own_security_level: str = ""
 
 
 # A routine's trigger is a system message (people see "Routine: {name}") whose `routine-run` part
@@ -440,6 +443,7 @@ async def run_context(db: AsyncSession, run_id: uuid.UUID) -> RunContext:
         # the bot's level are read now, so tightening either reaches runs already queued (and the
         # graph reads the ceiling again before each tool call).
         security_level=strictest_level(row.org_ceiling, row.security_level, row.run_level or row.security_level),
+        own_security_level=strictest_level(row.security_level, row.run_level or row.security_level),
         memory_enabled=row.memory_enabled,
         tainted=tainted,
         group=row.kind == "group",

@@ -237,6 +237,8 @@ async def test_lowering_the_ceiling_mid_run_applies_from_the_next_tool_call(org:
     send = await _execution(org, run_id, "demo.send_email")
     assert (send.decision, send.status) == ("deny", "denied")
     assert "Read only" in (send.decision_trace or "")
+    # The bot is Autonomous: the refusal says it's the organization's level, not the bot's.
+    assert (send.error or "").startswith("Not allowed: your organization's highest security level (Read only)")
 
 
 async def test_a_handoffs_child_is_capped_by_the_ceiling(org: Org) -> None:  # noqa: F811
@@ -277,3 +279,43 @@ async def test_a_new_email_triggers_a_run_capped_by_the_ceiling() -> None:
 
         (run,) = await _runs(world)
         assert await _level(world.app, run.id) == "ask-before-acting"
+
+
+async def _approve_after(world: Org, ceiling: str) -> tuple[uuid.UUID, ToolExecution]:
+    """Chief (Ask before acting) asks to send an email; the ceiling becomes `ceiling` while the
+    approval waits; then someone approves it."""
+    await world.client.patch(f"{world.path}/bots/{world.bots['chief']}", json={"securityLevel": "ask-before-acting"})
+    world.model.plans["Chief"] = [("", [SEND])]
+    run_id = await world.send(await world.dm("chief"), "Email Sara")
+    assert (await world.run(run_id)).status == "waiting_approval"
+    (approval,) = (await world.client.get(f"{world.path}/approvals")).json()
+
+    assert (await world.client.patch(world.path, json={"maxSecurityLevel": ceiling})).status_code == 200
+    url = f"{world.path}/approvals/{approval['id']}/decide"
+    assert (await world.client.post(url, json={"decision": "approve"})).status_code == 200
+    await world.runs.wait_until_idle()
+    return run_id, await _execution(world, run_id, "demo.send_email")
+
+
+async def test_an_approved_call_is_refused_when_the_ceiling_dropped_while_it_waited(org: Org) -> None:  # noqa: F811
+    run_id, send = await _approve_after(org, "read-only")
+
+    assert (send.status, send.started_at) == ("denied", None)  # the email was never sent
+    assert send.error is not None
+    assert send.error.startswith("Not done: your organization's highest security level was lowered to Read only")
+    assert "deny" in send.decision_trace.rsplit("·", 1)[-1]
+    assert (await org.run(run_id)).status == "succeeded"
+    # The person's decision stays theirs; the tool line and the bot say why it wasn't done.
+    (approval,) = (await org.client.get(f"{org.path}/approvals?status=all")).json()
+    assert approval["status"] == "approved"
+    finished = [data for kind, data, _ in await org.events(run_id) if kind == "tool_finished"]
+    assert [(e["status"], e["error"]) for e in finished] == [("denied", send.error)]
+    reply = (await org.messages(f"{org.path}/threads/{(await org.run(run_id)).thread_id}"))[-1]
+    assert [(p["type"], p.get("status")) for p in reply["parts"][:2]] == [("approval", None), ("tool-call", "denied")]
+    assert send.error in org.prompt_text("Chief")
+
+
+async def test_an_approved_call_still_runs_when_the_lowered_ceiling_still_allows_it(org: Org) -> None:  # noqa: F811
+    _, send = await _approve_after(org, "ask-before-acting")
+
+    assert send.status == "succeeded"

@@ -93,3 +93,22 @@ async def test_changes_to_a_group_at_the_same_moment_wait_for_each_other(pg: Pos
             .where(ThreadParticipant.thread_id == uuid.UUID(group["id"]), ThreadParticipant.participant_type == "user")
         )
     assert people == 1
+
+
+async def test_deleting_a_bot_while_its_group_changes_never_deadlocks(pg: Postgres) -> None:
+    """Taking the lead bot out of a group while it's being deleted: both lock the group's row
+    before changing who's in it (or its lead), so one waits for the other instead of each holding
+    what the other needs. Before, one of them failed with a 500 (a deadlock)."""
+    me = await sign_up(pg.client)
+    org = f"/api/v1/orgs/{me['organizations'][0]['id']}"
+    for attempt in range(3):
+        lead = (await pg.client.post(f"{org}/bots", json={"name": f"Lead {attempt}"})).json()
+        other = (await pg.client.post(f"{org}/bots", json={"name": f"Other {attempt}"})).json()
+        body = {"title": "Launch", "botIds": [lead["id"], other["id"]]}
+        group = (await pg.client.post(f"{org}/threads/groups", json=body)).json()
+        removed, deleted = await asyncio.gather(
+            pg.client.delete(f"{org}/threads/{group['id']}/participants/bot/{lead['id']}"),
+            pg.client.delete(f"{org}/bots/{lead['id']}"),
+        )
+        # The removal finds the bot already gone (404) if the delete went first.
+        assert (removed.status_code in (200, 404), deleted.status_code) == (True, 204), removed.text

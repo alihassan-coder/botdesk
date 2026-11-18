@@ -258,3 +258,16 @@ async def test_someone_removed_from_the_organization_leaves_its_groups_and_their
     # A tab Omar left open stops hearing either chat.
     for thread_id in (group["id"], dm["id"]):
         assert await asyncio.wait_for(follow(thread_id), timeout=5) == []
+
+
+async def test_deleting_a_bot_locks_its_groups_first_as_group_changes_do(acme: Org) -> None:
+    """A group change locks the group's row, then changes who's in it. Deleting a bot changes the
+    same rows (it leaves its groups; a group it leads loses its lead), so it locks its groups first,
+    in id order, or the two could wait for each other (a deadlock on Postgres)."""
+    await acme.group(bots=["Scout"], people=[])
+    await acme.group(bots=["Chief", "Scout"], people=[])
+    async with sql_statements(acme.app) as seen:
+        assert (await acme.client.delete(f"{acme.org}/bots/{acme.bots['Scout']}")).status_code == 204
+    lock = next(i for i, s in enumerate(seen) if s.startswith("SELECT threads.id FROM threads") and "ORDER BY" in s)
+    leave = next(i for i, s in enumerate(seen) if s.startswith("DELETE FROM thread_participants"))
+    assert lock < leave

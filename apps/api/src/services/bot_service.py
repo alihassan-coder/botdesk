@@ -89,7 +89,16 @@ async def delete_bot(db: AsyncSession, bot: Bot) -> None:
         .where(Routine.bot_id == bot.id)
         .values(enabled=False, next_run_at=None, disabled_reason=BOT_REMOVED)
     )
-    # It leaves its groups (a group's lead points at it with ON DELETE SET NULL).
+    # It leaves its groups (a group's lead points at it with ON DELETE SET NULL). Those groups are
+    # locked first, in id order, as a group change locks its group before changing who's in it,
+    # so the two wait for each other in turn instead of in a circle (a deadlock on Postgres).
+    in_its_groups = select(ThreadParticipant.thread_id).where(
+        ThreadParticipant.participant_type == "bot", ThreadParticipant.participant_id == bot.id
+    )
+    groups = select(Thread.id).where(
+        Thread.kind == "group", or_(Thread.id.in_(in_its_groups), Thread.lead_bot_id == bot.id)
+    )
+    await db.execute(groups.order_by(Thread.id).with_for_update())
     await db.execute(
         delete(ThreadParticipant).where(
             ThreadParticipant.participant_type == "bot", ThreadParticipant.participant_id == bot.id

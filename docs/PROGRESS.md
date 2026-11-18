@@ -2,6 +2,15 @@
 
 A short history of BotDesk, newest first. For one checklist of what is done and what is next, see [ROADMAP.md](ROADMAP.md).
 
+## 2026-11-18: Email can't be sent twice, and send cards show everything that's sent
+
+Details: [backend guide](backend/README.md#tools-and-approvals), [plugin README](../plugins/gmail/README.md); [ADR 0015](adr/0015-gmail-attachments-formatting-and-drafts.md) has an update section.
+
+- **A send that may have gone out stops the run.** A tool that isn't idempotent and changes something outside BotDesk (`gmail.send`, `send_draft`, an MCP tool, the demo's send) and timed out, broke or answered nonsense after it may have reached the other app was marked failed, so the model tried again, and an Autonomous bot sent a second email with nobody asked. Now the call stays `started`, its line in the chat says "Tried … · may have been done" (`tool_finished` with `status: "unknown"`), and the run stops as needs attention; it is never run again. It still fails (and the model may retry) when it certainly didn't happen: the tool never ran, or every request that could change something got a 4xx refusal or never connected (`ctx.http` keeps count; a 5xx, a dropped connection or a read timeout counts as "may have"). Plugins whose requests BotDesk can't see (no egress, MCP) say "nothing was done" with the SDK's new `NotDone`.
+- **`gmail.send_draft` shows the draft's text.** `gmail.list_drafts` returns each draft's whole text and attachments' names; `send_draft` carries them, the card shows them, and nothing is sent if the draft's text or attachments changed since (as for its recipients and subject).
+- **No hidden characters on a card.** Gmail refuses zero-width characters, right-to-left overrides, invisible "tag" letters and line separators in subjects, bodies and attachment names; every card writes any that reach it as `[U+202E]` (SDK: `hidden_characters`, `show_hidden`). Emoji and scripts keep the joiners they need. Also checked: summaries already list cc and bcc, Markdown HTML already escapes the model's markup, header injection was already refused; tests added for each.
+- **Later:** a needs-attention run still only offers Stop (no "it was sent / it wasn't" answer that lets it go on); the send-draft card reads the plain-text part when a draft has both plain text and HTML.
+
 ## 2026-11-17: Unread counts, managing groups, dated model prices
 
 Details: [backend guide](backend/README.md#unread-counts), [frontend guide](frontend/README.md#talking-to-the-api).

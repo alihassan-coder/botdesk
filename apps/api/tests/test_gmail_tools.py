@@ -21,6 +21,7 @@ from src.runtime import tool_pipeline, toolset
 from src.runtime.reporter import RunReporter
 from src.runtime.runner import RunManager
 from src.runtime.tool_pipeline import ExecuteDeps, NeedsAttention, ToolCallRequest
+from src.services import connection_service
 from src.services.tool_execution_service import RunRef
 from tests.test_oauth import GOOGLE_SETTINGS, Team, acme
 
@@ -341,3 +342,23 @@ async def test_a_gmail_send_that_may_have_gone_out_is_never_reported_as_failed(
         async with team.app.state.sessionmaker() as db:
             row = await db.get(ToolExecution, execution_id)
         assert row is not None and row.status == ("started" if unknown else "failed")
+
+
+async def test_a_send_that_worked_stays_sent_when_recording_the_connections_use_fails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async with acme() as team:
+        team.google.gmail = {f"{ME}/messages/send": {"id": "18f0c1", "threadId": "18f0c0"}}
+        run = await _inbox_dm(team)
+        deps, execution_id = await _send_autonomously(team, run, "gmail__send", MAIL)
+
+        async def broken(*_args: Any, **_kwargs: Any) -> None:
+            raise RuntimeError("the database went away")
+
+        monkeypatch.setattr(connection_service, "record_use", broken)
+        outcome = await tool_pipeline.execute(deps, execution_id)
+
+        assert '"sent": true' in outcome.text
+        async with team.app.state.sessionmaker() as db:
+            row = await db.get(ToolExecution, execution_id)
+        assert row is not None and row.status == "succeeded"

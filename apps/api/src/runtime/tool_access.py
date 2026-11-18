@@ -22,6 +22,7 @@ The credential is decrypted only when the tool makes its first request. After th
 connection's `last_used_at` is saved (the call's record already names the connection).
 """
 
+import logging
 import uuid
 from collections.abc import AsyncIterator, Mapping
 from contextlib import asynccontextmanager
@@ -39,6 +40,8 @@ from src.services import connection_service
 from src.services.credential_vault import CredentialVault
 from src.services.oauth_flow import OAuth
 from src.services.tool_execution_service import RunRef
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -137,9 +140,14 @@ class ToolAccessProvider:
                     await self._record_use(connection.id)
 
     async def _record_use(self, connection_id: uuid.UUID) -> None:
-        async with self.sessionmaker() as db:
-            await connection_service.record_use(db, connection_id, when=utcnow())
-            await db.commit()
+        """Bookkeeping after the call: a failure here must never turn a call that worked (an email
+        sent) into one that failed."""
+        try:
+            async with self.sessionmaker() as db:
+                await connection_service.record_use(db, connection_id, when=utcnow())
+                await db.commit()
+        except Exception as error:
+            logger.warning("Couldn't record that connection %s was used (%s).", connection_id, type(error).__name__)
 
 
 def _info(connection: Connection) -> ConnectionInfo:

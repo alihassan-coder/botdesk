@@ -24,10 +24,11 @@ import asyncio
 import json
 import logging
 import uuid
-from collections.abc import Mapping
+from collections.abc import Awaitable, Callable, Mapping
 from contextlib import AbstractAsyncContextManager, nullcontext
 from dataclasses import dataclass, field
 from datetime import timedelta
+from functools import partial
 from typing import Any, Literal, Protocol
 
 from botdesk_plugin_sdk import NotDone, RiskClass, ToolContext
@@ -193,7 +194,10 @@ async def execute(deps: ExecuteDeps, execution_id: uuid.UUID) -> ToolOutcome:
         if row.status in ("failed", "denied"):
             return ToolOutcome(text=f"Not done: {row.error or 'not approved.'}", tainted=False)
         if row.status == "started" and not (tool and tool.spec.idempotent):
+            if row.error:  # already noted (and shown) as unknown: say so again, nothing more
+                raise NeedsAttention(row.error)
             why = f"{row.tool_name} was started but we can't tell whether it finished. Check before trying again."
+            await executions.note_unknown_outcome(db, row.id, error=why)
             deps.reporter.add(db, "tool_finished", finished_event(row.id, row.tool_name, error=why, status="unknown"))
             await db.commit()
             deps.reporter.announce()
@@ -208,17 +212,11 @@ async def execute(deps: ExecuteDeps, execution_id: uuid.UUID) -> ToolOutcome:
         await db.commit()
     deps.reporter.announce()
 
+    note = partial(_note_unknown, deps, execution_id, row.tool_name)
     try:
-        result, error = await _run_tool(deps, tool, tool_call_id, args, decided_with=decided_with)
+        result, error = await _run_tool(deps, tool, tool_call_id, args, decided_with=decided_with, stopped=note)
     except OutcomeUnknown as unknown:
-        # The row stays `started`: whether it happened is for a person to find out. Its line in
-        # the chat says so instead of spinning.
-        async with deps.sessionmaker() as db:
-            await executions.note_unknown_outcome(db, execution_id, error=str(unknown))
-            event = finished_event(execution_id, row.tool_name, error=str(unknown), status="unknown")
-            deps.reporter.add(db, "tool_finished", event)
-            await db.commit()
-        deps.reporter.announce()
+        await note(str(unknown))
         raise
     untrusted = bool(tool and tool.spec.untrusted_output and error is None)
     async with deps.sessionmaker() as db:
@@ -233,6 +231,16 @@ async def execute(deps: ExecuteDeps, execution_id: uuid.UUID) -> ToolOutcome:
     return _success(row.tool_name, result or {}, untrusted=untrusted)
 
 
+async def _note_unknown(deps: ExecuteDeps, execution_id: uuid.UUID, tool_name: str, why: str) -> None:
+    """The row stays `started`: whether it happened is for a person to find out. Its line in the
+    chat says so instead of spinning."""
+    async with deps.sessionmaker() as db:
+        await executions.note_unknown_outcome(db, execution_id, error=why)
+        deps.reporter.add(db, "tool_finished", finished_event(execution_id, tool_name, error=why, status="unknown"))
+        await db.commit()
+    deps.reporter.announce()
+
+
 async def _run_tool(
     deps: ExecuteDeps,
     tool: RegisteredTool | None,
@@ -240,10 +248,13 @@ async def _run_tool(
     args: dict[str, Any],
     *,
     decided_with: uuid.UUID | None,
+    stopped: Callable[[str], Awaitable[None]] | None = None,
 ) -> tuple[dict[str, Any] | None, str | None]:
     """Call the plugin with a timeout. Returns (result, None) or (None, why it failed), or raises
     `OutcomeUnknown` when it failed but may still have changed something outside BotDesk.
-    `decided_with`: the connection the call was recorded (and maybe approved) with."""
+    `decided_with`: the connection the call was recorded (and maybe approved) with. `stopped` is
+    told why when the call is cancelled midway (Stop, the run's time limit, a worker shutting
+    down) and may have happened: a cancellation carries nothing out, so it's said on the way."""
     if tool is None:
         return None, "This tool isn't available any more."
     if decided_with != deps.connection_ids.get(tool.plugin_id):
@@ -252,6 +263,10 @@ async def _run_tool(
         return None, ACCOUNT_CHANGED
     # An MCP call (re-check its definition, then call) gets its own limit (ADR 0012 §6).
     timeout = MCP_CALL_TIMEOUT_SECONDS if is_mcp_plugin(tool.plugin_id) else deps.timeout_seconds
+    try:
+        parsed = tool.spec.args_model.model_validate(args)  # checked before: fails only if the tool changed
+    except ValidationError as invalid:
+        return None, f"The arguments don't fit {tool.name} any more: {invalid.error_count()} problem(s)."
     opened: ToolAccess | None = None  # set once the tool is about to run
     try:
         async with asyncio.timeout(timeout), _access(deps, tool, tool_call_id) as access:
@@ -268,7 +283,16 @@ async def _run_tool(
                 http=access.http,
                 connection=access.connection,
             )
-            result = await tool.spec.handler(tool.spec.args_model.model_validate(args), context)
+            result = await tool.spec.handler(parsed, context)
+    except asyncio.CancelledError:
+        if stopped is not None and _may_have_happened(tool, None, opened):
+            why = (
+                f"{tool.name} may have been done: it was stopped while it was running, and we can't tell "
+                "whether it finished. Check before trying again."
+            )
+            # Shielded: a second cancellation mustn't lose the note (the runner reads it).
+            await asyncio.shield(stopped(why))
+        raise
     except TimeoutError as error:
         if _may_have_happened(tool, error, opened):
             raise OutcomeUnknown(

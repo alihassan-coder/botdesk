@@ -710,7 +710,8 @@ async def test_a_send_whose_answer_was_lost_or_failed_on_the_server_needs_a_pers
 
     assert world.calls.count == 1
     assert (await _row(world, recorded.execution.id)).status == "started"
-    assert [event["status"] for event in await _tool_events(world, recorded.execution.id)] == ["unknown", "unknown"]
+    # One line, said once: coming back to the call doesn't add another.
+    assert [event["status"] for event in await _tool_events(world, recorded.execution.id)] == ["unknown"]
 
 
 async def test_a_send_that_went_through_but_failed_afterwards_needs_a_person(world: World) -> None:
@@ -823,3 +824,45 @@ async def test_a_send_that_returns_something_unusable_may_have_gone(world: World
     looked, deps = await _web_call(world, answers(200), tool="web.odd_send", text="look")
     outcome = await tool_pipeline.execute(deps, looked.execution.id)
     assert outcome.text.startswith("The tool failed: web.odd_send returned a list")
+
+
+async def test_a_send_stopped_midway_says_it_may_have_been_done_and_is_never_run_again(world: World) -> None:
+    """Stop or the run's time limit cancels a call in flight: a cancellation carries nothing out,
+    so the call says on the way that it may have happened (the runner then turns a run that ran
+    out of time into needs_attention, and the chat's line stops spinning)."""
+    world.registry.register(slow_plugin(world.calls))
+    risky = await world.record("slow.send", {}, level="autonomous")
+    safe = await world.record("slow.lookup", {}, level="autonomous")
+    deps = world.execute_deps()  # the tool's own limit (5 s) is longer than the run's below
+
+    for recorded in (risky, safe):
+        with pytest.raises(TimeoutError):
+            async with asyncio.timeout(0.05):  # the run's time limit, or Stop
+                await tool_pipeline.execute(deps, recorded.execution.id)
+
+    row = await _row(world, risky.execution.id)
+    assert row.status == "started" and row.error is not None and "stopped while it was running" in row.error
+    assert [event["status"] for event in await _tool_events(world, risky.execution.id)] == ["unknown"]
+    assert (await _row(world, safe.execution.id)).error is None  # idempotent: running it again is fine
+    async with world.runs.sessionmaker() as db:
+        assert await tool_execution_service.unknown_outcome(db, world.run.run_id) == row.error
+
+    with pytest.raises(NeedsAttention, match="stopped while it was running"):
+        await tool_pipeline.execute(deps, risky.execution.id)
+    assert world.calls.count == 2  # each ran once
+    assert len(await _tool_events(world, risky.execution.id)) == 1
+
+
+async def test_arguments_that_no_longer_fit_fail_before_the_tool_runs(world: World) -> None:
+    world.registry.register(raising_plugin("external-send", RuntimeError("it ran")))
+    recorded = await world.record("raising.act", {}, level="autonomous")
+    async with world.runs.sessionmaker() as db:
+        await db.execute(
+            update(ToolExecution).where(ToolExecution.id == recorded.execution.id).values(args={"text": 5})
+        )
+        await db.commit()
+
+    outcome = await tool_pipeline.execute(world.execute_deps(), recorded.execution.id)
+
+    assert outcome.text.startswith("The tool failed: The arguments don't fit raising.act any more")
+    assert (await _row(world, recorded.execution.id)).status == "failed"

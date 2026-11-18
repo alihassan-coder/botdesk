@@ -363,3 +363,40 @@ async def test_a_send_that_may_have_gone_out_stops_the_run_instead_of_being_sent
     await pg.runs.wait_until_idle()
     assert sent == ["email"]
     assert (await pg.client.get(f"{org}/runs/{run_id}")).json()["status"] == "needs_attention"
+
+
+async def test_a_send_cut_off_by_the_runs_time_limit_waits_for_a_person(pg: Postgres) -> None:
+    """The run's time limit cancels a send in flight: it may be out, so the run needs attention
+    (not "failed", after which a new message could have the bot send it again)."""
+    started: list[str] = []
+
+    async def send(_args: NoArgs, _ctx: ToolContext) -> dict[str, Any]:
+        started.append("email")
+        await asyncio.sleep(30)  # longer than the run may take
+        return {"sent": True}
+
+    tool = ToolSpec(
+        name="send", title="Send", description="Send it.", args_model=NoArgs, risk="external-send", handler=send
+    )
+    pg.runs.registry.register(
+        PluginManifest(id="sluggish", name="Sluggish", version="1", description="t", tools=(tool,))
+    )
+    pg.runs.settings.run_max_seconds = 1  # new runs get a one-second time limit
+    use_model(pg, ScriptedToolModel(script=[("sluggish.send", {})]))
+    me = await sign_up(pg.client)
+    org = f"/api/v1/orgs/{me['organizations'][0]['id']}"
+    bot = (await pg.client.post(f"{org}/bots", json={"name": "Scout", "securityLevel": "autonomous"})).json()
+    chat = (await pg.client.post(f"{org}/threads/dm", json={"botId": bot["id"]})).json()
+    thread = f"{org}/threads/{chat['id']}"
+
+    run_id = await _send(pg.client, thread, "Send the launch email")
+    await pg.runs.wait_until_idle()
+
+    run = (await pg.client.get(f"{org}/runs/{run_id}")).json()
+    assert run["status"] == "needs_attention", run
+    assert "time limit" in run["error"] and "stopped while it was running" in run["error"]
+    assert started == ["email"]
+    (execution,) = await _executions(pg)
+    assert execution.status == "started"
+    finished = [e["data"]["data"] for e in await _events(pg.client, thread) if e["event"] == "tool_finished"]
+    assert [event["status"] for event in finished] == ["unknown"]

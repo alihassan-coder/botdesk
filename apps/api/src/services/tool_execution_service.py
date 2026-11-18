@@ -175,6 +175,15 @@ async def note_unknown_outcome(db: AsyncSession, execution_id: uuid.UUID, *, err
     )
 
 
+async def unknown_outcome(db: AsyncSession, run_id: uuid.UUID) -> str | None:
+    """Why one of this run's calls may or may not have happened (`note_unknown_outcome`), if any."""
+    return await db.scalar(
+        select(ToolExecution.error)
+        .where(ToolExecution.run_id == run_id, ToolExecution.status == "started", ToolExecution.error.is_not(None))
+        .limit(1)
+    )
+
+
 async def mark_run_tainted(db: AsyncSession, run_id: uuid.UUID) -> None:
     """The run has read outside text. From now on, risky calls ask (ADR 0004 §5)."""
     await db.execute(update(Run).where(Run.id == run_id).values(tainted=True))

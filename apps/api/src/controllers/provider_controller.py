@@ -21,8 +21,11 @@ from src.core.secrets import SecretBox
 from src.model_providers import ProviderError
 from src.models import ProviderCredential
 from src.schemas.provider import ModelListOut, ProviderKeyIn, ProviderOut, ProviderProblem, ProviderTestOut
-from src.services import provider_service
+from src.services import organization_service, provider_service
 from src.services.model_catalog import ModelCatalog
+
+# What OrgAccess says to someone who isn't a member (so it tells them nothing more).
+NOT_A_MEMBER = "Organization not found."
 
 
 async def list_providers(db: AsyncSession, access: Access, settings: Settings) -> list[ProviderOut]:
@@ -155,6 +158,10 @@ async def save_my_key(
     except ProviderError as error:
         raise BadRequest(f"That key didn't work: {error}") from error
 
+    # Still a member? They may have been removed while the provider answered (removing them waits
+    # for this transaction now, and takes the key with them).
+    if not await organization_service.lock_membership(db, org_id=org_id, user_id=user_id):
+        raise NotFound(NOT_A_MEMBER)
     credential = await provider_service.save_credential(
         db, org_id=org_id, user_id=user_id, member_id=user_id, connection=draft, secrets=secrets, verified_at=utcnow()
     )

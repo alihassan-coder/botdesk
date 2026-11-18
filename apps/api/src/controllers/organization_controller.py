@@ -8,6 +8,7 @@ from src.api.deps import Access
 from src.models import User
 from src.schemas.organization import MemberOut, MemberRoleUpdate, OrgCreate, OrgOut, OrgUpdate
 from src.services import organization_service
+from src.services.model_catalog import ModelCatalog
 
 
 async def list_mine(db: AsyncSession, user: User) -> list[OrgOut]:
@@ -54,8 +55,10 @@ async def change_role(db: AsyncSession, access: Access, user_id: uuid.UUID, body
     return member
 
 
-async def remove_member(db: AsyncSession, access: Access, user_id: uuid.UUID) -> None:
-    await organization_service.remove_member(
+async def remove_member(db: AsyncSession, access: Access, user_id: uuid.UUID, *, catalog: ModelCatalog) -> None:
+    removed_keys = await organization_service.remove_member(
         db, org_id=access.org.id, actor_id=access.user.id, actor_role=access.role, user_id=user_id
     )
     await db.commit()
+    for provider_id, key_id in removed_keys:  # their model lists, cached apart from the org's
+        catalog.forget(access.org.id, provider_id, member_key=key_id)

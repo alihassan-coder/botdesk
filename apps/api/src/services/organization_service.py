@@ -91,6 +91,13 @@ async def get_membership(db: AsyncSession, *, org_id: uuid.UUID, user_id: uuid.U
     return await db.get(Membership, (org_id, user_id))
 
 
+async def lock_membership(db: AsyncSession, *, org_id: uuid.UUID, user_id: uuid.UUID) -> bool:
+    """Whether they're still a member, holding their membership row until the transaction ends
+    (Postgres), so removing them waits for what this transaction saves for them, and takes it too."""
+    query = select(Membership.user_id).where(Membership.org_id == org_id, Membership.user_id == user_id)
+    return await db.scalar(query.with_for_update()) is not None
+
+
 async def org_and_role(db: AsyncSession, *, org_id: uuid.UUID, user_id: uuid.UUID) -> tuple[Organization, str] | None:
     """The organization and the user's role in it, in one query. None if they aren't a member."""
     row = (
@@ -169,8 +176,9 @@ async def change_role(
 
 async def remove_member(
     db: AsyncSession, *, org_id: uuid.UUID, actor_id: uuid.UUID, actor_role: str, user_id: uuid.UUID
-) -> None:
-    """Admins remove people; anyone can leave. Owners can only be removed by owners."""
+) -> list[tuple[str, uuid.UUID]]:
+    """Admins remove people; anyone can leave. Owners can only be removed by owners. Their own
+    model keys here go with them; returns those keys' (provider id, key id)."""
     membership = await _membership_or_404(db, org_id, user_id)
     leaving = actor_id == user_id
     if not leaving and actor_role not in ("owner", "admin"):
@@ -181,7 +189,7 @@ async def remove_member(
         if await _owner_count(db, org_id) == 1:
             raise Conflict("An organization needs at least one owner. Make someone else owner first.")
     await db.delete(membership)
-    await provider_service.delete_member_keys(db, org_id, user_id)
+    return await provider_service.delete_member_keys(db, org_id, user_id)
 
 
 async def list_members(db: AsyncSession, org_id: uuid.UUID) -> list[MemberOut]:

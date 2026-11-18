@@ -18,7 +18,7 @@ from sqlalchemy import select
 from src.core.database import utcnow
 from src.models import ProviderCredential
 from src.runtime.chat_model import ModelResolver, StandInModel
-from src.services import provider_service
+from src.services import organization_service, provider_service
 from src.services.model_catalog import ModelCatalog
 from src.services.provider_service import ProviderAccess
 from tests.conftest import TEST_SETTINGS, FakeProviders, api_client, sign_up
@@ -378,6 +378,46 @@ async def test_being_removed_by_an_admin_removes_your_keys_there(providers: Fake
 
         async with app.state.sessionmaker() as db:
             assert (await db.scalars(select(ProviderCredential))).all() == []
+
+
+async def test_a_key_saved_just_as_you_were_removed_is_not_kept(providers: FakeProviders) -> None:
+    """Removed while the provider checked the key: the save finds no membership and keeps nothing."""
+    async with api_client(TEST_SETTINGS, providers) as (app, client):
+        path, ali, sara = await _team(client)
+        providers.answer("api.openai.com", handler=openai_answer)
+        catalog = app.state.models
+        check = catalog.fetch
+
+        async def removed_meanwhile(connection: ProviderAccess) -> Any:
+            async with app.state.sessionmaker() as db:
+                await organization_service.remove_member(
+                    db,
+                    org_id=uuid.UUID(path.rsplit("/", 1)[1]),
+                    actor_id=uuid.UUID(ali["user"]["id"]),
+                    actor_role="owner",
+                    user_id=uuid.UUID(sara["user"]["id"]),
+                )
+                await db.commit()
+            return await check(connection)
+
+        catalog.fetch = removed_meanwhile
+        response = await client.put(f"{path}/me/providers/openai", json={"apiKey": OPENAI_KEY})
+
+        assert response.status_code == 404
+        async with app.state.sessionmaker() as db:
+            assert (await db.scalars(select(ProviderCredential))).all() == []
+
+
+async def test_leaving_drops_your_cached_model_lists_too(providers: FakeProviders) -> None:
+    async with api_client(TEST_SETTINGS, providers) as (app, client):
+        path, _, sara = await _team(client)
+        providers.answer("api.openai.com", handler=openai_answer)
+        assert (await client.put(f"{path}/me/providers/openai", json={"apiKey": OPENAI_KEY})).status_code == 200
+        assert any("#member-" in slot for _, slot in app.state.models._cache)  # saving filled it
+
+        assert (await client.delete(f"{path}/members/{sara['user']['id']}")).status_code == 204
+
+        assert not any("#member-" in slot for _, slot in app.state.models._cache)
 
 
 async def test_a_run_and_the_runs_it_hands_off_to_look_up_models_for_its_requester(org: Org) -> None:  # noqa: F811

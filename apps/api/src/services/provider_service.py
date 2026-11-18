@@ -392,11 +392,15 @@ async def record_check(db: AsyncSession, credential_id: uuid.UUID, *, ok: bool) 
     return found
 
 
-async def delete_member_keys(db: AsyncSession, org_id: uuid.UUID, member_id: uuid.UUID) -> None:
-    """Someone leaving an organization takes their own keys there with them."""
-    await db.execute(
-        delete(ProviderCredential).where(ProviderCredential.org_id == org_id, ProviderCredential.user_id == member_id)
+async def delete_member_keys(db: AsyncSession, org_id: uuid.UUID, member_id: uuid.UUID) -> list[tuple[str, uuid.UUID]]:
+    """Someone leaving an organization takes their own keys there with them. Returns each removed
+    key's (provider id, key id), for the caller to drop their cached model lists."""
+    removed = await db.execute(
+        delete(ProviderCredential)
+        .where(ProviderCredential.org_id == org_id, ProviderCredential.user_id == member_id)
+        .returning(ProviderCredential.provider, ProviderCredential.id)
     )
+    return [(provider, key_id) for provider, key_id in removed]
 
 
 async def delete_credential(

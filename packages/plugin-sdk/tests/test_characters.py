@@ -74,3 +74,12 @@ def test_show_hidden_makes_each_one_visible_and_keeps_the_rest() -> None:
 def test_describe_character_names_it() -> None:
     assert describe_character("\u202e") == "U+202E RIGHT-TO-LEFT OVERRIDE"
     assert describe_character("\ue000") == "U+E000 (no name)"
+
+
+def test_a_pile_of_combining_marks_is_found_but_real_accents_are_not() -> None:
+    base = "Pay 100"
+    piled = base + chr(0x0336) * 6  # stacked strokes: text that reads as struck out or smeared
+    assert hidden_characters(piled) == [11, 12]  # the fifth and sixth in a row
+    assert hidden_characters("e" + chr(0x0302) + chr(0x0301)) == []  # Vietnamese: two marks
+    assert hidden_characters(chr(0x05E9) + chr(0x05BC) + chr(0x05C1) + chr(0x05B8)) == []  # Hebrew: three
+    assert show_hidden(piled).endswith("[U+0336][U+0336]")

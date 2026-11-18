@@ -17,13 +17,24 @@
 import asyncio
 import re
 from email.utils import getaddresses
+from html import unescape
 from typing import Any
 
-from botdesk_plugin_sdk import ToolContext, ToolResult, ToolSpec
+from botdesk_plugin_sdk import ToolContext, ToolResult, ToolSpec, describe_character, hidden_characters
 from pydantic import BaseModel, Field, field_validator
 
 from botdesk_gmail import api
-from botdesk_gmail.text import MESSAGE_CAP, RESULT_CAP, Body, body_of, defuse, email_block, kept_headers
+from botdesk_gmail.text import (
+    MESSAGE_CAP,
+    RESULT_CAP,
+    Body,
+    body_of,
+    defuse,
+    email_block,
+    html_to_text,
+    kept_headers,
+    text_leaves,
+)
 from botdesk_gmail.tools import ID_PATTERN, MAX_SEARCH_RESULTS, NOTE, READ_SCOPE
 from botdesk_gmail.write_tools import (
     MAX_BODY,
@@ -37,6 +48,7 @@ from botdesk_gmail.write_tools import (
 _ID = re.compile(ID_PATTERN)
 _DRAFT_HEADERS = ("To", "Cc", "Bcc", "Subject")
 _CONTROL = re.compile(r"[\x00-\x1f\x7f]")
+_WORD = re.compile(r"\w+")
 _BLOCK = re.compile(r"\A\s*<email>\n?(.*?)\n?</email>\s*\Z", re.DOTALL)
 MAX_ATTACHMENTS = 20
 
@@ -105,6 +117,41 @@ def _content(draft: dict[str, Any]) -> tuple[str, list[str]]:
     return defuse(body.text), [str(attachment["name"]) for attachment in body.attachments]
 
 
+def _words(text: str) -> list[str]:
+    return _WORD.findall(text.casefold())
+
+
+def _unshowable(draft: dict[str, Any]) -> str | None:
+    """Why the card can't show what this draft sends, or None. The card shows the plain-text part
+    (the HTML as text when there is none), so:
+
+    - every other part must be plain text or HTML (a calendar invite, say, isn't shown);
+    - the HTML, when there is both, must say the same words in the same order (formatting, link
+      addresses written out and spacing aside), and must have no text hidden by CSS;
+    - no part, and no recipient or subject header, may hold a character that doesn't show
+      (checked before the text a bot reads drops some of them)."""
+    texts = text_leaves(_payload(draft))
+    if odd := sorted({mime for mime, _text in texts if mime not in ("text/plain", "text/html")}):
+        return f"It has a part the approval card can't show ({', '.join(odd)})."
+    plain = [text for mime, text in texts if mime == "text/plain" and text.strip()]
+    rich = [text for mime, text in texts if mime == "text/html"]
+    for _mime, text in texts:
+        if hidden := hidden_characters(unescape(text), layout=True):
+            return f"Its text has a character that doesn't show ({describe_character(unescape(text)[hidden[0]])})."
+    for header in _headers(draft) or []:
+        if isinstance(header, dict) and str(header.get("name", "")).title() in _DRAFT_HEADERS:
+            value = " ".join(str(header.get("value", "")).split())
+            if hidden := hidden_characters(value):
+                named = describe_character(value[hidden[0]])
+                return f"Its {header['name']} has a character that doesn't show ({named})."
+    shown = [html_to_text(markup) for markup in rich]
+    if [_words(text) for text in shown] != [_words(html_to_text(markup, keep_hidden=True)) for markup in rich]:
+        return "Its formatted (HTML) version has hidden text."
+    if plain and rich and _words(" ".join(plain)) != _words(" ".join(shown)):
+        return "Its formatted (HTML) version doesn't say the same as its plain text."
+    return None
+
+
 async def list_drafts(args: ListDraftsArgs, ctx: ToolContext) -> ToolResult:
     listing = await api.get(
         ctx.http, "drafts", what="drafts", account=_account(ctx), params={"maxResults": args.max_results}
@@ -128,7 +175,9 @@ async def list_drafts(args: ListDraftsArgs, ctx: ToolContext) -> ToolResult:
             "body": None,
             "attachments": attachments,
         }
-        if len(text) > MESSAGE_CAP:
+        if unshowable := _unshowable(draft):
+            entry["bodyLeftOut"] = f"{unshowable} So gmail.send_draft can't send it; the person can, from Gmail."
+        elif len(text) > MESSAGE_CAP:
             entry["bodyLeftOut"] = (
                 f"This draft's text is too long to show ({len(text)} characters), so gmail.send_draft can't "
                 "send it. The person can send it from Gmail."
@@ -169,6 +218,8 @@ def _difference(args: SendDraftArgs, draft: dict[str, Any]) -> str | None:
         and _one_line(subject) == _one_line(args.subject)
     ):
         return f"Draft {args.draft_id} isn't the email the approval showed."
+    if unshowable := _unshowable(draft):
+        return f"Draft {args.draft_id} can't be sent from a card: {unshowable}"
     text, attachments = _content(draft)
     if _one_line(text) != _one_line(args.body):
         return f"Draft {args.draft_id}'s text isn't the one the approval showed."

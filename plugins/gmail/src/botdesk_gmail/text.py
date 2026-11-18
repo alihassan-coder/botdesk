@@ -134,6 +134,17 @@ def _starts_on(line: str) -> bool:
     return line.lstrip().lower().startswith("on ")
 
 
+def text_leaves(payload: Any) -> list[tuple[str, str]]:
+    """Every part of a `format=full` payload that isn't an attachment, as (MIME type, its text
+    decoded and untouched: nothing stripped)."""
+    found: list[tuple[str, str]] = []
+    for part in _leaves(payload):
+        if not is_attachment(part):
+            content: dict[str, Any] = part["body"] if isinstance(part.get("body"), dict) else {}
+            found.append((str(part.get("mimeType", "")).lower(), decode(content.get("data"), charset_of(part))))
+    return found
+
+
 def is_attachment(part: Mapping[str, Any]) -> bool:
     content = part.get("body")
     return bool(part.get("filename")) or (isinstance(content, dict) and bool(content.get("attachmentId")))
@@ -217,10 +228,11 @@ class _Open:
 
 
 class _HtmlText(HTMLParser):
-    def __init__(self) -> None:
+    def __init__(self, *, keep_hidden: bool = False) -> None:
         super().__init__(convert_charrefs=True)
         self.out: list[str] = []
         self.stack: list[_Open] = []
+        self.keep_hidden = keep_hidden  # elements hidden by style or `hidden` count as shown
 
     @property
     def hidden(self) -> bool:
@@ -231,7 +243,7 @@ class _HtmlText(HTMLParser):
             if tag in ("br", "hr") and not self.hidden:
                 self.out.append("\n")
             return
-        hidden = self.hidden or tag in _SKIPPED or _hides(dict(attrs))
+        hidden = self.hidden or tag in _SKIPPED or (not self.keep_hidden and _hides(dict(attrs)))
         if tag == "li" and not hidden:
             self.out.append(self._bullet())
         elif tag in _BLOCKS and not hidden:
@@ -306,9 +318,10 @@ def _hides(attrs: Mapping[str, str | None]) -> bool:
     return bool(_HIDDEN_STYLE.search(style))
 
 
-def html_to_text(markup: str) -> str:
-    """Readable text from an email's HTML: no scripts, styles, hidden elements or images."""
-    parser = _HtmlText()
+def html_to_text(markup: str, *, keep_hidden: bool = False) -> str:
+    """Readable text from an email's HTML: no scripts, styles, hidden elements or images.
+    `keep_hidden`: elements hidden by CSS or `hidden` are kept (to tell whether there are any)."""
+    parser = _HtmlText(keep_hidden=keep_hidden)
     parser.feed(markup)
     parser.close()
     text = _ZERO_WIDTH.sub("", "".join(parser.out))

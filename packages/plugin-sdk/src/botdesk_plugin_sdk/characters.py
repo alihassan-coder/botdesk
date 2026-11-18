@@ -8,7 +8,8 @@ what is sent, or carry hidden text past the person. Plugins refuse them in what 
 
 Real writing keeps what it needs: emoji variation selectors (U+FE0E, U+FE0F) right after a
 symbol or a keycap's digit, and the joiners U+200D / U+200C between emoji or between letters of
-scripts that use them (Persian, Hindi, ...). Anywhere else they would only hide something.
+scripts that use them (Persian, Hindi, ...). Anywhere else they would only hide something. So
+does a pile of combining marks: more than `MAX_MARKS` in a row count too.
 This file uses character codes only, never the characters themselves.
 """
 
@@ -37,6 +38,9 @@ _ZWNJ, _ZWJ = chr(0x200C), chr(0x200D)
 _KEYCAP = chr(0x20E3)
 _KEYCAP_BASES = frozenset("#*0123456789")
 _FIRST_NON_LATIN = 0x0370  # Greek: letters from here on belong to scripts that may use joiners
+# Combining marks one letter may carry (accents, vowel points, a virama...). Real writing stays
+# within this; past it, a pile of marks hides or strikes out the text underneath.
+MAX_MARKS = 4
 
 
 def _hidden(char: str) -> bool:
@@ -63,7 +67,14 @@ def hidden_characters(text: str, *, layout: bool = False) -> list[int]:
     """Where `text` holds characters a card can't show honestly (their indexes; empty: none).
     `layout`: tabs and line breaks are fine (a body), not only spaces (a subject, a name)."""
     found: list[int] = []
+    marks = 0  # combining marks in a row so far
     for index, char in enumerate(text):
+        if unicodedata.category(char) in ("Mn", "Me") and not _hidden(char):
+            marks += 1
+            if marks > MAX_MARKS:  # a pile of them smears or strikes out the text it sits on
+                found.append(index)
+            continue
+        marks = 0
         if (layout and char in _LAYOUT) or not _hidden(char):
             continue
         # The character right before, if it was let through (one hidden character never vouches

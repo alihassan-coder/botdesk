@@ -280,9 +280,11 @@ async def _check_can_manage(db: AsyncSession, thread: Thread, *, user_id: uuid.U
 
 
 async def _lock(db: AsyncSession, thread: Thread, *, user_id: uuid.UUID) -> None:
-    """Lock the group's row until the caller commits (Postgres; SQLite writes one at a time anyway),
-    then check the asker is still in it."""
-    await db.execute(select(Thread.id).where(Thread.id == thread.id).with_for_update())
+    """Lock the group's row until the caller commits (Postgres; SQLite writes one at a time anyway)
+    and read it again, since a change that was waiting for the lock may have moved its lead; then
+    check the asker is still in it."""
+    locked = select(Thread).where(Thread.id == thread.id).with_for_update()
+    await db.execute(locked.execution_options(populate_existing=True))
     if not await _is_in(db, thread.id, user_id):
         raise NotFound(NOT_FOUND)
 

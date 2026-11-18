@@ -228,14 +228,16 @@ class ModelResolver:
         self.secrets = secrets
         self.catalog = catalog
         self.clock = clock
-        self._price_failed_at: dict[uuid.UUID, float] = {}  # org id → when its list last failed
-        self._price_locks: dict[uuid.UUID, asyncio.Lock] = {}  # one fetch per org at a time
+        # (org id, member id) → when its list last failed, and one fetch per key at a time. The
+        # member is None for the organization's (or the server's) key, the one prices come from.
+        self._price_failed_at: dict[tuple[uuid.UUID, uuid.UUID | None], float] = {}
+        self._price_locks: dict[tuple[uuid.UUID, uuid.UUID | None], asyncio.Lock] = {}
 
     async def price(self, org_id: uuid.UUID, model_id: str, requester_id: uuid.UUID | None = None) -> ModelPrice:
         """The model's price: OpenRouter's from its model list, the built-in providers' from
         `pricing.PRICE_TABLE`, and none for custom servers. Never fails: an unknown price is None.
-        OpenRouter's list is the organization's; without one, the key the requester's run uses
-        fetches it (prices are the same for every key)."""
+        Prices are the same for every key, so OpenRouter's list comes from the organization's key
+        (or the server's); only when neither exists does the requester's own key fetch it."""
         full_id = model_id or self.settings.default_model_id
         provider_id, _, model = full_id.partition(":")
         spec = BUILT_IN.get(provider_id)
@@ -250,37 +252,43 @@ class ModelResolver:
             return None
         models = self.catalog.cached(org_id, "openrouter")
         if models is None:  # not listed since the API started: fetch the list once (it's cached)
-            models = await self._fetch_openrouter_prices(org_id, self.catalog, requester_id)
+            models, has_key = await self._fetch_openrouter_prices(org_id, self.catalog, None)
+            if not has_key and requester_id is not None:
+                models, _ = await self._fetch_openrouter_prices(org_id, self.catalog, requester_id)
         if models is None:
             return None
         return next((info.pricing for info in models if info.model == model), None)
 
     async def _fetch_openrouter_prices(
-        self, org_id: uuid.UUID, catalog: ModelCatalog, requester_id: uuid.UUID | None
-    ) -> list[ModelInfo] | None:
-        """OpenRouter's model list for this org, fetched by one caller at a time: the others wait
-        and read the cache. After a failure, None for `PRICE_RETRY_SECONDS` without asking again."""
-        lock = self._price_locks.setdefault(org_id, asyncio.Lock())
+        self, org_id: uuid.UUID, catalog: ModelCatalog, member_id: uuid.UUID | None
+    ) -> tuple[list[ModelInfo] | None, bool]:
+        """OpenRouter's model list, and whether there was a key to ask with: the organization's (or
+        the server's) when `member_id` is None, else that member's own key only. One caller per key
+        at a time: the others wait and read the cache. After a failure, None for
+        `PRICE_RETRY_SECONDS` without asking again, for that key only, so one member's revoked key
+        never holds up anyone else's prices."""
+        slot = (org_id, member_id)
+        lock = self._price_locks.setdefault(slot, asyncio.Lock())
         async with lock:
-            if (models := catalog.cached(org_id, "openrouter")) is not None:
-                return models  # fetched while this call waited
-            failed_at = self._price_failed_at.get(org_id)
+            if member_id is None and (models := catalog.cached(org_id, "openrouter")) is not None:
+                return models, True  # fetched while this call waited
+            failed_at = self._price_failed_at.get(slot)
             if failed_at is not None and self.clock() - failed_at < PRICE_RETRY_SECONDS:
-                return None
+                return None, True
             try:
                 async with self.sessionmaker() as db:
                     connection = await provider_service.connection_for(
-                        db, org_id, "openrouter", self.settings, self.secrets, requester_id=requester_id
+                        db, org_id, "openrouter", self.settings, self.secrets, requester_id=member_id
                     )
-                if connection is None:
-                    return None
+                if connection is None or (member_id is not None and connection.source != "member"):
+                    return None, False
                 models = await catalog.models(org_id, connection)
             except Exception as error:  # a price is never worth failing a run for
                 logger.warning("OpenRouter prices unavailable for org %s: %s", org_id, type(error).__name__)
-                self._price_failed_at[org_id] = self.clock()
-                return None
-            self._price_failed_at.pop(org_id, None)
-            return models
+                self._price_failed_at[slot] = self.clock()
+                return None, True
+            self._price_failed_at.pop(slot, None)
+            return models, True
 
     async def __call__(self, org_id: uuid.UUID, model_id: str, requester_id: uuid.UUID | None = None) -> BaseChatModel:
         """`model_id` is "provider:model" (e.g. "groq:llama-3.3-70b-versatile"). Empty = DEFAULT_MODEL_ID.

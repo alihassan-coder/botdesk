@@ -19,6 +19,7 @@ from src.core.database import utcnow
 from src.models import ProviderCredential
 from src.runtime.chat_model import ModelResolver, StandInModel
 from src.services import provider_service
+from src.services.model_catalog import ModelCatalog
 from src.services.provider_service import ProviderAccess
 from tests.conftest import TEST_SETTINGS, FakeProviders, api_client, sign_up
 from tests.test_handoffs import TWO_TASKS, Org, org  # noqa: F401  (org is a fixture)
@@ -296,6 +297,62 @@ async def test_a_run_on_your_own_openrouter_key_is_still_priced(providers: FakeP
 
         assert saras.pricing is not None and saras.pricing.output_per_mtok == 15.0
         assert alis.pricing is None  # Ali's runs have no OpenRouter key: his never use Sara's
+
+
+SARAS_OPENROUTER, ALIS_OPENROUTER, ORGS_OPENROUTER = (
+    "sk-or-v1-sara00000000",
+    "sk-or-v1-ali000000000",
+    "sk-or-v1-org000000000",
+)
+
+
+def _openrouter(working: set[str]) -> Any:
+    """OpenRouter's /models, answering only the keys in `working` (others are revoked)."""
+
+    def answer(request: httpx.Request) -> httpx.Response:
+        key = request.headers.get("authorization", "").removeprefix("Bearer ")
+        return httpx.Response(200, json=OPENROUTER_MODELS) if key in working else httpx.Response(401, json={})
+
+    return answer
+
+
+def _fresh_resolver(app: Any, providers: FakeProviders) -> ModelResolver:
+    """A resolver whose catalog has nothing cached yet (saving a key fills the app's)."""
+    catalog = ModelCatalog(httpx.AsyncClient(transport=httpx.MockTransport(providers.handle)), allow_private_urls=True)
+    return ModelResolver(TEST_SETTINGS, app.state.sessionmaker, app.state.secrets, catalog)
+
+
+async def test_prices_come_from_the_organizations_key_when_it_has_one(providers: FakeProviders) -> None:
+    async with api_client(TEST_SETTINGS, providers) as (app, client):
+        path, _, sara = await _team(client)
+        providers.answer("openrouter.ai", handler=_openrouter({SARAS_OPENROUTER, ORGS_OPENROUTER}))
+        assert (await client.put(f"{path}/me/providers/openrouter", json={"apiKey": SARAS_OPENROUTER})).is_success
+        await _sign_in(client, "ali@acme.dev")
+        assert (await client.put(f"{path}/providers/openrouter", json={"apiKey": ORGS_OPENROUTER})).is_success
+        resolve = _fresh_resolver(app, providers)
+
+        price = await resolve.price(
+            uuid.UUID(path.rsplit("/", 1)[1]), "openrouter:x-ai/grok-4.5", uuid.UUID(sara["user"]["id"])
+        )
+
+        assert price.pricing is not None
+        assert providers.requests[-1].headers["authorization"] == f"Bearer {ORGS_OPENROUTER}"
+
+
+async def test_one_members_broken_openrouter_key_never_holds_up_anothers_prices(providers: FakeProviders) -> None:
+    async with api_client(TEST_SETTINGS, providers) as (app, client):
+        path, ali, sara = await _team(client)
+        working = {SARAS_OPENROUTER, ALIS_OPENROUTER}
+        providers.answer("openrouter.ai", handler=_openrouter(working))
+        assert (await client.put(f"{path}/me/providers/openrouter", json={"apiKey": SARAS_OPENROUTER})).is_success
+        await _sign_in(client, "ali@acme.dev")
+        assert (await client.put(f"{path}/me/providers/openrouter", json={"apiKey": ALIS_OPENROUTER})).is_success
+        working.discard(SARAS_OPENROUTER)  # Sara's key is revoked at OpenRouter
+        org_id, model = uuid.UUID(path.rsplit("/", 1)[1]), "openrouter:x-ai/grok-4.5"
+        resolve = _fresh_resolver(app, providers)
+
+        assert (await resolve.price(org_id, model, uuid.UUID(sara["user"]["id"]))).pricing is None
+        assert (await resolve.price(org_id, model, uuid.UUID(ali["user"]["id"]))).pricing is not None
 
 
 async def test_leaving_the_organization_removes_your_keys_there(providers: FakeProviders) -> None:

@@ -35,6 +35,8 @@ When you finish something, tick it here in the same pull request.
 - [x] Organizations, members, roles (only one owner can't leave), invitations
 - [x] Bots: create, edit, remove
 - [x] The org's default security level for new bots (Settings → Security)
+- [x] The org's security ceiling ("Highest level for every bot", Settings → Security): no bot set or run above it, routines, the Gmail trigger and handoff children included; lowering it reaches runs already going at their next tool call
+- [x] Create another organization from the org switcher (you're its owner)
 - [x] Chats: direct and group, message history with paging, sending
 - [x] Speed: no N+1 queries, one query per auth and org check, indexes
 
@@ -69,6 +71,7 @@ When you finish something, tick it here in the same pull request.
 ### Real AI
 - [ ] Set `SECRET_KEY` in `apps/api/.env`, then add a real key in Settings → Models & keys (owner, no code)
 - [x] Models and keys in settings, saved per organization: Anthropic, OpenAI, Gemini, OpenRouter, Groq and custom OpenAI-compatible servers; keys checked live and encrypted; live model lists; a searchable model picker for bots
+- [x] Member keys ("My keys"): a member's own key per built-in provider, used before the org's for the runs they're the requester of, seen by nobody else, never used for anyone else's run
 
 ### Plugins (step 3)
 - [x] Plugin SDK as its own package, and a uv workspace ([ADR 0006](adr/0006-repo-structure-plugins-and-project.md))

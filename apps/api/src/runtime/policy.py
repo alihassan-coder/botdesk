@@ -46,8 +46,13 @@ class PolicyDecision:
 
 
 def strictest_level(*levels: SecurityLevel) -> SecurityLevel:
-    """The effective level: the strictest of the organization's, the bot's and the routine's."""
+    """The effective level: the strictest of the organization's ceiling, the bot's and the routine's."""
     return min(levels, key=LEVELS.index)
+
+
+def looser_than(level: SecurityLevel, ceiling: SecurityLevel) -> bool:
+    """Whether `level` lets a bot do more on its own than `ceiling` allows."""
+    return LEVELS.index(level) > LEVELS.index(ceiling)
 
 
 def effective_risk(risk: RiskClass, *, egress: Egress, tainted: bool) -> RiskClass:

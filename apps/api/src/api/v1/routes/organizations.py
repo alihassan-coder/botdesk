@@ -2,9 +2,9 @@ import uuid
 
 from fastapi import APIRouter, status
 
-from src.api.deps import CurrentUser, Db, OrgAccess
+from src.api.deps import Catalog, CurrentUser, Db, Limiter, OrgAccess
 from src.controllers import organization_controller
-from src.schemas.organization import MemberOut, MemberRoleUpdate, OrgOut, OrgUpdate
+from src.schemas.organization import MemberOut, MemberRoleUpdate, OrgCreate, OrgOut, OrgUpdate
 
 router = APIRouter(prefix="/orgs", tags=["organizations"])
 
@@ -13,6 +13,13 @@ router = APIRouter(prefix="/orgs", tags=["organizations"])
 async def list_my_orgs(user: CurrentUser, db: Db) -> list[OrgOut]:
     """The organizations you belong to, with your role in each."""
     return await organization_controller.list_mine(db, user)
+
+
+@router.post("", status_code=status.HTTP_201_CREATED)
+async def create_org(body: OrgCreate, user: CurrentUser, db: Db, limiter: Limiter) -> OrgOut:
+    """A new organization. Whoever creates it is its owner, as with the first one at sign-up.
+    At most 5 an hour per person (429 with Retry-After)."""
+    return await organization_controller.create(db, user, body, limiter=limiter)
 
 
 @router.get("/{org_id}")
@@ -38,6 +45,7 @@ async def change_member_role(user_id: uuid.UUID, body: MemberRoleUpdate, access:
 
 
 @router.delete("/{org_id}/members/{user_id}", status_code=status.HTTP_204_NO_CONTENT)
-async def remove_member(user_id: uuid.UUID, access: OrgAccess, db: Db) -> None:
-    """Remove someone (owners and admins), or leave (your own id). The last owner can't leave."""
-    await organization_controller.remove_member(db, access, user_id)
+async def remove_member(user_id: uuid.UUID, access: OrgAccess, db: Db, catalog: Catalog) -> None:
+    """Remove someone (owners and admins), or leave (your own id). The last owner can't leave.
+    Their own model keys here go with them."""
+    await organization_controller.remove_member(db, access, user_id, catalog=catalog)

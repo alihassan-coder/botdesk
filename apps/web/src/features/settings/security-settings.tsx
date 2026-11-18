@@ -8,8 +8,10 @@ import { actions, useBots, useCurrentUser, useOrg } from "@/data/store";
 import type { PolicyDecision, SecurityLevel } from "@/data/types";
 import { RISK } from "@/features/approvals/risk";
 import { BotAvatar } from "@/features/bots/bot-avatar";
-import { POLICY, RISK_CLASSES, SECURITY_LEVELS } from "@/features/bots/security-levels";
+import { POLICY, RISK_CLASSES, SECURITY_LEVELS, securityLabel } from "@/features/bots/security-levels";
 import { SecurityLevelPicker } from "@/features/bots/security-level-picker";
+import { looserThan } from "@/lib/security-ceiling";
+import { SecurityCeiling } from "./security-ceiling";
 import { SettingsSection } from "./settings-shell";
 
 const DECISION: Record<PolicyDecision, { label: string; className: string }> = {
@@ -23,9 +25,9 @@ async function changeLevel(botId: string, securityLevel: SecurityLevel) {
   if (!result.ok) toast.error(result.error);
 }
 
-/** The org's default level for new bots. Owners and admins change it; "saved" only once it is. */
+/** The org's default level for new bots, at or under the ceiling. Owners and admins change it; "saved" only once it is. */
 function DefaultLevel() {
-  const saved = useOrg().defaultSecurityLevel;
+  const { defaultSecurityLevel: saved, maxSecurityLevel: ceiling } = useOrg();
   const canEdit = useCurrentUser().role !== "member";
   // The level being saved shows at once; a refusal puts the saved one back.
   const [saving, setSaving] = useState<SecurityLevel | null>(null);
@@ -40,18 +42,26 @@ function DefaultLevel() {
 
   return (
     <>
-      <SecurityLevelPicker value={saving ?? saved} onChange={(level) => void change(level)} disabled={!canEdit} />
+      <SecurityLevelPicker label="Default security level" value={saving ?? saved} max={ceiling} onChange={(level) => void change(level)} disabled={!canEdit} />
       {!canEdit && <p className="mt-3 text-sm text-muted-foreground">Only owners and admins can change the default.</p>}
     </>
   );
 }
 
-/** Settings → Security: the org default, each bot's level, and exactly what every level allows. */
+/** Settings → Security: the org's ceiling and default, each bot's level, and exactly what every level allows. */
 export function SecuritySettings() {
   const bots = useBots();
+  const ceiling = useOrg().maxSecurityLevel;
 
   return (
     <div className="flex flex-col gap-8">
+      <SettingsSection
+        title="Highest level for every bot"
+        description="No bot here acts above this level, whatever its own. Lowering it applies from each bot's next action, even mid-reply."
+      >
+        <SecurityCeiling />
+      </SettingsSection>
+
       <SettingsSection title="Default for new bots" description="New bots start at this level. Each bot's own level can be changed below.">
         <DefaultLevel />
       </SettingsSection>
@@ -61,11 +71,19 @@ export function SecuritySettings() {
           {bots.map((bot) => (
             <li key={bot.id} className="flex items-center gap-3 p-3">
               <BotAvatar name={bot.name} color={bot.avatarColor} size="sm" />
-              <span className="min-w-0 flex-1 truncate text-sm font-medium">{bot.name}</span>
+              <span className="flex min-w-0 flex-1 flex-col">
+                <span className="truncate text-sm font-medium">{bot.name}</span>
+                {looserThan(bot.securityLevel, ceiling) && (
+                  <span className="truncate text-xs text-muted-foreground">Capped at {securityLabel(ceiling)} by the organization</span>
+                )}
+              </span>
               <Select value={bot.securityLevel} onValueChange={(v) => changeLevel(bot.id, v as SecurityLevel)}>
                 <SelectTrigger className="w-40 @md:w-56" aria-label={`Security level for ${bot.name}`}><SelectValue /></SelectTrigger>
                 <SelectContent>
-                  {SECURITY_LEVELS.map((l) => <SelectItem key={l.value} value={l.value}>{l.label}</SelectItem>)}
+                  {SECURITY_LEVELS.map((l) => (
+                    // Above the ceiling can't be picked, but a bot already there still shows its own level.
+                    <SelectItem key={l.value} value={l.value} disabled={looserThan(l.value, ceiling) && l.value !== bot.securityLevel}>{l.label}</SelectItem>
+                  ))}
                 </SelectContent>
               </Select>
             </li>

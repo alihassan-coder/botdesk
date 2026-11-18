@@ -185,19 +185,19 @@ async def reply_cards(
     it paused for handed-off tasks) and core tools like `team.handoff`, whose handoff card is what
     people see (ADR 0014)."""
     rows = await db.execute(
-        select(ToolExecution, Approval.id)
+        select(ToolExecution, Approval.id, Approval.status)
         .outerjoin(Approval, Approval.tool_execution_id == ToolExecution.id)
         .where(ToolExecution.run_id == run_id)
         .order_by(ToolExecution.created_at, ToolExecution.id)
     )
     excluded = set(exclude_execution_ids)
     cards: list[dict[str, Any]] = []
-    for execution, approval_id in rows:
+    for execution, approval_id, approval_status in rows:
         if str(execution.id) in excluded or is_core_tool(execution.tool_name):
             continue
         if approval_id:
             cards.append({"type": "approval", "approvalId": str(approval_id)})
-        if execution.status in _SHOWN_STATUSES and not _denied_by_a_person(execution, approval_id):
+        if execution.status in _SHOWN_STATUSES and not _denied_by_a_person(execution, approval_status):
             cards.append(tool_call_part(execution))
     return cards
 
@@ -226,9 +226,28 @@ async def settle(
     )
 
 
-def _denied_by_a_person(execution: ToolExecution, approval_id: uuid.UUID | None) -> bool:
-    """Its approval card already says so (Denied or Expired); a tool line would repeat it."""
-    return approval_id is not None and execution.status == "denied"
+async def refuse_approved(db: AsyncSession, execution_id: uuid.UUID, *, error: str, trace: str) -> bool:
+    """An approved call (`ready`) that the policy refuses after all (the organization's ceiling
+    dropped while it waited): `denied` with why, never run. The approval keeps the person's
+    decision. False if the call had moved on already."""
+    result = await db.execute(
+        update(ToolExecution)
+        .where(ToolExecution.id == execution_id, ToolExecution.status == "ready")
+        .values(
+            status="denied",
+            error=error,
+            decision_trace=ToolExecution.decision_trace + trace,
+            finished_at=utcnow(),
+        )
+        .returning(ToolExecution.id)
+    )
+    return result.first() is not None
+
+
+def _denied_by_a_person(execution: ToolExecution, approval_status: str | None) -> bool:
+    """Its approval card already says so (Denied or Expired); a tool line would repeat it. A call
+    refused after it was approved keeps its line: the card says Approved."""
+    return approval_status in ("denied", "expired") and execution.status == "denied"
 
 
 def tool_call_part(execution: ToolExecution) -> dict[str, Any]:

@@ -46,8 +46,10 @@ export interface Org {
   id: ID;
   name: string;
   slug: string;
-  /** The security level a new bot starts at. Owners and admins change it in Settings → Security. */
+  /** The security level a new bot starts at (never above the ceiling). Owners and admins change it in Settings → Security. */
   defaultSecurityLevel: SecurityLevel;
+  /** The ceiling: no bot here acts above this level, whatever its own (ADR 0004). "autonomous" = no ceiling. */
+  maxSecurityLevel: SecurityLevel;
 }
 
 /** An organization you belong to, with your role in it: what the org switcher lists. */
@@ -546,8 +548,8 @@ export interface ModelProvider {
   name: string;
   hint: string;
   connected: boolean;
-  /** "org": a key saved in Settings. "env": a key set on the server, for everyone on it. */
-  source?: "org" | "env";
+  /** "org": the org's key, saved in Settings. "member": your own key (My keys). "env": a key set on the server, for everyone on it. */
+  source?: "org" | "member" | "env";
   /** The key's last 4 characters. */
   keyHint?: string;
   /** How the key's last check went. */

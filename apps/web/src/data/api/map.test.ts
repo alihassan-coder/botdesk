@@ -8,9 +8,10 @@ describe("API → web shapes", () => {
     });
   });
 
-  it("an org drops the viewer's role, which belongs to the user, and keeps its default for new bots", () => {
-    expect(toOrg({ id: "o1", name: "Acme", slug: "acme", role: "owner", defaultSecurityLevel: "read-only" })).toEqual({
-      id: "o1", name: "Acme", slug: "acme", defaultSecurityLevel: "read-only",
+  it("an org drops the viewer's role, which belongs to the user, and keeps its default for new bots and its ceiling", () => {
+    const apiOrg = { id: "o1", name: "Acme", slug: "acme", role: "owner", defaultSecurityLevel: "read-only", maxSecurityLevel: "ask-before-acting" } as const;
+    expect(toOrg(apiOrg)).toEqual({
+      id: "o1", name: "Acme", slug: "acme", defaultSecurityLevel: "read-only", maxSecurityLevel: "ask-before-acting",
     });
   });
 

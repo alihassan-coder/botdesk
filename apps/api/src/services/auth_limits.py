@@ -1,5 +1,5 @@
-"""Rate limits on the auth routes people could abuse: guessing passwords, mass sign-ups, and
-flooding someone's inbox with reset emails.
+"""Rate limits on the routes people could abuse: guessing passwords, mass sign-ups, flooding
+someone's inbox with reset emails, and creating organizations by the hundred.
 
 Keyed by the client's address, and for sign-in and forgot-password also by the email (lowercased),
 so neither spreading guesses over many addresses nor over many emails gets around them. Unknown
@@ -7,6 +7,7 @@ emails are counted exactly like known ones: a 429 never tells you whether an acc
 """
 
 import math
+import uuid
 
 from src.core.errors import TooManyRequests
 from src.core.rate_limit import Limit, RateLimiter
@@ -20,6 +21,8 @@ SIGN_UP_PER_IP = Limit(hits=20, seconds=HOUR)
 FORGOT_PASSWORD_PER_IP = Limit(hits=20, seconds=HOUR)
 FORGOT_PASSWORD_PER_EMAIL = Limit(hits=5, seconds=HOUR)
 RESET_PASSWORD_PER_IP = Limit(hits=20, seconds=HOUR)
+# Signed in, so per person: plenty for setting up a few teams, not for filling the database.
+CREATE_ORG_PER_USER = Limit(hits=5, seconds=HOUR)
 
 
 def _wait_text(seconds: int) -> str:
@@ -30,10 +33,10 @@ def _wait_text(seconds: int) -> str:
     return "1 hour" if hours == 1 else f"{hours} hours"
 
 
-def _check(limiter: RateLimiter, *checks: tuple[str, Limit]) -> None:
+def _check(limiter: RateLimiter, *checks: tuple[str, Limit], what: str = "Too many attempts.") -> None:
     wait = limiter.hit(*checks)
     if wait is not None:
-        raise TooManyRequests(f"Too many attempts. Try again in {_wait_text(wait)}.", retry_after_seconds=wait)
+        raise TooManyRequests(f"{what} Try again in {_wait_text(wait)}.", retry_after_seconds=wait)
 
 
 def sign_in(limiter: RateLimiter, *, ip: str, email: str) -> None:
@@ -54,3 +57,8 @@ def forgot_password(limiter: RateLimiter, *, ip: str, email: str) -> None:
 
 def reset_password(limiter: RateLimiter, *, ip: str) -> None:
     _check(limiter, (f"reset:ip:{ip}", RESET_PASSWORD_PER_IP))
+
+
+def create_org(limiter: RateLimiter, *, user_id: uuid.UUID) -> None:
+    what = "You've created a lot of organizations just now."
+    _check(limiter, (f"create-org:user:{user_id}", CREATE_ORG_PER_USER), what=what)

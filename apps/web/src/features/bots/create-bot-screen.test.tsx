@@ -54,3 +54,13 @@ describe("CreateBotScreen", () => {
     expect(screen.getByLabelText(/Read only/)).toBeChecked();
   });
 });
+
+describe("CreateBotScreen under the organization's ceiling", () => {
+  it("starts at the default and can't go above the ceiling", async () => {
+    await actions.setMaxSecurityLevel("read-only");
+    renderUI(<CreateBotScreen />);
+    expect(screen.getByRole("radio", { name: /^Read only/ })).toBeChecked();
+    expect(screen.getByRole("radio", { name: /^Ask before acting/ })).toBeDisabled();
+    expect(screen.getByRole("radio", { name: /^Autonomous/ })).toBeDisabled();
+  });
+});

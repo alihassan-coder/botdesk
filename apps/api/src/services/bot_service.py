@@ -2,6 +2,7 @@
 
 import uuid
 from collections.abc import Iterable
+from typing import cast
 
 from botdesk_plugin_sdk import PluginManifest
 from sqlalchemy import or_, select, update
@@ -10,9 +11,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src.core.errors import NotFound
 from src.core.handles import handle_prefix, make_handle
 from src.models import Bot, Organization, Routine, Run, Thread
+from src.models.bot import SecurityLevel
 from src.models.run import FINISHED_STATUSES
+from src.runtime.policy import looser_than, strictest_level
 from src.schemas.bot import BotIn, BotUpdate
 from src.services import binding_service
+from src.services.organization_service import require_under_ceiling
 
 # What a routine whose bot was removed says (it stays, switched off).
 BOT_REMOVED = "Its bot was removed."
@@ -42,10 +46,15 @@ async def _taken_handles(
 async def create_bot(
     db: AsyncSession, *, org: Organization, created_by: uuid.UUID, data: BotIn, plugins: Iterable[PluginManifest]
 ) -> Bot:
-    """A bot hired without a security level gets the organization's default for new bots. It
-    gets a binding for each of `plugins` (the loaded ones) that doesn't sign in with OAuth."""
+    """A bot hired without a security level gets the organization's default for new bots (kept
+    under the ceiling); one hired with a level above the ceiling isn't hired. It gets a binding
+    for each of `plugins` (the loaded ones) that doesn't sign in with OAuth."""
+    if data.security_level:
+        require_under_ceiling(org, data.security_level)
+    ceiling = cast("SecurityLevel", org.max_security_level)
+    level = data.security_level or strictest_level(cast("SecurityLevel", org.default_security_level), ceiling)
     handle = make_handle(data.name, await _taken_handles(db, org.id, data.name))
-    fields = data.model_dump() | {"security_level": data.security_level or org.default_security_level}
+    fields = data.model_dump() | {"security_level": level}
     bot = Bot(**fields, org_id=org.id, handle=handle, created_by=created_by)
     db.add(bot)
     await db.flush()
@@ -54,8 +63,14 @@ async def create_bot(
     return bot
 
 
-async def update_bot(db: AsyncSession, bot: Bot, changes: BotUpdate) -> Bot:
-    """Renaming a bot gives it a matching @handle (unique in the organization)."""
+async def update_bot(db: AsyncSession, org: Organization, bot: Bot, changes: BotUpdate) -> Bot:
+    """Renaming a bot gives it a matching @handle (unique in the organization). Its level may not
+    be raised above the organization's ceiling. Lowering it is always fine, and so is sending back
+    the level it already has (the editor sends every field), even if the ceiling was lowered
+    under it since."""
+    current = cast("SecurityLevel", bot.security_level)
+    if changes.security_level and looser_than(changes.security_level, current):
+        require_under_ceiling(org, changes.security_level)
     fields = changes.model_dump(exclude_unset=True, exclude_none=True)
     if "name" in fields:
         fields["name"] = fields["name"].strip()

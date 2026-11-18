@@ -28,3 +28,25 @@ describe("EditBotDialog", () => {
     expect(budget).toHaveAccessibleDescription("Only owners and admins can change budgets.");
   });
 });
+
+describe("EditBotDialog under the organization's ceiling", () => {
+  it("offers only levels up to the ceiling", async () => {
+    await actions.setMaxSecurityLevel("ask-before-acting");
+    const { user } = renderUI(<EditBotDialog bot={chief()} />);
+    await user.click(screen.getByRole("button", { name: "Edit" }));
+
+    expect(screen.getByRole("radio", { name: /^Autonomous/ })).toBeDisabled();
+    expect(screen.getByRole("radio", { name: /^Read only/ })).toBeEnabled();
+  });
+
+  it("a bot already above a lowered ceiling shows its own level and can still be saved", async () => {
+    await actions.editBot("b_chief", { securityLevel: "autonomous" });
+    await actions.setMaxSecurityLevel("read-only");
+    const { user } = renderUI(<EditBotDialog bot={chief()} />);
+    await user.click(screen.getByRole("button", { name: "Edit" }));
+
+    expect(screen.getByRole("radio", { name: /^Autonomous/ })).toBeChecked();
+    await user.click(screen.getByRole("button", { name: "Save changes" }));
+    expect(chief().securityLevel).toBe("autonomous");
+  });
+});

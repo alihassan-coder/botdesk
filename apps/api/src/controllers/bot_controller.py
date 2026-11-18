@@ -1,6 +1,7 @@
 """Handles bot requests. Any member can hire and edit bots; removing one, or changing its monthly
-budget, takes an admin (members may hire a bot with a budget up to the default). A bot's model must
-belong to a connected provider (Settings → Models & keys, or the server's env)."""
+budget, takes an admin (members may hire a bot with a budget up to the default). Nobody sets a bot
+above the organization's security level ceiling. A bot's model must belong to a connected provider
+(Settings → Models & keys: the organization's key, the server's env, or the editor's own key)."""
 
 import uuid
 
@@ -49,7 +50,7 @@ async def create_bot(
     # come with smaller ones), but not a bigger one, and not 0 (no limit).
     if not _is_admin(access) and not 0 < body.monthly_budget_usd <= DEFAULT_BOT_BUDGET_USD:
         raise Forbidden(BUDGET_ADMINS_ONLY)
-    await provider_service.require_usable_model(db, access.org.id, body.model_id, settings)
+    await provider_service.require_usable_model(db, access.org.id, body.model_id, settings, member_id=access.user.id)
     bot = await bot_service.create_bot(
         db, org=access.org, created_by=access.user.id, data=body, plugins=registry.plugins()
     )
@@ -65,8 +66,10 @@ async def update_bot(
     if budget is not None and budget != bot.monthly_budget_usd and not _is_admin(access):
         raise Forbidden(BUDGET_ADMINS_ONLY)
     if body.model_id and body.model_id != bot.model_id:  # a model picked earlier stays valid
-        await provider_service.require_usable_model(db, access.org.id, body.model_id, settings)
-    await bot_service.update_bot(db, bot, body)
+        await provider_service.require_usable_model(
+            db, access.org.id, body.model_id, settings, member_id=access.user.id
+        )
+    await bot_service.update_bot(db, access.org, bot, body)
     await db.commit()
     return BotOut.model_validate(bot)
 

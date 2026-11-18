@@ -9,7 +9,8 @@
  *   each bot's DM, message history, sending, and bot replies streamed live over the
  *   chat's event stream (with a Stop button), and approvals: cards in the chat, live from
  *   the stream, and the Approvals page from the list; and Models & keys: providers, their
- *   keys and live model lists; what each bot remembers (Memory), loaded per bot; and Usage &
+ *   keys, your own keys (My keys) and live model lists; the org's security ceiling; new
+ *   organizations; what each bot remembers (Memory), loaded per bot; and Usage &
  *   budgets: daily spend, each bot's spend this month and the org's budget; and Routines:
  *   listed with the org, created, edited, switched on and off, run now and removed. Apps
  *   aren't all on the API yet, so some stay mock.
@@ -23,6 +24,7 @@ import { makeHandle } from "@/lib/handle";
 import { parseMentions } from "@/lib/mentions";
 import { HOP_LIMIT, chainStoppedText, routeMessage, type BotReply, type ChatBots } from "@/lib/mention-routing";
 import { previewFromArgs } from "@/lib/args-form";
+import { strictestLevel } from "@/lib/security-ceiling";
 import { browser } from "@/lib/navigate";
 import { approvalApi, authApi, botApi, connectionApi, inviteApi, mcpApi, memoryApi, modelApi, orgApi, pluginApi, routineApi, runApi, threadApi, usageApi } from "./api/botdesk";
 import { ApiError, apiBaseUrl } from "./api/client";
@@ -130,6 +132,8 @@ interface State {
   /** Models & keys: the live model list of every connected provider, and the providers themselves. */
   models: Model[];
   modelProviders: ModelProvider[];
+  /** My keys: your own key per built-in provider in this org, which only your runs use. Null until loaded. */
+  myKeys: ModelProvider[] | null;
   /** Connected providers whose model list couldn't be fetched last time. */
   modelProblems: ModelListProblem[];
   /** API only: true while providers and models are on their way. */
@@ -182,6 +186,8 @@ function seed(): State {
     routinesLoading: false,
     models: mock.models,
     modelProviders: mock.modelProviders,
+    // MOCK: every built-in provider of the demo, none with a key of yours yet.
+    myKeys: notConnected(mock.modelProviders.filter((p) => p.kind !== "custom")),
     modelProblems: [],
     modelsLoading: false,
     memories: mock.memories,
@@ -202,7 +208,7 @@ function apiSeed(): State {
   const blankUser: User = { id: "", name: "", email: "", handle: "", role: "member", presence: "online" };
   return {
     ...seed(),
-    org: { id: "", name: "", slug: "", defaultSecurityLevel: "ask-before-acting" },
+    org: { id: "", name: "", slug: "", defaultSecurityLevel: "ask-before-acting", maxSecurityLevel: "autonomous" },
     orgs: [],
     users: [blankUser],
     currentUserId: "",
@@ -223,6 +229,7 @@ function apiSeed(): State {
     memoryStatus: null,
     models: [],
     modelProviders: [],
+    myKeys: null,
     usage: EMPTY_USAGE,
     usageLoading: true,
   };
@@ -365,6 +372,7 @@ function enterOrg(org: Membership) {
     approvals: [],
     models: [],
     modelProviders: [],
+    myKeys: null,
     modelProblems: [],
     modelsLoading: true,
     routines: [],
@@ -648,6 +656,40 @@ const orgActions = {
       orgs: st.orgs.map((o) => (o.id === st.org.id ? { ...o, defaultSecurityLevel: saved } : o)),
     }));
     return { ok: true };
+  },
+
+  /**
+   * The highest level any bot here may act at (ADR 0004). Owners and admins; the API refuses
+   * members. Lowering it below the default for new bots lowers the default too.
+   */
+  async setMaxSecurityLevel(level: SecurityLevel): Promise<ActionResult> {
+    let saved: Pick<Org, "maxSecurityLevel" | "defaultSecurityLevel"> = {
+      maxSecurityLevel: level,
+      defaultSecurityLevel: strictestLevel(state.org.defaultSecurityLevel, level),
+    };
+    if (!isDemoMode()) {
+      try {
+        const org = toOrg(await orgApi.update(state.org.id, { maxSecurityLevel: level }));
+        saved = { maxSecurityLevel: org.maxSecurityLevel, defaultSecurityLevel: org.defaultSecurityLevel };
+      } catch (error) {
+        return failure(error);
+      }
+    }
+    set((st) => ({ ...st, org: { ...st.org, ...saved }, orgs: st.orgs.map((o) => (o.id === st.org.id ? { ...o, ...saved } : o)) }));
+    return { ok: true };
+  },
+
+  /** A new organization you own, which then becomes the current one. Needs an account (not the demo). */
+  async createOrg(name: string): Promise<ActionResult> {
+    if (isDemoMode()) return { ok: false, error: "Creating organizations needs an account. Sign up to make your own." };
+    try {
+      const created: Membership = { ...toOrg(await orgApi.create({ name: name.trim() })), role: "owner" };
+      set((st) => ({ ...st, orgs: [...st.orgs.filter((o) => o.id !== created.id), created] }));
+      enterOrg(created);
+      return { ok: true };
+    } catch (error) {
+      return failure(error);
+    }
   },
 
   /**
@@ -1342,7 +1384,61 @@ const modelActions = {
     void loadModelCatalog(state.org.id);
     return { ok: true };
   },
+
+  /** My keys in the current org (Settings → Models & keys). The demo starts with none. */
+  async loadMyKeys(): Promise<void> {
+    const orgId = state.org.id;
+    if (isDemoMode()) return; // the demo's are in its seed
+    const keys = await modelApi.myKeys(orgId).catch(() => null);
+    set((st) => (st.org.id === orgId ? { ...st, myKeys: keys?.map(toModelProvider) ?? st.myKeys ?? [] } : st));
+  },
+
+  /** Your own key for a built-in provider (any member). Checked live on the API; once saved, only its last 4 characters come back. */
+  async saveMyKey(providerId: string, apiKey: string): Promise<ActionResult> {
+    const orgId = state.org.id;
+    let saved: ModelProvider;
+    if (isDemoMode()) {
+      const key = apiKey.trim();
+      if (key.startsWith("bad")) return { ok: false, error: "That key didn't work: 401: Incorrect API key provided." };
+      const provider = state.myKeys?.find((p) => p.id === providerId);
+      if (!provider) return { ok: false, error: "We don't support that provider." };
+      const hint = keyHintOf(key);
+      saved = { ...provider, connected: true, source: "member", status: "ok", lastVerifiedAt: now(), ...(hint ? { keyHint: hint } : {}) };
+    } else {
+      try {
+        saved = toModelProvider(await modelApi.saveMyKey(orgId, providerId, apiKey.trim()));
+      } catch (error) {
+        return failure(error);
+      }
+      void loadModelCatalog(orgId); // models only your key reaches show up for you too
+    }
+    set((st) => (st.org.id === orgId ? { ...st, myKeys: withProvider(st.myKeys ?? [], saved) } : st));
+    return { ok: true };
+  },
+
+  /** Remove your own key. Your runs go back to the org's key, if it has one. */
+  async removeMyKey(providerId: string): Promise<ActionResult> {
+    const orgId = state.org.id;
+    if (!isDemoMode()) {
+      try {
+        await modelApi.removeMyKey(orgId, providerId);
+      } catch (error) {
+        return failure(error);
+      }
+      void loadModelCatalog(orgId);
+    }
+    set((st) => {
+      if (st.org.id !== orgId) return st;
+      return { ...st, myKeys: (st.myKeys ?? []).map((p) => (p.id === providerId ? notConnected([p])[0] : p)) };
+    });
+    return { ok: true };
+  },
 };
+
+/** Providers as they look without a key: no hint, no source, no check. (Hoisted: the demo's seed uses it.) */
+function notConnected(providers: ModelProvider[]): ModelProvider[] {
+  return providers.map(({ id, kind, name, hint }) => ({ id, kind, name, hint, connected: false }));
+}
 
 /* ---------- Usage and budgets ----------
  * What the org's bots spent (Settings → Usage & budgets, a bot's "Budget this month") and the
@@ -2451,6 +2547,8 @@ export const useUsers = () => useStore(useCallback((s: State) => s.users, []));
 export const useInvitations = () => useStore(useCallback((s: State) => s.invitations, []));
 export const useModels = () => useStore(useCallback((s: State) => s.models, []));
 export const useModelProviders = () => useStore(useCallback((s: State) => s.modelProviders, []));
+/** My keys in the current org; null until loaded (`actions.loadMyKeys`). */
+export const useMyKeys = () => useStore(useCallback((s: State) => s.myKeys, []));
 /** Connected providers whose models couldn't be listed just now. */
 export const useModelProblems = () => useStore(useCallback((s: State) => s.modelProblems, []));
 /** API only: true while providers and models are on their way. */

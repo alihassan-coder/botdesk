@@ -219,7 +219,9 @@ async def org(providers: FakeProviders) -> AsyncIterator[Org]:
     async with api_client(TEST_SETTINGS, providers) as (app, client):
         model, memory = TeamModel(), RecordingMemory()
 
-        async def model_for(_org_id: uuid.UUID, _model_id: str) -> BaseChatModel:
+        async def model_for(
+            _org_id: uuid.UUID, _model_id: str, _requester_id: uuid.UUID | None = None
+        ) -> BaseChatModel:
             return model
 
         app.state.runs.enabled = True

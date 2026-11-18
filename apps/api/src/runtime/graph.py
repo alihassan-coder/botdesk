@@ -28,6 +28,7 @@ from dataclasses import dataclass
 from datetime import timedelta
 from typing import Any, Literal, TypedDict, cast
 
+from botdesk_plugin_sdk import RiskClass
 from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import (
     AIMessage,
@@ -65,7 +66,7 @@ from src.runtime.chat_model import (
 )
 from src.runtime.limits import RunLimits, limit_reached
 from src.runtime.memory import MemoryScope, MemoryService
-from src.runtime.policy import LEVELS
+from src.runtime.policy import LEVELS, looser_than, strictest_level
 from src.runtime.prompt import HistoryLine, TaskBrief, Teammate, build_prompt, results_text
 from src.runtime.reporter import RunReporter
 from src.runtime.token_batcher import BackgroundSender, TokenBatcher
@@ -113,6 +114,9 @@ class RunState(TypedDict, total=False):
     instructions: str
     model_id: str
     security_level: str
+    # The bot's and the run's own level without the ceiling (missing in old checkpoints: the same
+    # as `security_level`), so a refusal can say the organization's ceiling caused it.
+    own_security_level: str
     tainted: bool
     member_id: str | None
     group: bool  # a group chat: messages are labelled with who wrote them (missing in old checkpoints: a DM)
@@ -153,7 +157,7 @@ class RunDeps:
     sessionmaker: async_sessionmaker[AsyncSession]
     reporter: RunReporter
     memory: MemoryService
-    model_for: Callable[[str], Awaitable[BaseChatModel]]  # model id → chat model, with this org's keys
+    model_for: Callable[[str], Awaitable[BaseChatModel]]  # model id → chat model (requester's key, else org's)
     price_for: Callable[[str], Awaitable[ModelPrice]]  # model id → its price, for budgets and usage
     in_background: Callable[[Coroutine[Any, Any, None]], None]
     # Work that must finish even if the run is stopped or the API shuts down (usage records):
@@ -219,8 +223,19 @@ def _history_lines(state: RunState) -> list[HistoryLine]:
     ]
 
 
+async def _level_now(state: RunState, deps: RunDeps, db: AsyncSession) -> tuple[SecurityLevel, bool]:
+    """The run's level for a tool decision now: the one it loaded with, under the organization's
+    ceiling read again (so lowering it reaches a run already going; it never loosens one). Also
+    whether a ceiling, not the bot's or the run's own level, is what sets it."""
+    level = strictest_level(_security_level(state), await run_service.org_ceiling(db, deps.org_id))
+    own = state.get("own_security_level", "")
+    capped = own in LEVELS and looser_than(own, level)
+    return level, capped
+
+
 def _security_level(state: RunState) -> SecurityLevel:
-    """The bot's level. Anything unexpected falls back to the strictest one (fail closed)."""
+    """The run's effective level when it loaded its context (the organization's ceiling, the bot's
+    level, the run's own). Anything unexpected falls back to the strictest one (fail closed)."""
     level = state.get("security_level", "")
     return level if level in LEVELS else "read-only"
 
@@ -234,6 +249,7 @@ async def load_context(state: RunState, runtime: Runtime[RunDeps]) -> RunState:
         "instructions": context.instructions,
         "model_id": context.model_id,
         "security_level": context.security_level,
+        "own_security_level": context.own_security_level,
         "tainted": context.tainted,
         "member_id": str(context.member_id) if context.member_id else None,
         "group": context.group,
@@ -498,10 +514,11 @@ async def prepare_call(state: RunState, runtime: Runtime[RunDeps]) -> RunState:
     tainted = state.get("tainted", False)
     request = ToolCallRequest(id=first["id"], name=first["name"], args=dict(first.get("args") or {}))
     tools = await _toolset(deps)
-    prepared = tool_pipeline.prepare(
-        tools, request, level=_security_level(state), tainted=tainted, connections=tools.connections
-    )
     async with deps.sessionmaker() as db:
+        level, capped = await _level_now(state, deps, db)
+        prepared = tool_pipeline.prepare(
+            tools, request, level=level, tainted=tainted, connections=tools.connections, capped_by_ceiling=capped
+        )
         recorded = await tool_pipeline.record(
             db, deps.run_ref, prepared, tainted=tainted, approval_expiry=deps.approval_expiry
         )
@@ -542,7 +559,40 @@ def approval_gate(state: RunState) -> RunState:
     return {"call": {**call, "decision": "approved" if approved else "denied", "refusal": answer.get("message")}}
 
 
-def after_gate(state: RunState) -> Literal["hand_off", "execute_tool", "finish_call"]:
+def after_gate(state: RunState) -> Literal["recheck_call", "finish_call"]:
+    return "recheck_call" if state["call"]["decision"] == "approved" else "finish_call"
+
+
+async def recheck_call(state: RunState, runtime: Runtime[RunDeps]) -> RunState:
+    """An approved call meets the policy again before it runs: the organization's ceiling may have
+    dropped while it waited. Still `ask` (or `auto`): the approval stands. `deny`: the call is
+    refused (`denied`, never run), its tool line and the model say why, and the approval keeps the
+    person's decision. Safe to run twice: only a call still `ready` is refused."""
+    deps = runtime.context
+    call = state["call"]
+    async with deps.sessionmaker() as db:
+        row = await tool_execution_service.get(db, uuid.UUID(call["executionId"]))
+        if row is None or row.status != "ready":
+            return {}  # gone, or already started: the next node deals with it
+        level, _ = await _level_now(state, deps, db)
+        risk = cast("RiskClass", row.risk)
+        policy = tool_pipeline.recheck_after_approval(level, risk, tainted=state.get("tainted", False))
+        if policy is None:
+            return {}
+        refusal = tool_pipeline.lowered_ceiling_refusal(level, policy.risk)
+        if not await tool_execution_service.refuse_approved(
+            db, row.id, error=refusal, trace=f" · after approval: {policy.trace}"
+        ):
+            return {}
+        if not is_core_tool(row.tool_name):
+            event = finished_event(row.id, row.tool_name, error=refusal, status="denied")
+            deps.reporter.add(db, "tool_finished", event)
+        await db.commit()
+    deps.reporter.announce()
+    return {"call": {**call, "decision": "denied", "refusal": refusal}}
+
+
+def after_recheck(state: RunState) -> Literal["hand_off", "execute_tool", "finish_call"]:
     if state["call"]["decision"] != "approved":
         return "finish_call"
     return "hand_off" if state["call"].get("tool") == HANDOFF_TOOL else "execute_tool"
@@ -736,6 +786,7 @@ def build_graph(checkpointer: BaseCheckpointSaver[Any]) -> CompiledStateGraph[Ru
     graph.add_node("call_model", call_model)
     graph.add_node("prepare_call", prepare_call)
     graph.add_node("approval_gate", approval_gate)
+    graph.add_node("recheck_call", recheck_call)  # added for paused runs: approval_gate now leads here
     graph.add_node("execute_tool", execute_tool)
     graph.add_node("finish_call", finish_call)
     graph.add_node("save_reply", save_reply)
@@ -749,6 +800,7 @@ def build_graph(checkpointer: BaseCheckpointSaver[Any]) -> CompiledStateGraph[Ru
     graph.add_conditional_edges("call_model", after_model)
     graph.add_conditional_edges("prepare_call", after_prepare)
     graph.add_conditional_edges("approval_gate", after_gate)
+    graph.add_conditional_edges("recheck_call", after_recheck)
     graph.add_edge("execute_tool", "finish_call")
     graph.add_edge("hand_off", "finish_call")
     graph.add_edge("save_progress", "wait_for_tasks")

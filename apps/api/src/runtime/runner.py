@@ -30,7 +30,6 @@ from collections.abc import AsyncIterator, Awaitable, Callable, Coroutine
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from datetime import timedelta
-from functools import partial
 from typing import Any
 
 from langchain_core.language_models import BaseChatModel
@@ -82,10 +81,13 @@ class RunTicket:
     bot_id: uuid.UUID
     max_steps: int
     max_seconds: int
+    # The member the run acts for (its requester): their own model key comes before the
+    # organization's, and serves nobody else's runs. None: no member's key at all.
+    requester_id: uuid.UUID | None = None
 
     @classmethod
     def of(cls, run: Run) -> "RunTicket":
-        return cls(run.id, run.org_id, run.thread_id, run.bot_id, run.max_steps, run.max_seconds)
+        return cls(run.id, run.org_id, run.thread_id, run.bot_id, run.max_steps, run.max_seconds, run.requester_id)
 
 
 @dataclass(frozen=True)
@@ -135,10 +137,12 @@ class RunManager:
             vault, McpNetwork(allow_private=settings.allow_private_mcp_urls), oauth=oauth, sessionmaker=sessionmaker
         )
         resolver = ModelResolver(settings, sessionmaker, secrets, catalog)
-        # (org id, model id) → the chat model, with the org's keys. Tests swap in a fake model here.
-        self.model_for: Callable[[uuid.UUID, str], Awaitable[BaseChatModel]] = resolver
-        # (org id, model id) → its price, for budgets and usage records. Tests swap in prices here.
-        self.price_for: Callable[[uuid.UUID, str], Awaitable[ModelPrice]] = resolver.price
+        # (org id, model id, requester id) → the chat model, with the requester's own key or the
+        # org's. Tests swap in a fake model here.
+        self.model_for: Callable[[uuid.UUID, str, uuid.UUID | None], Awaitable[BaseChatModel]] = resolver
+        # (org id, model id, requester id) → its price, for budgets and usage records. Tests swap
+        # in prices here.
+        self.price_for: Callable[[uuid.UUID, str, uuid.UUID | None], Awaitable[ModelPrice]] = resolver.price
         # Tests about chats (not replies) switch this off: runs are created but never start.
         self.enabled = True
         self._graph = build_graph(checkpointer)
@@ -252,7 +256,7 @@ class RunManager:
         """Look up a model's price now (a bot was saved with it), so its first run doesn't wait for
         OpenRouter's model list. Never fails."""
         try:
-            await self.price_for(org_id, model_id)
+            await self.price_for(org_id, model_id, None)
         except Exception:
             logger.warning("Couldn't look up the price of %s", model_id)
 
@@ -409,8 +413,8 @@ class RunManager:
             sessionmaker=self.sessionmaker,
             reporter=reporter,
             memory=self.memory,
-            model_for=_once_per_model(partial(self.model_for, ticket.org_id)),
-            price_for=partial(self.price_for, ticket.org_id),
+            model_for=_once_per_model(lambda model_id: self.model_for(ticket.org_id, model_id, ticket.requester_id)),
+            price_for=lambda model_id: self.price_for(ticket.org_id, model_id, ticket.requester_id),
             in_background=self.in_background,
             unstoppable=self.unstoppable,
             registry=self.registry,

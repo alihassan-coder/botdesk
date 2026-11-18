@@ -318,7 +318,7 @@ class SlowCatalog:
 
 
 def _resolver(acme: Org, catalog: SlowCatalog, monkeypatch: pytest.MonkeyPatch, clock: list[float]) -> ModelResolver:
-    async def connection_for(*_args: object) -> ProviderAccess:
+    async def connection_for(*_args: object, **_kwargs: object) -> ProviderAccess:
         return ProviderAccess("openrouter", "openrouter", "OpenRouter", "sk-or-test")
 
     monkeypatch.setattr(provider_service, "connection_for", connection_for)
@@ -354,7 +354,7 @@ async def test_runs_starting_together_fetch_openrouters_prices_once(acme: Org, m
 async def test_saving_a_bot_with_an_openrouter_model_looks_up_its_price(acme: Org, providers: FakeProviders) -> None:
     looked_up: list[str] = []
 
-    async def price_for(_org_id: uuid.UUID, model_id: str) -> ModelPrice:
+    async def price_for(_org_id: uuid.UUID, model_id: str, _requester_id: uuid.UUID | None = None) -> ModelPrice:
         looked_up.append(model_id)
         return ModelPrice(model_id, "openrouter", None)
 

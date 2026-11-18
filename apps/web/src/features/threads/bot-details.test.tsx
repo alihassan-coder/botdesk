@@ -1,6 +1,6 @@
 import { screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
-import { getStoreSnapshot } from "@/data/store";
+import { actions, getStoreSnapshot } from "@/data/store";
 import { renderUI } from "@/test/render";
 import { signInOnApi, withFakeApi } from "@/test/fake-api";
 import { BotDetails } from "./bot-details";
@@ -37,5 +37,17 @@ describe("BotDetails' routines tab on the API", () => {
     await user.click(screen.getByRole("tab", { name: "Routines" }));
     expect(screen.getByText("Every day at 9 AM (Asia/Karachi)")).toBeInTheDocument();
     expect(screen.getByRole("switch", { name: "Run Morning digest" })).toBeChecked();
+  });
+});
+
+describe("BotDetails' security level", () => {
+  it("says when the organization's ceiling caps the bot", async () => {
+    const bot = getStoreSnapshot().bots.find((b) => b.securityLevel === "autonomous")!;
+    renderUI(<BotDetails bot={bot} />);
+    expect(screen.queryByText(/Capped at/)).not.toBeInTheDocument();
+
+    await actions.setMaxSecurityLevel("ask-before-acting");
+
+    expect(await screen.findByText("Capped at Ask before acting by the organization")).toBeInTheDocument();
   });
 });

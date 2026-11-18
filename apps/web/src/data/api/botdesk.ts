@@ -34,6 +34,7 @@ import {
   type ApiRunEvent,
   type ApiSecurityLevel,
   type ApiSentMessage,
+  type ApiTemplate,
   type ApiThread,
   type ApiThreadRuns,
 } from "./types";
@@ -107,6 +108,14 @@ export const botApi = {
     apiFetch<ApiBot>(`/api/v1/orgs/${orgId}/bots/${botId}`, { method: "PATCH", body: patch }),
   /** Owners and admins only. */
   remove: (orgId: string, botId: string) => apiFetch<void>(`/api/v1/orgs/${orgId}/bots/${botId}`, { method: "DELETE" }),
+};
+
+/** The marketplace: the same templates for every organization on this server. */
+export const templateApi = {
+  list: () => apiFetch<ApiTemplate[]>("/api/v1/templates"),
+  /** Creates the template's bot (its instructions, Tools and starting level are the API's call). Open its DM next. */
+  hire: (orgId: string, templateId: string) =>
+    apiFetch<ApiBot>(`/api/v1/orgs/${orgId}/templates/${templateId}/hire`, { method: "POST" }),
 };
 
 export const threadApi = {

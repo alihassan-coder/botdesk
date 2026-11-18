@@ -680,6 +680,50 @@ class ThreadRuns:
     replay_from: int  # just before the queued/running runs' first events (`last_event_id` if none)
 
 
+async def left_its_group(db: AsyncSession, run: Run) -> bool:
+    """A group run whose bot is no longer in the group, so it must not start: a message sent as
+    the bot was removed can queue its run after the removal listed the runs to stop. A task's child
+    works in its parent's chat without being in it (a handoff may go to any bot of the org), and so
+    does a guest in a DM; those never count. One query."""
+    in_group = exists().where(
+        ThreadParticipant.thread_id == run.thread_id,
+        ThreadParticipant.participant_type == "bot",
+        ThreadParticipant.participant_id == run.bot_id,
+    )
+    a_tasks_child = exists().where(Task.child_run_id == run.id)
+    left = await db.scalar(
+        select(Thread.id).where(Thread.id == run.thread_id, Thread.kind == "group", ~in_group, ~a_tasks_child)
+    )
+    return left is not None
+
+
+async def unfinished_in_thread(db: AsyncSession, thread_id: uuid.UUID, *, bot_id: uuid.UUID) -> list[uuid.UUID]:
+    """A bot's runs in one chat that haven't ended (queued, running or paused), oldest first: what
+    taking it out of a group stops."""
+    query = (
+        select(Run.id)
+        .where(
+            Run.thread_id == thread_id,
+            Run.bot_id == bot_id,
+            Run.status.in_([*ACTIVE_STATUSES, *PAUSED_STATUSES]),
+        )
+        .order_by(Run.created_at, Run.id)
+    )
+    return list(await db.scalars(query))
+
+
+async def unfinished_in_threads(db: AsyncSession, thread_ids: list[uuid.UUID]) -> list[uuid.UUID]:
+    """Every run in these chats that hasn't ended, oldest first: what deleting them stops first."""
+    if not thread_ids:
+        return []
+    query = (
+        select(Run.id)
+        .where(Run.thread_id.in_(thread_ids), Run.status.in_([*ACTIVE_STATUSES, *PAUSED_STATUSES]))
+        .order_by(Run.created_at, Run.id)
+    )
+    return list(await db.scalars(query))
+
+
 async def thread_runs(db: AsyncSession, thread_id: uuid.UUID, *, active: bool) -> ThreadRuns:
     """A chat's runs, newest first (only the unfinished ones when `active`), and the chat's
     newest event id, read in one statement so they describe the same moment: a stream that

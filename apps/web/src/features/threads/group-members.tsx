@@ -3,7 +3,7 @@ import { X } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { pluralize } from "@/lib/format";
-import { actions, useBot, useCanChangeLead, useUser } from "@/data/store";
+import { actions, useBot, useCanChangeLead, useCurrentUser, useUser } from "@/data/store";
 import type { Participant, Thread } from "@/data/types";
 import { BotAvatar, MemberAvatar } from "@/features/bots/bot-avatar";
 import { BOT_STATUS } from "@/features/bots/bot-status";
@@ -18,10 +18,12 @@ import { RenameGroupDialog } from "./rename-group-dialog";
  */
 export function GroupMembers({ thread }: { thread: Thread }) {
   const canManage = useCanChangeLead(thread);
+  const me = useCurrentUser().id;
   const people = thread.participants.filter((p) => p.type === "user");
   const bots = thread.participants.filter((p) => p.type === "bot");
-  // A group keeps at least one person, so the last one has no Remove.
-  const removable = (p: Participant) => canManage && (p.type === "bot" || people.length > 1);
+  // A group keeps at least one person, so the last one has no Remove. Nor do you: taking yourself
+  // out would be leaving the group, which comes later.
+  const removable = (p: Participant) => canManage && (p.type === "bot" || (people.length > 1 && p.id !== me));
 
   return (
     <div className="flex flex-col gap-5 overflow-y-auto p-4">
@@ -83,7 +85,7 @@ function RemoveButton({ thread, member }: { thread: Thread; member: Participant 
       aria-label={`Remove ${name} from the group`}
       title={`Remove ${name}`}
       disabled={removing}
-      className="text-muted-foreground opacity-100 hover:text-foreground focus-visible:opacity-100 [@media(hover:hover)]:opacity-0 [@media(hover:hover)]:group-hover/member:opacity-100"
+      className="tap-target text-muted-foreground opacity-100 hover:text-foreground focus-visible:opacity-100 [@media(hover:hover)]:opacity-0 [@media(hover:hover)]:group-hover/member:opacity-100"
       onClick={() =>
         startRemoving(async () => {
           const result = await actions.removeFromGroup(thread.id, member);

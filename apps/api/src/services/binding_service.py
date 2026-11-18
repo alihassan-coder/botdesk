@@ -141,13 +141,23 @@ async def run_bindings(
 # Changing
 
 
+def on_by_default(plugin: PluginManifest) -> bool:
+    """A new bot gets every loaded plugin that doesn't sign in with OAuth: one that does needs an
+    account chosen first."""
+    return not isinstance(plugin.auth, OAuth2Auth)
+
+
 def add_defaults(db: AsyncSession, bot: Bot, plugins: Iterable[PluginManifest]) -> None:
-    """A new bot's bindings: every loaded plugin that doesn't sign in with OAuth, switched on,
-    with no connection yet (an API-key plugin's tools that need no key work at once)."""
+    """A new bot's bindings: every plugin `on_by_default`, switched on, with no connection yet
+    (an API-key plugin's tools that need no key work at once)."""
+    switch_on(db, bot, [plugin for plugin in plugins if on_by_default(plugin)])
+
+
+def switch_on(db: AsyncSession, bot: Bot, plugins: Iterable[PluginManifest]) -> None:
+    """New bindings for a bot that has none for these plugins: on, with no connection yet."""
     db.add_all(
         BotTool(org_id=bot.org_id, bot_id=bot.id, plugin_id=plugin.id, enabled=True, created_by=bot.created_by)
         for plugin in plugins
-        if not isinstance(plugin.auth, OAuth2Auth)
     )
 
 

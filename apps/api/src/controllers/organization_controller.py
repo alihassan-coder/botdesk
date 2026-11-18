@@ -7,8 +7,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src.api.deps import Access
 from src.core.rate_limit import RateLimiter
 from src.models import User
+from src.runtime.runner import RunManager
 from src.schemas.organization import MemberOut, MemberRoleUpdate, OrgCreate, OrgOut, OrgUpdate
-from src.services import auth_limits, organization_service
+from src.services import auth_limits, organization_service, run_event_service, run_service, thread_service
 from src.services.model_catalog import ModelCatalog
 
 
@@ -57,10 +58,33 @@ async def change_role(db: AsyncSession, access: Access, user_id: uuid.UUID, body
     return member
 
 
-async def remove_member(db: AsyncSession, access: Access, user_id: uuid.UUID, *, catalog: ModelCatalog) -> None:
-    removed_keys = await organization_service.remove_member(
+async def remove_member(
+    db: AsyncSession, access: Access, runs: RunManager, user_id: uuid.UUID, *, catalog: ModelCatalog
+) -> None:
+    """Their own model keys go with them (and their cached model lists). They leave the
+    organization's groups too: the people still in a group hear it live (`thread_updated`), and
+    a group with nobody left is deleted once its runs are stopped."""
+    removed = await organization_service.remove_member(
         db, org_id=access.org.id, actor_id=access.user.id, actor_role=access.role, user_id=user_id
     )
+    left = removed.groups
+    for thread in left.changed:
+        run_event_service.add_event(
+            db,
+            org_id=access.org.id,
+            thread_id=thread.id,
+            run_id=None,
+            kind="thread_updated",
+            data={"thread": thread.model_dump(mode="json", by_alias=True, exclude={"unread"})},
+        )
+    going = await run_service.unfinished_in_threads(db, left.emptied)
     await db.commit()
-    for provider_id, key_id in removed_keys:  # their model lists, cached apart from the org's
+    for provider_id, key_id in removed.keys:  # their model lists, cached apart from the org's
         catalog.forget(access.org.id, provider_id, member_key=key_id)
+    for thread in left.changed:
+        runs.bus.announce(thread.id)
+    if left.emptied:
+        for run_id in going:
+            await runs.stop(run_id)
+        await thread_service.delete_groups(db, left.emptied)
+        await db.commit()

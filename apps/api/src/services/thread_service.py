@@ -5,6 +5,7 @@ Bot replies come in a later slice; for now messages are stored and read back.
 """
 
 import uuid
+from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any
 
@@ -250,6 +251,7 @@ async def set_lead(
         raise BadRequest("Only a group has a lead.")
     if thread.created_by != user_id and role not in ("owner", "admin"):
         raise Forbidden("Only the group's creator, owners and admins can change its lead.")
+    await _lock(db, thread, user_id=user_id)
     if bot_id is not None:
         in_group = await db.scalar(
             select(ThreadParticipant.participant_id).where(
@@ -265,21 +267,35 @@ async def set_lead(
     return thread
 
 
-def _check_can_manage(thread: Thread, *, user_id: uuid.UUID, role: str) -> None:
-    """A group (never a DM) whose creator, or an owner or admin of the organization, is asking.
-    The caller already checked they're in it (ADR 0009's rule for the lead)."""
+async def _check_can_manage(db: AsyncSession, thread: Thread, *, user_id: uuid.UUID, role: str) -> None:
+    """A group (never a DM) whose creator, or an owner or admin of the organization, is asking
+    (ADR 0009's rule for the lead). Then the group's row is locked until the caller commits, so
+    changes to one group happen one at a time: two at once can't both pass a check (who's in it,
+    the last person) that the other is about to break. Under the lock, the asker must still be in
+    the group (someone may have removed them a moment ago)."""
     if thread.kind != "group":
         raise BadRequest("Only a group can be changed.")
     if thread.created_by != user_id and role not in ("owner", "admin"):
         raise Forbidden("Only the group's creator, owners and admins can change it.")
+    await _lock(db, thread, user_id=user_id)
+
+
+async def _lock(db: AsyncSession, thread: Thread, *, user_id: uuid.UUID) -> None:
+    """Lock the group's row until the caller commits (Postgres; SQLite writes one at a time anyway)
+    and read it again, since a change that was waiting for the lock may have moved its lead; then
+    check the asker is still in it."""
+    locked = select(Thread).where(Thread.id == thread.id).with_for_update()
+    await db.execute(locked.execution_options(populate_existing=True))
+    if not await _is_in(db, thread.id, user_id):
+        raise NotFound(NOT_FOUND)
 
 
 async def rename_group(db: AsyncSession, thread: Thread, *, user_id: uuid.UUID, role: str, title: str) -> Thread:
     """The caller commits."""
-    _check_can_manage(thread, user_id=user_id, role=role)
     name = title.strip()
     if not name:
         raise BadRequest("Give the group a name.")
+    await _check_can_manage(db, thread, user_id=user_id, role=role)
     thread.title = name
     await db.flush()
     return thread
@@ -296,7 +312,7 @@ async def add_participants(
 ) -> Thread:
     """Add people and bots of the organization; ones already in the group are skipped. A person
     added starts with nothing unread. The caller commits."""
-    _check_can_manage(thread, user_id=user_id, role=role)
+    await _check_can_manage(db, thread, user_id=user_id, role=role)
     users, bots = set(user_ids), set(bot_ids)
     await _check_in_org(db, thread.org_id, users=users, bots=bots)
     already = set(
@@ -326,8 +342,9 @@ async def remove_participant(
     participant_id: uuid.UUID,
 ) -> Thread:
     """Take a person or a bot out of the group. A person removed can't see it any more; removing
-    the lead bot leaves the group without a lead. The last person stays. The caller commits."""
-    _check_can_manage(thread, user_id=user_id, role=role)
+    the lead bot leaves the group without a lead. The last person stays. The caller commits (and
+    stops the bot's unfinished runs in the group, `run_service.unfinished_in_thread`)."""
+    await _check_can_manage(db, thread, user_id=user_id, role=role)
     in_group = ThreadParticipant.thread_id == thread.id
     people = list(
         await db.scalars(
@@ -351,7 +368,7 @@ async def remove_participant(
     return thread
 
 
-async def is_participant(db: AsyncSession, thread_id: uuid.UUID, user_id: uuid.UUID) -> bool:
+async def _is_in(db: AsyncSession, thread_id: uuid.UUID, user_id: uuid.UUID) -> bool:
     found = await db.scalar(
         select(ThreadParticipant.participant_id).where(
             ThreadParticipant.thread_id == thread_id,
@@ -360,6 +377,70 @@ async def is_participant(db: AsyncSession, thread_id: uuid.UUID, user_id: uuid.U
         )
     )
     return found is not None
+
+
+async def can_follow(db: AsyncSession, thread_id: uuid.UUID, user_id: uuid.UUID) -> bool:
+    """Whether this person may still hear the chat: they're in it, and still a member of its
+    organization (an open stream outlives the request that checked both). One query."""
+    found = await db.scalar(
+        select(ThreadParticipant.participant_id)
+        .join(Thread, Thread.id == ThreadParticipant.thread_id)
+        .join(
+            Membership, and_(Membership.org_id == Thread.org_id, Membership.user_id == ThreadParticipant.participant_id)
+        )
+        .where(
+            ThreadParticipant.thread_id == thread_id,
+            ThreadParticipant.participant_type == "user",
+            ThreadParticipant.participant_id == user_id,
+        )
+    )
+    return found is not None
+
+
+@dataclass
+class LeftGroups:
+    """What someone leaving the organization did to its groups. The caller saves `changed`'s
+    `thread_updated` events, and stops the runs in `emptied` before deleting those (`delete_groups`)."""
+
+    changed: list[ThreadOut] = field(default_factory=list)  # still have people in them
+    emptied: list[uuid.UUID] = field(default_factory=list)  # nobody left: no one could reach them again
+
+
+async def leave_groups(db: AsyncSession, *, org_id: uuid.UUID, user_id: uuid.UUID) -> LeftGroups:
+    """Someone leaving the organization leaves its groups too, so a group shows who can really
+    read it. Their DMs stay theirs (no one else is in them). The groups are locked first, in id
+    order, as a group change locks its group. A group left with no person in it is to be deleted
+    rather than handed to someone: its history was only ever theirs and its bots'. The caller commits."""
+    theirs = select(ThreadParticipant.thread_id).where(
+        ThreadParticipant.participant_type == "user", ThreadParticipant.participant_id == user_id
+    )
+    locked = select(Thread).where(Thread.org_id == org_id, Thread.kind == "group", Thread.id.in_(theirs))
+    groups = list(await db.scalars(locked.order_by(Thread.id).with_for_update()))
+    if not groups:
+        return LeftGroups()
+    ids = [group.id for group in groups]
+    await db.execute(
+        delete(ThreadParticipant).where(
+            ThreadParticipant.participant_type == "user",
+            ThreadParticipant.participant_id == user_id,
+            ThreadParticipant.thread_id.in_(ids),
+        )
+    )
+    with_people = set(
+        await db.scalars(
+            select(ThreadParticipant.thread_id)
+            .where(ThreadParticipant.thread_id.in_(ids), ThreadParticipant.participant_type == "user")
+            .distinct()
+        )
+    )
+    changed = await thread_outs(db, [group for group in groups if group.id in with_people])
+    return LeftGroups(changed=changed, emptied=[group.id for group in groups if group.id not in with_people])
+
+
+async def delete_groups(db: AsyncSession, thread_ids: list[uuid.UUID]) -> None:
+    """Delete these groups with their messages and runs (stop the runs first). The caller commits."""
+    if thread_ids:
+        await db.execute(delete(Thread).where(Thread.id.in_(thread_ids), Thread.kind == "group"))
 
 
 async def list_messages(

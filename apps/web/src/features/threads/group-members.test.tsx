@@ -45,6 +45,12 @@ describe("GroupMembers", () => {
     expect(launch().leadBotId).toBeUndefined();
   });
 
+  it("you have no Remove on yourself (leaving a group comes later)", () => {
+    renderUI(<GroupMembers thread={launch()} />);
+    expect(screen.queryByRole("button", { name: "Remove Ali Hassan from the group" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Remove Sara Khan from the group" })).toBeInTheDocument();
+  });
+
   it("the last person in a group has no Remove", async () => {
     await actions.removeFromGroup("t_launch", { type: "user", id: "u_sara" });
     renderUI(<GroupMembers thread={launch()} />);

@@ -308,12 +308,24 @@ describe("smaller actions", () => {
   });
 
   it("createBotFromTemplate hires the bot and opens a chat where it speaks first", async () => {
-    const { threadId } = (await actions.createBotFromTemplate("tpl_inbox")) as { threadId: string };
+    const { threadId } = (await actions.createBotFromTemplate("inbox-zero")) as { threadId: string };
     const thread = state().threads.find((t) => t.id === threadId);
 
     expect(thread?.kind).toBe("dm");
-    expect(state().bots.find((b) => b.id === thread?.botId)?.name).toBe("Inbox Zero");
+    const bot = state().bots.find((b) => b.id === thread?.botId);
+    expect(bot).toMatchObject({ name: "Inbox Zero", securityLevel: "ask-before-acting", monthlyBudgetUsd: 20 });
+    expect(bot?.instructions).toMatch(/^You keep the team's inbox at zero/);
     expect(messagesIn(threadId!)[0].author.type).toBe("bot");
+  });
+
+  it("a hired template starts at its own level or the org's default, whichever is stricter", async () => {
+    const level = async (templateId: string) => {
+      const { threadId } = (await actions.createBotFromTemplate(templateId)) as { threadId: string };
+      return state().bots.find((b) => b.id === state().threads.find((t) => t.id === threadId)?.botId)?.securityLevel;
+    };
+    expect(await level("expense-clerk")).toBe("read-only"); // the template is stricter
+    await actions.setDefaultSecurityLevel("read-only");
+    expect(await level("chief")).toBe("read-only"); // the organization is stricter
   });
 
   it("createBot builds a bot from your choices, with a unique handle", async () => {

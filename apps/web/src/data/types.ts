@@ -639,15 +639,28 @@ export interface UsageSummary {
   orgBudgetUsd?: number;
 }
 
+/**
+ * A ready-made bot in the marketplace. On the API the catalogue comes from `GET /templates`
+ * (`apps/api/src/templates/catalogue.json`); the demo shows the same templates.
+ */
 export interface Template {
   id: ID;
   name: string;
   role: string;
-  description: string;
-  avatarColor: BotAvatarColor;
-  installs: number;
-  connectors: ID[];
   category: string;
-  /** What the hired bot is told to do; empty when the template has none. */
-  instructions?: string;
+  description: string;
+  /** What the hired bot is told to do. */
+  instructions: string;
+  avatarColor: BotAvatarColor;
+  /** How careful the job needs it to be: a hired bot starts here or at the org's default, whichever is stricter. */
+  securityLevel: SecurityLevel;
+  /** The plugins it works in, by id ("gmail"); hiring switches them on in its Tools. On the API, only ones the server loaded. */
+  plugins: ID[];
+  /** DEMO: how many teams hired it. The API doesn't count, so it's left out there. */
+  installs?: number;
+}
+
+export interface TemplateList {
+  status: "loading" | "ready" | "error";
+  items: Template[];
 }

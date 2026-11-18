@@ -9,6 +9,8 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { actions, isDemoMode, useCurrentUser, useOrg, useTemplates, type NewBotInput } from "@/data/store";
+import type { SecurityLevel, Template } from "@/data/types";
+import { strictestLevel } from "@/lib/security-level";
 import { PageHeader } from "@/features/shell/page-header";
 import { BotAvatar } from "./bot-avatar";
 import { BotPreview } from "./bot-preview";
@@ -23,6 +25,12 @@ const BLANK: NewBotInput = {
   name: "", role: "", description: "", avatarColor: "indigo", instructions: "",
   modelId: "", securityLevel: "ask-before-acting", computerMode: "own", monthlyBudgetUsd: 25,
 };
+
+/** A template's job as a starting point: its name, role, words, colour and instructions, at its level or the org's default, whichever is stricter (as hiring it would). */
+function fromTemplate(t: Template, orgDefault: SecurityLevel): Partial<NewBotInput> {
+  const { name, role, description, avatarColor, instructions } = t;
+  return { name, role, description, avatarColor, instructions, securityLevel: strictestLevel(t.securityLevel, orgDefault) };
+}
 
 /** /bots/new — build a bot from scratch (or start from a template), with a live preview. */
 export function CreateBotScreen() {
@@ -64,7 +72,7 @@ export function CreateBotScreen() {
               <p className="text-sm text-muted-foreground">A teammate with its own job, tools and limits. Start from scratch, or pick a template.</p>
               <div className="mt-4 flex flex-wrap gap-2" aria-label="Start from a template">
                 {templates.map((t) => (
-                  <button key={t.id} type="button" onClick={() => setBot({ ...bot, name: t.name, role: t.role, description: t.description, avatarColor: t.avatarColor })}
+                  <button key={t.id} type="button" onClick={() => setBot({ ...bot, ...fromTemplate(t, defaultLevel) })}
                     className="flex shrink-0 items-center gap-2 rounded-full border py-1 pr-3 pl-1 text-sm hover:bg-muted">
                     <BotAvatar name={t.name} color={t.avatarColor} size="sm" className="[&>span]:rounded-full" /> {t.name}
                   </button>

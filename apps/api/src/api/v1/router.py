@@ -18,6 +18,7 @@ from src.api.v1.routes import (
     providers,
     routines,
     runs,
+    templates,
     threads,
     usage,
 )
@@ -40,3 +41,4 @@ api_router.include_router(routines.router)
 api_router.include_router(memories.router)
 api_router.include_router(usage.router)
 api_router.include_router(mcp_servers.router)
+api_router.include_router(templates.router)

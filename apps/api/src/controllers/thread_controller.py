@@ -93,28 +93,38 @@ async def remove_participant(
     kind: ParticipantType,
     participant_id: uuid.UUID,
 ) -> ThreadOut:
+    """A bot taken out of a group stops what it was doing there, so it doesn't post into a group
+    it's no longer in: its unfinished runs in the group are listed once the change is saved (so a
+    run queued while it was saving is in the list) and stopped, each in its own transaction like
+    the Stop button. One queued even later never starts (`run_service.left_its_group`)."""
     thread = await thread_service.get_thread(db, org_id=access.org.id, user_id=access.user.id, thread_id=thread_id)
     await thread_service.remove_participant(
         db, thread, user_id=access.user.id, role=access.role, kind=kind, participant_id=participant_id
     )
-    return await _saved_change(db, access, runs, thread)
+    out = await _saved_change(db, access, runs, thread)
+    if kind == "bot":
+        going = await run_service.unfinished_in_thread(db, thread.id, bot_id=participant_id)
+        await db.commit()  # end the read before stopping
+        for run_id in going:
+            await runs.stop(run_id)
+    return out
 
 
 async def _saved_change(db: AsyncSession, access: Access, runs: RunManager, thread: Thread) -> ThreadOut:
-    """Save a change to a group, and tell everyone with it open (`thread_updated` on its stream,
-    without anyone's unread count)."""
-    everyone = await thread_service.thread_out(db, thread)
+    """Save a change to a group, and tell everyone with it open (`thread_updated` on its stream).
+    The group is read once: the event leaves out your unread count (the stream is shared)."""
+    out = await thread_service.thread_out(db, thread, user_id=access.user.id)
     run_event_service.add_event(
         db,
         org_id=thread.org_id,
         thread_id=thread.id,
         run_id=None,
         kind="thread_updated",
-        data={"thread": everyone.model_dump(mode="json", by_alias=True, exclude={"unread"})},
+        data={"thread": out.model_dump(mode="json", by_alias=True, exclude={"unread"})},
     )
     await db.commit()
     runs.bus.announce(thread.id)
-    return await thread_service.thread_out(db, thread, user_id=access.user.id)
+    return out
 
 
 async def mark_read(db: AsyncSession, access: Access, thread_id: uuid.UUID) -> None:
@@ -195,13 +205,14 @@ async def follow_events(
     runs: RunManager, thread_id: uuid.UUID, *, user_id: uuid.UUID, after_id: int, follow: bool
 ) -> AsyncIterator[ServerSentEvent]:
     """Send the chat's saved events after `after_id`, then each new one as it's saved. Stops once
-    the person is no longer in the chat (removed from a group while they had it open)."""
+    the person is no longer in the chat (removed from a group while they had it open) or no longer
+    in its organization. Events are read before that check, so a batch never reaches past it."""
     with runs.bus.listen(thread_id) as wake_up:
         while True:
             wake_up.clear()  # before reading, so an event saved during the read still wakes us
             async with runs.sessionmaker() as db:
                 events = await run_event_service.events_after(db, thread_id=thread_id, after_id=after_id)
-                still_in = await thread_service.is_participant(db, thread_id, user_id)
+                still_in = await thread_service.can_follow(db, thread_id, user_id)
             if not still_in:
                 # Removed: send up to the change that removed them (so their browser drops the
                 # group), nothing after it, and stop.

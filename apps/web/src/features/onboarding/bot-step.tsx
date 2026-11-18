@@ -4,21 +4,22 @@ import { Check } from "lucide-react";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { actions, useTemplates } from "@/data/store";
+import { Skeleton } from "@/components/ui/skeleton";
+import { actions, useTemplateList } from "@/data/store";
 import type { Template } from "@/data/types";
 import { BotAvatar } from "@/features/bots/bot-avatar";
 import { cn } from "@/lib/utils";
 import { StepFrame } from "./step-frame";
 
 /* Chief first: a chief of staff hands work to the bots you hire later (ADR 0014). */
-const RECOMMENDED = ["tpl_chief", "tpl_inbox"];
+const RECOMMENDED = ["chief", "inbox-zero"];
 
 /**
  * Step 3: hire a first bot from the marketplace (same action as its Hire button), or leave
  * setup to build one from scratch. `onHired` gets the new bot's DM, which Finish opens.
  */
 export function BotStep({ onNext, onHired, onLeave }: { onNext: () => void; onHired: (threadId: string) => void; onLeave: () => void }) {
-  const templates = useTemplates();
+  const { status, items: templates } = useTemplateList();
   const picks = RECOMMENDED.map((id) => templates.find((t) => t.id === id)).filter((t): t is Template => t !== undefined);
   const [hired, setHired] = useState<string[]>([]);
   const [hiring, setHiring] = useState<string | null>(null);
@@ -42,6 +43,15 @@ export function BotStep({ onNext, onHired, onLeave }: { onNext: () => void; onHi
       action={<Button onClick={onNext} disabled={hired.length === 0}>Continue</Button>}
     >
       {error && <Alert variant="destructive"><AlertDescription>{error}</AlertDescription></Alert>}
+      {status === "loading" && picks.length === 0 && <Skeleton className="h-28 rounded-2xl" aria-label="Loading the marketplace" />}
+      {status === "error" && picks.length === 0 && (
+        <Alert>
+          <AlertDescription className="flex flex-wrap items-center gap-2">
+            The marketplace didn&apos;t load.
+            <Button size="sm" variant="outline" onClick={() => void actions.loadTemplates()}>Try again</Button>
+          </AlertDescription>
+        </Alert>
+      )}
       <ul className="grid gap-3">
         {picks.map((t, i) => (
           <li key={t.id} className={cn("flex items-start gap-4 rounded-2xl border p-4", i === 0 && "border-brand/40 bg-brand/5")}>

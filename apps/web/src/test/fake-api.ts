@@ -21,6 +21,18 @@ export const apiDm = {
   lastMessageAt: "2026-11-12T08:00:00Z", lastMessagePreview: "",
 };
 
+/** The API's marketplace, cut down: Chief and Inbox Zero (`GET /templates`). */
+export const apiTemplates = [
+  {
+    id: "chief", name: "Chief", role: "Chief of staff", category: "Productivity", description: "Plans the work and hands tasks to teammates.",
+    instructions: "You are the team's chief of staff.", avatarColor: "indigo", securityLevel: "ask-before-acting", plugins: [],
+  },
+  {
+    id: "inbox-zero", name: "Inbox Zero", role: "Email triage", category: "Productivity", description: "Triage and draft.",
+    instructions: "You keep the inbox at zero.", avatarColor: "violet", securityLevel: "ask-before-acting", plugins: ["gmail"],
+  },
+];
+
 export interface FakeApi {
   routes: Record<string, Route>;
   /** Every request made, in order, with its JSON body. */
@@ -37,6 +49,7 @@ export function withFakeApi(): FakeApi {
       "GET /api/v1/orgs/o1/members": { status: 200, body: [{ ...apiMe.user, role: "owner" }] },
       "GET /api/v1/orgs/o1/bots": { status: 200, body: [apiScout] },
       "GET /api/v1/orgs/o1/threads": { status: 200, body: [apiDm] },
+      "GET /api/v1/templates": { status: 200, body: apiTemplates },
     };
     vi.stubGlobal(
       "fetch",
@@ -55,8 +68,9 @@ export function withFakeApi(): FakeApi {
   return api;
 }
 
-/** Signs Zara in on the fake API and waits for her org's bots and chats. */
+/** Signs Zara in on the fake API and waits for her org's bots and chats, and the marketplace. */
 export async function signInOnApi() {
   await actions.signIn("zara@example.com", "long-enough");
   await vi.waitFor(() => expect(getStoreSnapshot().botsLoading).toBe(false));
+  await vi.waitFor(() => expect(getStoreSnapshot().templates.status).not.toBe("loading"));
 }

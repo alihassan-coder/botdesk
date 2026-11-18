@@ -5,12 +5,12 @@ from collections.abc import Iterable
 from typing import cast
 
 from botdesk_plugin_sdk import PluginManifest
-from sqlalchemy import or_, select, update
+from sqlalchemy import delete, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.core.errors import NotFound
 from src.core.handles import handle_prefix, make_handle
-from src.models import Bot, Organization, Routine, Run, Thread
+from src.models import Bot, Organization, Routine, Run, Thread, ThreadParticipant
 from src.models.bot import SecurityLevel
 from src.models.run import FINISHED_STATUSES
 from src.runtime.policy import looser_than, strictest_level
@@ -97,11 +97,26 @@ async def runs_going_with(db: AsyncSession, bot_id: uuid.UUID) -> list[uuid.UUID
 
 async def delete_bot(db: AsyncSession, bot: Bot) -> None:
     """Its DMs and runs go with it (stop them first: `runs_going_with`, and end its handoffs with
-    `task_service.bot_removed`). Tasks it was part of stay, without it. Its routines stay,
-    switched off, saying why."""
+    `task_service.bot_removed`), and it leaves its groups. Tasks it was part of stay, without it.
+    Its routines stay, switched off, saying why."""
     await db.execute(
         update(Routine)
         .where(Routine.bot_id == bot.id)
         .values(enabled=False, next_run_at=None, disabled_reason=BOT_REMOVED)
+    )
+    # It leaves its groups (a group's lead points at it with ON DELETE SET NULL). Those groups are
+    # locked first, in id order, as a group change locks its group before changing who's in it,
+    # so the two wait for each other in turn instead of in a circle (a deadlock on Postgres).
+    in_its_groups = select(ThreadParticipant.thread_id).where(
+        ThreadParticipant.participant_type == "bot", ThreadParticipant.participant_id == bot.id
+    )
+    groups = select(Thread.id).where(
+        Thread.kind == "group", or_(Thread.id.in_(in_its_groups), Thread.lead_bot_id == bot.id)
+    )
+    await db.execute(groups.order_by(Thread.id).with_for_update())
+    await db.execute(
+        delete(ThreadParticipant).where(
+            ThreadParticipant.participant_type == "bot", ThreadParticipant.participant_id == bot.id
+        )
     )
     await db.delete(bot)

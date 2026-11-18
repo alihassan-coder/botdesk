@@ -1,6 +1,7 @@
 """Organizations and who belongs to them."""
 
 import uuid
+from dataclasses import dataclass
 from typing import cast
 
 from sqlalchemy import select
@@ -13,7 +14,7 @@ from src.models import Membership, Organization, User
 from src.models.bot import SecurityLevel
 from src.runtime.policy import LEVEL_NAMES, looser_than, strictest_level
 from src.schemas.organization import MemberOut, OrgOut
-from src.services import provider_service
+from src.services import provider_service, thread_service
 
 SLUG_TAKEN = "That address is taken. Try another."
 SLUG_ROOM = 56  # a slug made from a name: short enough for "-NN" within the column's 64
@@ -32,6 +33,15 @@ def require_under_ceiling(org: Organization, level: SecurityLevel, *, ceiling: S
     ceiling = ceiling or cast("SecurityLevel", org.max_security_level)
     if looser_than(level, ceiling):
         raise BadRequest(above_the_ceiling(ceiling))
+
+
+@dataclass(frozen=True)
+class MemberRemoved:
+    """What removing someone did, for the caller to finish: their own model keys here, deleted
+    (provider id, key id each), and what it did to the organization's groups."""
+
+    keys: list[tuple[str, uuid.UUID]]
+    groups: thread_service.LeftGroups
 
 
 def org_out(org: Organization, role: str) -> OrgOut:
@@ -176,9 +186,10 @@ async def change_role(
 
 async def remove_member(
     db: AsyncSession, *, org_id: uuid.UUID, actor_id: uuid.UUID, actor_role: str, user_id: uuid.UUID
-) -> list[tuple[str, uuid.UUID]]:
+) -> MemberRemoved:
     """Admins remove people; anyone can leave. Owners can only be removed by owners. Their own
-    model keys here go with them; returns those keys' (provider id, key id)."""
+    model keys here go with them, and they leave its groups; the caller forgets those keys'
+    cached model lists and announces and finishes the group changes."""
     membership = await _membership_or_404(db, org_id, user_id)
     leaving = actor_id == user_id
     if not leaving and actor_role not in ("owner", "admin"):
@@ -189,7 +200,10 @@ async def remove_member(
         if await _owner_count(db, org_id) == 1:
             raise Conflict("An organization needs at least one owner. Make someone else owner first.")
     await db.delete(membership)
-    return await provider_service.delete_member_keys(db, org_id, user_id)
+    keys = await provider_service.delete_member_keys(db, org_id, user_id)
+    # They leave its groups too (their open chats stop: `thread_service.can_follow`).
+    groups = await thread_service.leave_groups(db, org_id=org_id, user_id=user_id)
+    return MemberRemoved(keys=keys, groups=groups)
 
 
 async def list_members(db: AsyncSession, org_id: uuid.UUID) -> list[MemberOut]:

@@ -12,7 +12,7 @@ import pytest
 from fastapi import FastAPI
 
 from src.controllers import thread_controller
-from tests.conftest import TEST_SETTINGS, FakeProviders, api_client, sign_up
+from tests.conftest import TEST_SETTINGS, FakeProviders, api_client, sign_up, sql_statements
 
 
 @dataclass
@@ -204,3 +204,57 @@ async def test_a_removed_persons_open_stream_stops(acme: Org) -> None:
     events = await asyncio.wait_for(follow(), timeout=5)
     assert [e.event for e in events] == ["thread_updated"]
     assert "After Omar left" not in str(events[0].data)
+
+
+async def test_removing_a_bot_stops_its_replies_in_the_group(acme: Org) -> None:
+    """A bot taken out of a group doesn't post there afterwards: its unfinished runs in that group
+    stop. Other bots' runs, and its own work in other chats, carry on."""
+    group = await acme.group(bots=["Chief", "Scout"], people=[])
+    lead_run = (await acme.client.post(acme.path(group, "/messages"), json={"text": "Morning"})).json()["runIds"]
+    scout_run = (await acme.client.post(acme.path(group, "/messages"), json={"text": "@scout hi"})).json()["runIds"]
+    dm = (await acme.client.post(f"{acme.org}/threads/dm", json={"botId": acme.bots["Chief"]})).json()
+    dm_run = (await acme.client.post(f"{acme.org}/threads/{dm['id']}/messages", json={"text": "Hi"})).json()["runIds"]
+
+    assert (await acme.remove(group, "bot", acme.bots["Chief"])).status_code == 200
+
+    async def status(run_id: str) -> str:
+        run: dict[str, str] = (await acme.client.get(f"{acme.org}/runs/{run_id}")).json()
+        return run["status"]
+
+    assert [await status(r) for r in [*lead_run, *scout_run, *dm_run]] == ["cancelled", "queued", "queued"]
+
+
+async def test_a_change_to_a_group_reads_the_group_once(acme: Org) -> None:
+    """Saving a change and its live event shows the group once (people, last message, unread), not twice."""
+    group = await acme.group(bots=["Chief"], people=[])
+    async with sql_statements(acme.app) as seen:
+        assert (await acme.client.patch(acme.path(group), json={"title": "Renamed"})).status_code == 200
+    previews = [s for s in seen if "row_number()" in s]
+    assert len(previews) == 1
+
+
+async def test_a_deleted_bot_leaves_its_groups(acme: Org) -> None:
+    group = await acme.group(bots=["Chief", "Scout"], people=[])
+    assert (await acme.client.delete(f"{acme.org}/bots/{acme.bots['Scout']}")).status_code == 204
+    assert _ids((await acme.client.get(acme.path(group))).json(), "bot") == {acme.bots["Chief"]}
+
+
+async def test_someone_removed_from_the_organization_leaves_its_groups_and_their_streams_end(acme: Org) -> None:
+    group = await acme.group(bots=["Chief"], people=["omar@acme.dev"])
+    await acme.sign_in("omar@acme.dev")
+    dm = (await acme.client.post(f"{acme.org}/threads/dm", json={"botId": acme.bots["Chief"]})).json()
+    await acme.sign_in("sara@acme.dev")
+    omar = acme.people["omar@acme.dev"]
+    assert (await acme.client.delete(f"{acme.org}/members/{omar}")).status_code == 204
+
+    assert omar not in _ids((await acme.client.get(acme.path(group))).json(), "user")
+
+    async def follow(thread_id: str) -> list[Any]:
+        stream = thread_controller.follow_events(
+            acme.app.state.runs, uuid.UUID(thread_id), user_id=uuid.UUID(omar), after_id=0, follow=True
+        )
+        return [event async for event in stream]
+
+    # A tab Omar left open stops hearing either chat.
+    for thread_id in (group["id"], dm["id"]):
+        assert await asyncio.wait_for(follow(thread_id), timeout=5) == []

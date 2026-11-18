@@ -664,6 +664,21 @@ class ThreadRuns:
     replay_from: int  # just before the queued/running runs' first events (`last_event_id` if none)
 
 
+async def unfinished_in_thread(db: AsyncSession, thread_id: uuid.UUID, *, bot_id: uuid.UUID) -> list[uuid.UUID]:
+    """A bot's runs in one chat that haven't ended (queued, running or paused), oldest first: what
+    taking it out of a group stops."""
+    query = (
+        select(Run.id)
+        .where(
+            Run.thread_id == thread_id,
+            Run.bot_id == bot_id,
+            Run.status.in_([*ACTIVE_STATUSES, *PAUSED_STATUSES]),
+        )
+        .order_by(Run.created_at, Run.id)
+    )
+    return list(await db.scalars(query))
+
+
 async def thread_runs(db: AsyncSession, thread_id: uuid.UUID, *, active: bool) -> ThreadRuns:
     """A chat's runs, newest first (only the unfinished ones when `active`), and the chat's
     newest event id, read in one statement so they describe the same moment: a stream that

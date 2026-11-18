@@ -4,12 +4,12 @@ import uuid
 from collections.abc import Iterable
 
 from botdesk_plugin_sdk import PluginManifest
-from sqlalchemy import or_, select, update
+from sqlalchemy import delete, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.core.errors import NotFound
 from src.core.handles import handle_prefix, make_handle
-from src.models import Bot, Organization, Routine, Run, Thread
+from src.models import Bot, Organization, Routine, Run, Thread, ThreadParticipant
 from src.models.run import FINISHED_STATUSES
 from src.schemas.bot import BotIn, BotUpdate
 from src.services import binding_service
@@ -82,11 +82,17 @@ async def runs_going_with(db: AsyncSession, bot_id: uuid.UUID) -> list[uuid.UUID
 
 async def delete_bot(db: AsyncSession, bot: Bot) -> None:
     """Its DMs and runs go with it (stop them first: `runs_going_with`, and end its handoffs with
-    `task_service.bot_removed`). Tasks it was part of stay, without it. Its routines stay,
-    switched off, saying why."""
+    `task_service.bot_removed`), and it leaves its groups. Tasks it was part of stay, without it.
+    Its routines stay, switched off, saying why."""
     await db.execute(
         update(Routine)
         .where(Routine.bot_id == bot.id)
         .values(enabled=False, next_run_at=None, disabled_reason=BOT_REMOVED)
+    )
+    # It leaves its groups (a group's lead points at it with ON DELETE SET NULL).
+    await db.execute(
+        delete(ThreadParticipant).where(
+            ThreadParticipant.participant_type == "bot", ThreadParticipant.participant_id == bot.id
+        )
     )
     await db.delete(bot)

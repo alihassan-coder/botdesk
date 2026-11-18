@@ -10,6 +10,7 @@ from src.core.handles import handle_prefix, make_handle
 from src.models import Membership, Organization, User
 from src.models.bot import SecurityLevel
 from src.schemas.organization import MemberOut, OrgOut
+from src.services import thread_service
 
 
 def org_out(org: Organization, role: str) -> OrgOut:
@@ -130,6 +131,8 @@ async def remove_member(
         if await _owner_count(db, org_id) == 1:
             raise Conflict("An organization needs at least one owner. Make someone else owner first.")
     await db.delete(membership)
+    # They leave its groups too (their open chats stop: `thread_service.can_follow`).
+    await thread_service.leave_groups(db, org_id=org_id, user_id=user_id)
 
 
 async def list_members(db: AsyncSession, org_id: uuid.UUID) -> list[MemberOut]:

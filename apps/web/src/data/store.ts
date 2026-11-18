@@ -724,13 +724,31 @@ const PAGE_SIZE = 50;
 
 /** Close functions for the event streams of the chats that are open, by thread id. */
 const chatStreams = new Map<string, () => void>();
-/** When each chat was last marked read here, so a chat list asked for before that can't undo it. */
+/**
+ * When each chat was last marked read here, so a chat list asked for before that can't undo it.
+ * Times are a counter, not the clock: two things in the same millisecond still have an order.
+ */
+let clock = 0;
+const tick = () => ++clock;
 const readAt = new Map<string, number>();
+/** When each chat left this browser's list (you left a group, its bot was removed), likewise. */
+const removedAt = new Map<string, number>();
+/** Each open chat's newest event id when it opened: its stream's events up to there are replays. */
+const replayedUpTo = new Map<string, number>();
 
 function closeChatStreams() {
   chatStreams.forEach((close) => close());
   chatStreams.clear();
-  readAt.clear(); // another org's chats, or a fresh start
+  // Another org's chats, or a fresh start.
+  readAt.clear();
+  removedAt.clear();
+  replayedUpTo.clear();
+}
+
+/** Chats that are no longer yours leave the list now; a chat list asked for before this won't bring them back. */
+function dropThreads(st: State, ids: Set<string>): State {
+  ids.forEach((threadId) => removedAt.set(threadId, tick()));
+  return { ...st, threads: st.threads.filter((t) => !ids.has(t.id)) };
 }
 
 function followChat(orgId: string, threadId: string, after?: number): () => void {
@@ -748,8 +766,11 @@ function onRunEvent(orgId: string, event: ApiRunEvent) {
   set((st) => (st.org.id === orgId ? withRunStatus({ ...st, ...applyRunEvent(st, event) }) : st));
   if (unread) countUnread(event.threadId);
   if (event.kind === "thread_updated" && !event.data.thread.participants.some((p) => p.type === "user" && p.id === state.currentUserId)) {
-    // A change that left you out: you may have been removed (the API ends the stream), or it's an
-    // old change replayed after you were added back. The chat list says which.
+    // A change that left you out. Heard live, you were removed: the group goes now (the API ends
+    // the stream too). Replayed as the chat opened, it's an old change: you may have been added
+    // back since, so it stays. Either way the chat list has the last word (and brings the group
+    // back if you were added back).
+    if (event.id > (replayedUpTo.get(event.threadId) ?? 0)) set((st) => (st.org.id === orgId ? dropThreads(st, new Set([event.threadId])) : st));
     void actions.refreshChats();
   }
   if (event.kind === "run_finished" || event.kind === "run_failed") scheduleUsageRefresh(orgId);
@@ -888,24 +909,26 @@ const chatActions = {
   /**
    * Your chats again from the API: new counts, previews, groups you were added to or removed from.
    * The list may be a moment old when it lands, so it never undoes what happened meanwhile here:
-   * a chat started while it was on its way stays (it's not in the list yet), a chat read since it
-   * was asked for stays read, and a newer message heard on a stream keeps its preview.
+   * a chat started while it was on its way stays (it's not in the list yet), a chat that left
+   * since it was asked for stays gone, a chat read since stays read, and a newer message heard on
+   * a stream keeps its preview.
    */
   async refreshChats(): Promise<void> {
     if (isDemoMode() || state.authStatus !== "signed-in") return;
     const orgId = state.org.id;
-    const askedAt = Date.now();
+    const askedAt = tick();
     const known = new Set(state.threads.map((t) => t.id));
     const apiThreads = await threadApi.list(orgId).catch(() => null);
     if (!apiThreads) return;
     set((st) => {
       if (st.org.id !== orgId || st.botsLoading) return st; // the org's first load brings them all
-      const listed = apiThreads.map((t) => withBotName(toThread(t), st.bots));
+      const goneSince = (id: string) => (removedAt.get(id) ?? 0) > askedAt;
+      const listed = apiThreads.filter((t) => !goneSince(t.id)).map((t) => withBotName(toThread(t), st.bots));
       const startedSince = st.threads.filter((t) => !known.has(t.id) && !listed.some((l) => l.id === t.id));
       const threads = listed.map((fresh) => {
         const here = st.threads.find((t) => t.id === fresh.id);
         const newerHere = here !== undefined && Date.parse(here.lastMessageAt) > Date.parse(fresh.lastMessageAt);
-        const readSince = isLookingAt(fresh.id) || (readAt.get(fresh.id) ?? -1) >= askedAt;
+        const readSince = isLookingAt(fresh.id) || (readAt.get(fresh.id) ?? 0) > askedAt;
         return {
           ...fresh,
           ...(newerHere ? { lastMessageAt: here.lastMessageAt, lastMessagePreview: here.lastMessagePreview } : {}),
@@ -966,6 +989,7 @@ const chatActions = {
       // stream starts from now, as a best effort.
       const active = await threadApi.activeRuns(orgId, threadId).catch(() => null);
       if (closed || state.org.id !== orgId) return;
+      replayedUpTo.set(threadId, active?.lastEventId ?? 0); // without the list, the stream starts from now
       stopFollowing = followChat(orgId, threadId, active?.replayFrom);
       await loadMessages(orgId, threadId, active);
     })();
@@ -1098,7 +1122,7 @@ async function saveGroup(save: () => Promise<ApiThread>): Promise<ActionResult> 
     const stillIn = saved.participants.some((p) => p.type === "user" && p.id === state.currentUserId);
     set((st) => {
       if (st.org.id !== orgId) return st;
-      if (!stillIn) return { ...st, threads: st.threads.filter((t) => t.id !== saved.id) };
+      if (!stillIn) return dropThreads(st, new Set([saved.id]));
       return { ...st, threads: st.threads.map((t) => (t.id === saved.id ? { ...saved, unread: t.unread, pinned: t.pinned } : t)) };
     });
     return { ok: true };
@@ -1605,7 +1629,7 @@ export const actions = {
 
   /** You've seen this chat: its count drops to 0 here and, on the API, for your other devices too. */
   markRead(threadId: string) {
-    readAt.set(threadId, Date.now());
+    readAt.set(threadId, tick());
     set((st) => ({ ...st, threads: st.threads.map((t) => (t.id === threadId && t.unread !== 0 ? { ...t, unread: 0 } : t)) }));
     if (!isDemoMode() && state.authStatus === "signed-in") void threadApi.markRead(state.org.id, threadId).catch(() => {});
   },
@@ -1773,6 +1797,8 @@ export const actions = {
         .map((t) => ({ ...t, participants: t.participants.filter((p) => !(p.type === "bot" && p.id === botId)) }))
         .filter((t) => t.participants.some((p) => p.type === "bot"));
       const kept = new Set(threads.map((t) => t.id));
+      // Its DM is gone on the API too: a chat list already on its way mustn't bring it back.
+      st.threads.forEach((t) => !kept.has(t.id) && removedAt.set(t.id, tick()));
       return {
         ...st,
         bots: st.bots.filter((b) => b.id !== botId),

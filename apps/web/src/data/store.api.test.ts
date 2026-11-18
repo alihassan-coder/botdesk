@@ -700,36 +700,76 @@ describe("chats on the API", () => {
       await expect(actions.removeFromGroup("g1", { type: "user", id: "u1" })).resolves.toEqual({ ok: false, error: "A group needs at least one person." });
     });
 
-    it("a group you're removed from leaves your chat list when its stream says so", async () => {
+    it("a group you're removed from leaves your chat list as soon as its stream says so", async () => {
       routes["GET /api/v1/orgs/o1/threads/g1/messages?limit=50"] = { status: 200, body: [] };
       actions.openThread("g1");
       await vi.waitFor(() => expect(state().threadLoads.g1?.status).toBe("ready"));
       FakeEventSource.last!.emit("thread_updated", { threadId: "g1", data: { thread: group({ title: "Renamed" }) } });
       expect(state().threads.find((t) => t.id === "g1")?.title).toBe("Renamed");
-      // The chat list confirms it: the group is no longer yours.
       routes["GET /api/v1/orgs/o1/threads"] = { status: 200, body: [thread("t1", "b1")] };
       FakeEventSource.last!.emit("thread_updated", { threadId: "g1", data: { thread: group({ participants: [{ type: "user", id: "u2" }] }) } });
-      await vi.waitFor(() => expect(state().threads.some((t) => t.id === "g1")).toBe(false));
+      expect(state().threads.some((t) => t.id === "g1")).toBe(false); // at once, before the chat list answers
+      await vi.waitFor(() => expect(calls.filter((c) => c === "GET /api/v1/orgs/o1/threads").length).toBeGreaterThan(1));
+      expect(state().threads.some((t) => t.id === "g1")).toBe(false);
     });
 
-    it("an old removal replayed after you were added back leaves the group in your list", async () => {
-      // Opening the group replays its events from before a run that is still going: you were
-      // removed, then added back.
+    it("the chat list brings back a group you were removed from and added back to", async () => {
       routes["GET /api/v1/orgs/o1/threads/g1/messages?limit=50"] = { status: 200, body: [] };
       actions.openThread("g1");
       await vi.waitFor(() => expect(state().threadLoads.g1?.status).toBe("ready"));
       const back = group({ participants: [{ type: "user", id: "u1" }, { type: "user", id: "u2" }] });
       routes["GET /api/v1/orgs/o1/threads"] = { status: 200, body: [thread("t1", "b1"), back] };
       FakeEventSource.last!.emit("thread_updated", { threadId: "g1", data: { thread: group({ participants: [{ type: "user", id: "u2" }] }) } });
-      FakeEventSource.last!.emit("thread_updated", { threadId: "g1", data: { thread: back } });
-      await vi.waitFor(() => expect(calls.filter((c) => c === "GET /api/v1/orgs/o1/threads").length).toBeGreaterThan(1));
+      expect(state().threads.some((t) => t.id === "g1")).toBe(false);
       await vi.waitFor(() => expect(state().threads.find((t) => t.id === "g1")?.participants).toEqual(back.participants));
+    });
+
+    it("an old removal replayed as the group opens never drops it", async () => {
+      // A run still going started before you were removed and added back, so opening the group
+      // replays both changes (their ids are at or below the list's lastEventId).
+      routes["GET /api/v1/orgs/o1/threads/g1/runs?active=true"] = { status: 200, body: { runs: [], lastEventId: 50, replayFrom: 40 } };
+      routes["GET /api/v1/orgs/o1/threads/g1/messages?limit=50"] = { status: 200, body: [] };
+      const back = group({ participants: [{ type: "user", id: "u1" }, { type: "user", id: "u2" }] });
+      routes["GET /api/v1/orgs/o1/threads"] = { status: 200, body: [thread("t1", "b1"), back] };
+      actions.openThread("g1");
+      await vi.waitFor(() => expect(state().threadLoads.g1?.status).toBe("ready"));
+      FakeEventSource.last!.emit("thread_updated", { id: 41, threadId: "g1", data: { thread: group({ participants: [{ type: "user", id: "u2" }] }) } });
+      expect(state().threads.some((t) => t.id === "g1")).toBe(true);
+      FakeEventSource.last!.emit("thread_updated", { id: 42, threadId: "g1", data: { thread: back } });
+      await vi.waitFor(() => expect(calls.filter((c) => c === "GET /api/v1/orgs/o1/threads").length).toBeGreaterThan(1));
+      expect(state().threads.find((t) => t.id === "g1")?.participants).toEqual(back.participants);
     });
 
     it("taking yourself out of a group drops it from your list", async () => {
       routes["DELETE /api/v1/orgs/o1/threads/g1/participants/user/u1"] = { status: 200, body: group({ participants: [{ type: "user", id: "u2" }] }) };
       await expect(actions.removeFromGroup("g1", { type: "user", id: "u1" })).resolves.toEqual({ ok: true });
       expect(state().threads.some((t) => t.id === "g1")).toBe(false);
+    });
+
+    it("a group you left while a chat list was on its way doesn't come back from it", async () => {
+      let answer = () => {};
+      const slow = new Promise<void>((resolve) => (answer = resolve));
+      routes["GET /api/v1/orgs/o1/threads"] = { status: 200, wait: slow, body: [thread("t1", "b1"), group()] };
+      routes["DELETE /api/v1/orgs/o1/threads/g1/participants/user/u1"] = { status: 200, body: group({ participants: [{ type: "user", id: "u2" }] }) };
+      const refreshed = actions.refreshChats();
+      await vi.waitFor(() => expect(calls).toContain("GET /api/v1/orgs/o1/threads"));
+      await actions.removeFromGroup("g1", { type: "user", id: "u1" });
+      answer();
+      await refreshed;
+      expect(state().threads.some((t) => t.id === "g1")).toBe(false);
+    });
+
+    it("a removed bot's DM doesn't come back from a chat list that was on its way", async () => {
+      let answer = () => {};
+      const slow = new Promise<void>((resolve) => (answer = resolve));
+      routes["GET /api/v1/orgs/o1/threads"] = { status: 200, wait: slow, body: [thread("t1", "b1"), group()] };
+      routes["DELETE /api/v1/orgs/o1/bots/b1"] = { status: 204 };
+      const refreshed = actions.refreshChats();
+      await vi.waitFor(() => expect(calls).toContain("GET /api/v1/orgs/o1/threads"));
+      await expect(actions.removeBot("b1")).resolves.toEqual({ ok: true });
+      answer();
+      await refreshed;
+      expect(state().threads.some((t) => t.id === "t1")).toBe(false);
     });
   });
 

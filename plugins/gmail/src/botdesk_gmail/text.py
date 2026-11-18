@@ -77,8 +77,9 @@ class Body:
     quoted: int = 0  # characters of quoted earlier mail left out of `text`
 
 
-def body_of(payload: Any) -> Body:
-    """A message's text and its attachments' metadata, from a `format=full` payload."""
+def body_of(payload: Any, *, whole: bool = False) -> Body:
+    """A message's text and its attachments' metadata, from a `format=full` payload. `whole`:
+    keep quoted earlier mail at the end too (a draft about to be sent: all of it goes out)."""
     plain: list[str] = []
     rich: list[str] = []
     body = Body()
@@ -100,7 +101,8 @@ def body_of(payload: Any) -> Body:
         elif mime == "text/html":
             rich.append(html_to_text(decode(content.get("data"), charset_of(part))))
     chosen = [text for text in plain if text.strip()] or rich
-    body.text, body.quoted = without_quoted_mail(_tidy("\n\n".join(chosen)))
+    text = _tidy("\n\n".join(chosen))
+    body.text, body.quoted = (text, 0) if whole else without_quoted_mail(text)
     return body
 
 

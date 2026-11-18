@@ -190,7 +190,7 @@
       "untrustedOutput": false
     },
     {
-      "description": "List the drafts in the connected Gmail mailbox, newest first: draftId, to, cc, bcc, subject and a snippet. Use them with gmail.send_draft.",
+      "description": "List the drafts in the connected Gmail mailbox, newest first: draftId, to, cc, bcc, subject, the whole text (body) and the attachments' names. Use them with gmail.send_draft.",
       "egress": "fixed",
       "idempotent": true,
       "inputSchema": {
@@ -458,11 +458,20 @@
       "untrustedOutput": false
     },
     {
-      "description": "Send a draft that is already in Gmail. Give its draftId and, exactly as gmail.list_drafts shows them, its recipients (plain addresses) and subject: the person approves those, and nothing is sent if the draft doesn't match.",
+      "description": "Send a draft that is already in Gmail. Give its draftId and, exactly as gmail.list_drafts shows them, its recipients (plain addresses), subject, text (body) and attachments' names: the person approves those, and nothing is sent if the draft doesn't match.",
       "egress": "fixed",
       "idempotent": false,
       "inputSchema": {
         "properties": {
+          "attachments": {
+            "description": "The names of the draft's attachments, as gmail.list_drafts shows them. Empty: none.",
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 20,
+            "title": "Attachments",
+            "type": "array"
+          },
           "bcc": {
             "description": "Bcc: plain addresses.",
             "items": {
@@ -471,6 +480,12 @@
             "maxItems": 20,
             "title": "Bcc",
             "type": "array"
+          },
+          "body": {
+            "description": "The draft's whole text, exactly as gmail.list_drafts shows it (`body`, without the <email> lines around it). The person approves this text; nothing is sent if the draft's text differs.",
+            "maxLength": 50000,
+            "title": "Body",
+            "type": "string"
           },
           "cc": {
             "description": "Cc: plain addresses.",
@@ -508,7 +523,8 @@
         "required": [
           "to",
           "subject",
-          "draft_id"
+          "draft_id",
+          "body"
         ],
         "title": "SendDraftArgs",
         "type": "object"

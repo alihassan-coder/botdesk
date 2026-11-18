@@ -20,3 +20,7 @@ The owner asked for the Gmail extras: read attachments, send formatted mail, and
 - The `send_draft` card is less complete than the `send` card (no body). The exact-match check keeps a draft edited after approval from going out.
 - Reading an attachment costs one extra request to find its current id.
 - Outgoing attachments and reading PDF text are still not supported.
+
+## Update 2026-11-18: the `send_draft` card shows the text
+
+§3 left the body off the card, so a person approved a send without seeing what it says. Now `gmail.list_drafts` returns each draft's whole text (the plain-text part, or the HTML as text, quoted mail included) and its attachments' names, and `gmail.send_draft` carries both, so the card shows them like a `send` card does. At send time the draft must also have the same text (line breaks and spacing aside) and the same attachment names, or nothing is sent. A draft too long to show on a card (over 20 000 characters) can't be sent by a bot. The trade-off above no longer holds: the card shows what is sent, except that it reads the plain-text part when the draft has both it and HTML (Gmail writes both from the same text).

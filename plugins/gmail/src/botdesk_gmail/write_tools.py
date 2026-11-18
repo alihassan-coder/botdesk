@@ -258,16 +258,19 @@ def recipients_line(args: Recipients) -> str:
     return ", ".join(args.to) + (f" ({'; '.join(copies)})" if copies else "")
 
 
+def body_preview(text: str) -> str:
+    """The start of a body on one line, for a card's summary (the card shows all of it below)."""
+    body = " ".join(text.split())
+    return body if len(body) <= PREVIEW else body[:PREVIEW].rstrip() + "…"
+
+
 def _mail_summary(draft: bool) -> Any:
     def summarize(args: MailArgs) -> str:
         if args.reply_to_thread_id:
             action = f"{'Draft a reply' if draft else 'Reply'} in email thread {args.reply_to_thread_id} to"
         else:
             action = f"{'Draft' if draft else 'Send'} an email to"
-        recipients = recipients_line(args)
-        body = " ".join(args.body.split())
-        preview = body if len(body) <= PREVIEW else body[:PREVIEW].rstrip() + "…"
-        return f"{action} {recipients}: “{args.subject}”: {preview}"
+        return f"{action} {recipients_line(args)}: “{args.subject}”: {body_preview(args.body)}"
 
     return summarize
 

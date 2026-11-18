@@ -25,7 +25,7 @@ All `read`, idempotent, needing `gmail.readonly`, and (all but `list_labels`) `u
 | `gmail.read_thread(thread_id)` | `threads.get(format=full)` | each message's kept headers, plain text and attachments (part, name, type, size) |
 | `gmail.read_attachment(message_id, part)` | `messages.get(format=full)` + `messages.attachments.get` | one text attachment's text (`attachments.py`) |
 | `gmail.list_labels()` | `labels.list` | id, name, type |
-| `gmail.list_drafts(max_results=10)` (at most 25) | `drafts.list` + `drafts.get(format=metadata)` | draftId, to, cc, bcc, subject, snippet (`drafts.py`) |
+| `gmail.list_drafts(max_results=10)` (at most 25) | `drafts.list` + `drafts.get(format=full)` | draftId, to, cc, bcc, subject, the whole text (`body`, in an `<email>` block; left out with `bodyLeftOut` past 20 000 characters, or past 60 000 for the whole list) and the attachments' names (`drafts.py`) |
 
 How email reaches the model (`text.py`, ADR 0011 §4):
 
@@ -48,14 +48,14 @@ Need `gmail.modify`; one change per call, one request to Gmail, never retried by
 | `gmail.archive(thread_id)` (removes `INBOX`) | `threads.modify` | `write-external` | yes |
 | `gmail.create_draft(to, cc, bcc, subject, body, reply_to_thread_id?)` | `drafts.create` | `write-external` | no |
 | `gmail.send(…same…)` | `messages.send` | `external-send` | no |
-| `gmail.send_draft(draft_id, to, cc, bcc, subject)` | `drafts.get` + `drafts.send` | `external-send` | no |
+| `gmail.send_draft(draft_id, to, cc, bcc, subject, body, attachments)` | `drafts.get` + `drafts.send` | `external-send` | no |
 | `gmail.trash(thread_id)` | `threads.trash` | `destructive` | yes |
 
 - **Labels:** ids from `gmail.list_labels` (`STARRED`, `UNREAD`, `IMPORTANT`, `Label_12`…). `TRASH`, `SPAM`, `DRAFT` and `SENT` are refused: trashing is `gmail.trash`.
 - **Mail:** plain text by default. With `format: "markdown"` it is `multipart/alternative`: the body as written, plus HTML that `markdown.py` generates (`#` headings, `-`/`1.` lists, `**bold**`, `*italic*`, `` `code` ``, `[text](https://…)`; only http(s) and mailto links). The model's own HTML is escaped, never sent as HTML. Built with the standard `email` package and sent as base64url `raw`; Gmail sets `From`. Recipients are bare addresses (no names, one per entry), at most 20 in To, Cc and Bcc together; the subject is one line; the body at most 50 000 characters. Anything that could add a header is refused by the args model, so it never reaches an approval card.
 - **Replies:** `reply_to_thread_id` sends with `threadId`, and `In-Reply-To` / `References` from the thread's newest message (only well-formed message ids are copied). Use the thread's subject with `Re: ` so Gmail keeps the reply in the conversation.
 - **Approval cards** get a one-line summary from the arguments alone: "Send an email to sara@acme.dev (cc omar@acme.dev; bcc boss@acme.dev): “Launch review”: Hi Sara, Thursday at 3 PM works. Ali" (the body's first 120 characters), "Add label STARRED to email thread 18f0a0", "Move email thread 18f0a0 to Trash".
-- **Sending a draft:** a card shows only a call's arguments, so `send_draft` carries the draft's recipients and subject (from `gmail.list_drafts`) and the card reads "Send draft r-5512 to sara@acme.dev (cc …; bcc …): “Launch review”". Right before sending, the tool fetches the draft and sends it (`{"id": …}`, once) only if its To, Cc, Bcc (as address sets, any case) and Subject are exactly those; a header that doesn't parse never matches. Otherwise nothing is sent. The body isn't on the card: the draft is the person's own, or one a bot saved through an approved `create_draft`.
+- **Sending a draft:** a card shows only a call's arguments, so `send_draft` carries everything that will be sent, as `gmail.list_drafts` showed it: recipients, subject, the whole text (`body`; an `<email>` block around it is dropped) and the attachments' names. The card reads "Send draft r-5512 to sara@acme.dev (cc …; bcc …): “Launch review” with agenda.pdf: Hi Sara, …", with the whole text in its Body field, like a `send` card. Right before sending, the tool fetches the draft (`format=full`) and sends it (`{"id": …}`, once) only if its To, Cc, Bcc (as address sets, any case) and Subject are exactly those, its text is the same (line breaks and spacing aside) and its attachments have the same names; a header that doesn't parse never matches. Otherwise nothing is sent, and the error says what differs. The text is the plain-text part (the HTML as text when there is none), quoted mail included; invisible filler characters (zero-width spaces, soft hyphens) aren't shown and don't count. A draft whose text is too long to show can't be sent by a bot.
 
 ## Trigger: `new_email`
 

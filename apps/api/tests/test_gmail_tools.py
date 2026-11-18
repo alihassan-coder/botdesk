@@ -149,7 +149,12 @@ WRITES: dict[str, dict[str, Any]] = {
     "gmail__create_draft": MAIL,
     "gmail__send": MAIL,
     "gmail__trash": {"thread_id": "18f0a0"},
-    "gmail__send_draft": {"draft_id": "r-5512", "to": ["sara@acme.dev"], "subject": "Launch review"},
+    "gmail__send_draft": {
+        "draft_id": "r-5512",
+        "to": ["sara@acme.dev"],
+        "subject": "Launch review",
+        "body": "Thursday at 3 PM works.",
+    },
 }
 
 
@@ -199,7 +204,7 @@ async def test_after_reading_mail_even_an_autonomous_bot_asks_before_every_gmail
             assert await _decide(team, run, tool, level="autonomous", tainted=True) == "ask", tool
 
 
-async def test_sending_a_draft_asks_with_its_recipients_and_subject_on_the_card() -> None:
+async def test_sending_a_draft_asks_with_its_recipients_subject_and_text_on_the_card() -> None:
     async with acme() as team:
         run = await _inbox_dm(team)
         runs: RunManager = team.app.state.runs
@@ -217,7 +222,10 @@ async def test_sending_a_draft_asks_with_its_recipients_and_subject_on_the_card(
             recorded = await tool_pipeline.record(db, run, call, tainted=True, approval_expiry=timedelta(hours=1))
             await db.commit()
         assert recorded.approval is not None
-        assert recorded.approval.summary == "Send draft r-5512 to sara@acme.dev: “Launch review”"
+        summary = "Send draft r-5512 to sara@acme.dev: “Launch review”: Thursday at 3 PM works."
+        assert recorded.approval.summary == summary
+        card = (await team.client.get(f"{team.org}/approvals/{recorded.approval.id}")).json()
+        assert {"label": "Body", "value": "Thursday at 3 PM works."} in card["preview"]
 
 
 async def test_a_send_waiting_for_approval_shows_the_exact_email_and_sends_once_approved() -> None:

@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { apiMe, apiOrg, signInOnApi, withFakeApi } from "@/test/fake-api";
+import { apiDm, apiMe, apiOrg, apiScout, apiTemplates, signInOnApi, withFakeApi } from "@/test/fake-api";
 import { actions, getStoreSnapshot as state } from "./store";
 
 /*
@@ -33,24 +33,32 @@ describe("the default security level for new bots, on the API", () => {
     expect(state().org.defaultSecurityLevel).toBe("ask-before-acting");
   });
 
-  it("a bot hired from the marketplace starts at the org's default", async () => {
-    api.routes["POST /api/v1/auth/sign-in"] = { status: 200, body: { ...apiMe, organizations: [{ ...apiOrg, defaultSecurityLevel: "read-only" }] } };
+  it("the marketplace is the API's catalogue, not the demo's", async () => {
     await signInOnApi();
-    await actions.createBotFromTemplate(state().templates[0].id);
-    const hire = api.sent.find((r) => r.key === "POST /api/v1/orgs/o1/bots");
-    expect(hire?.body).toMatchObject({ securityLevel: "read-only" });
+    expect(state().templates).toEqual({ status: "ready", items: apiTemplates.map((t) => ({ ...t })) });
+    expect(state().templates.items.some((t) => t.installs !== undefined)).toBe(false); // no made-up hire counts
   });
 
-  it("a bot hired from the marketplace uses the instance's default model, not a demo model id", async () => {
+  it("hiring a template asks the API to make the bot from its catalogue, then opens its DM", async () => {
+    const hired = { ...apiScout, id: "b9", name: "Chief", role: "Chief of staff", instructions: "You are the team's chief of staff." };
+    api.routes["POST /api/v1/orgs/o1/templates/chief/hire"] = { status: 201, body: hired };
+    api.routes["POST /api/v1/orgs/o1/threads/dm"] = { status: 200, body: { ...apiDm, id: "t9", botId: "b9", title: "Chief" } };
     await signInOnApi();
-    const [template] = state().templates;
-    await actions.createBotFromTemplate(template.id);
-    const hire = api.sent.find((r) => r.key === "POST /api/v1/orgs/o1/bots");
-    // Model ids on the API are "provider:model", or empty for the instance default; "m_claude" gets a 422.
-    expect(hire?.body).toEqual({
-      name: template.name, role: template.role, description: template.description, avatarColor: template.avatarColor,
-      modelId: "", securityLevel: "ask-before-acting", instructions: "", monthlyBudgetUsd: 20,
-    });
+    await expect(actions.createBotFromTemplate("chief")).resolves.toEqual({ ok: true, threadId: "t9" });
+    // The instructions, Tools and starting level are the API's call: no bot fields are sent.
+    expect(api.sent.find((r) => r.key === "POST /api/v1/orgs/o1/templates/chief/hire")?.body).toBeUndefined();
+    expect(api.sent.some((r) => r.key === "POST /api/v1/orgs/o1/bots")).toBe(false);
+    expect(state().bots.find((b) => b.id === "b9")?.instructions).toBe("You are the team's chief of staff.");
+    expect(state().threads.some((t) => t.id === "t9")).toBe(true);
+  });
+
+  it("a marketplace that didn't load says so, and loads again on Try again", async () => {
+    api.routes["GET /api/v1/templates"] = { status: 503, body: { detail: "Down" } };
+    await signInOnApi();
+    expect(state().templates.status).toBe("error");
+    api.routes["GET /api/v1/templates"] = { status: 200, body: apiTemplates };
+    await actions.loadTemplates();
+    expect(state().templates.items.map((t) => t.id)).toEqual(["chief", "inbox-zero"]);
   });
 });
 

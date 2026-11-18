@@ -45,6 +45,20 @@ export interface ApiNewInvitation extends ApiInvitation {
 
 export type ApiSecurityLevel = "read-only" | "ask-before-acting" | "autonomous";
 
+/** A marketplace template (`GET /templates`). */
+export interface ApiTemplate {
+  id: string;
+  name: string;
+  role: string;
+  category: string;
+  description: string;
+  instructions: string;
+  avatarColor: ApiBot["avatarColor"];
+  securityLevel: ApiSecurityLevel;
+  /** Plugin ids this server loaded that the template works in. */
+  plugins: string[];
+}
+
 export interface ApiBot {
   id: string;
   name: string;

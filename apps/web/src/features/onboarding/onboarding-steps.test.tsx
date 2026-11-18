@@ -112,7 +112,7 @@ describe("Step 2: add an AI key", () => {
 
 describe("Step 3: hire your first bot", () => {
   it("recommends Chief plus one more, and hiring gives back the bot's DM", async () => {
-    api.routes["POST /api/v1/orgs/o1/bots"] = { status: 201, body: chief };
+    api.routes["POST /api/v1/orgs/o1/templates/chief/hire"] = { status: 201, body: chief };
     api.routes["POST /api/v1/orgs/o1/threads/dm"] = { status: 200, body: chiefDm };
     await signInOnApi();
     const onHired = vi.fn();
@@ -126,19 +126,19 @@ describe("Step 3: hire your first bot", () => {
 
     expect(await screen.findByText("Hired")).toBeInTheDocument();
     expect(onHired).toHaveBeenCalledWith("t2");
-    expect(api.sent.find((r) => r.key === "POST /api/v1/orgs/o1/bots")?.body).toMatchObject({ name: "Chief", role: "Chief of staff" });
+    expect(api.sent.some((r) => r.key === "POST /api/v1/orgs/o1/templates/chief/hire")).toBe(true);
     await user.click(screen.getByRole("button", { name: "Continue" }));
     expect(onNext).toHaveBeenCalled();
   });
 
   it("says why hiring failed", async () => {
-    api.routes["POST /api/v1/orgs/o1/bots"] = { status: 403, body: { detail: "Your plan allows 0 bots." } };
+    api.routes["POST /api/v1/orgs/o1/templates/chief/hire"] = { status: 404, body: { detail: "That bot isn't in the marketplace any more." } };
     await signInOnApi();
     const onHired = vi.fn();
     const { user } = renderUI(<BotStep onNext={vi.fn()} onHired={onHired} onLeave={vi.fn()} />);
 
     await user.click(screen.getByRole("button", { name: "Hire Chief" }));
-    expect(await screen.findByText("Your plan allows 0 bots.")).toBeInTheDocument();
+    expect(await screen.findByText("That bot isn't in the marketplace any more.")).toBeInTheDocument();
     expect(onHired).not.toHaveBeenCalled();
   });
 

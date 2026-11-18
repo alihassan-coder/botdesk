@@ -24,9 +24,10 @@ import { parseMentions } from "@/lib/mentions";
 import { HOP_LIMIT, chainStoppedText, routeMessage, type BotReply, type ChatBots } from "@/lib/mention-routing";
 import { previewFromArgs } from "@/lib/args-form";
 import { browser } from "@/lib/navigate";
-import { approvalApi, authApi, botApi, connectionApi, inviteApi, mcpApi, memoryApi, modelApi, orgApi, pluginApi, routineApi, runApi, threadApi, usageApi } from "./api/botdesk";
+import { strictestLevel } from "@/lib/security-level";
+import { approvalApi, authApi, botApi, connectionApi, inviteApi, mcpApi, memoryApi, modelApi, orgApi, pluginApi, routineApi, runApi, templateApi, threadApi, usageApi } from "./api/botdesk";
 import { ApiError, apiBaseUrl } from "./api/client";
-import { toAccountConnection, toApiBot, toApproval, toBot, toInvitation, toMcpServer, toMemory, toMemoryStatus, toMessage, toModel, toModelProvider, toOrg, toRoutine, toThread, toUsage, toUser } from "./api/map";
+import { toAccountConnection, toApiBot, toApproval, toBot, toInvitation, toMcpServer, toMemory, toMemoryStatus, toMessage, toModel, toModelProvider, toOrg, toRoutine, toTemplate, toThread, toUsage, toUser } from "./api/map";
 import { applyRunEvent, typingId, upsertApproval, withActiveRuns, withPreview, withWaitingApprovals, type ActiveRun } from "./api/run-events";
 import type { ApiMe, ApiMessage, ApiRunEvent, ApiThread, ApiThreadRuns } from "./api/types";
 import { isTaskOpen, taskPreview, withTaskChangeIn, type TaskChange } from "@/lib/tasks";
@@ -34,7 +35,7 @@ import * as chiefDemo from "./mock/chief-demo";
 import * as mock from "./mock/fixtures";
 import type {
   AccountConnection, AccountConnectionList, Approval, ApprovalStatus, Bot, BotToolChange, BotTools, ConnectionOwner, Invitation, McpServerInput, McpServerList, McpToolChoice, MemoryItem, MemoryList, MemoryStatus, Membership, Message, Model, ModelListProblem, ModelProvider, Org,
-  Participant, PluginList, Routine, SecurityLevel, ServerConnectorList, Thread, UsageSummary, User,
+  Participant, PluginList, Routine, SecurityLevel, ServerConnectorList, TemplateList, Thread, UsageSummary, User,
 } from "./types";
 
 /** What you fill in to create a bot; the rest (id, handle, status…) is filled in for you. */
@@ -146,7 +147,8 @@ interface State {
   usageLoading: boolean;
   /** API only: each bot's spend this month, by bot id, so bots loaded after the report still show it. */
   spentByBot: Record<string, number>;
-  templates: typeof mock.templates;
+  /** The marketplace. On the API it loads once you're signed in (the same for every organization). */
+  templates: TemplateList;
 }
 
 /** No usage yet (API mode, before the report arrives). Defined here: the seeds below run at import. */
@@ -190,7 +192,7 @@ function seed(): State {
     usage: mockUsage(),
     usageLoading: false,
     spentByBot: {},
-    templates: mock.templates,
+    templates: { status: "ready", items: mock.templates },
   };
 }
 
@@ -225,6 +227,7 @@ function apiSeed(): State {
     modelProviders: [],
     usage: EMPTY_USAGE,
     usageLoading: true,
+    templates: { status: "loading", items: [] },
   };
 }
 
@@ -381,12 +384,23 @@ function enterOrg(org: Membership) {
     usage: EMPTY_USAGE,
     usageLoading: true,
     spentByBot: {},
+    // The same for every org, but the demo's never stay (the API's are fetched again, a small list).
+    templates: { status: "loading", items: [] },
   }));
   void loadOrgPeople(org);
   void loadBotsAndChats(org);
   void loadModelCatalog(org.id);
   void loadUsage(org.id);
   void loadRoutines(org.id);
+  void loadTemplates();
+}
+
+/** The marketplace's templates (`GET /templates`): the same for every org on this server. */
+async function loadTemplates() {
+  set((st) => ({ ...st, templates: { ...st.templates, status: "loading" } }));
+  const listed = await templateApi.list().catch(() => null);
+  if (isDemoMode()) return; // left for the demo meanwhile: it has its own
+  set((st) => ({ ...st, templates: listed ? { status: "ready", items: listed.map(toTemplate) } : { ...st.templates, status: "error" } }));
 }
 
 /** The org's routines (each with its schedule, next run and how the last one went). */
@@ -710,10 +724,13 @@ const PAGE_SIZE = 50;
 
 /** Close functions for the event streams of the chats that are open, by thread id. */
 const chatStreams = new Map<string, () => void>();
+/** When each chat was last marked read here, so a chat list asked for before that can't undo it. */
+const readAt = new Map<string, number>();
 
 function closeChatStreams() {
   chatStreams.forEach((close) => close());
   chatStreams.clear();
+  readAt.clear(); // another org's chats, or a fresh start
 }
 
 function followChat(orgId: string, threadId: string, after?: number): () => void {
@@ -731,8 +748,9 @@ function onRunEvent(orgId: string, event: ApiRunEvent) {
   set((st) => (st.org.id === orgId ? withRunStatus({ ...st, ...applyRunEvent(st, event) }) : st));
   if (unread) countUnread(event.threadId);
   if (event.kind === "thread_updated" && !event.data.thread.participants.some((p) => p.type === "user" && p.id === state.currentUserId)) {
-    // You were removed from the group: it leaves your list (the API ends the stream too).
-    set((st) => ({ ...st, threads: st.threads.filter((t) => t.id !== event.threadId) }));
+    // A change that left you out: you may have been removed (the API ends the stream), or it's an
+    // old change replayed after you were added back. The chat list says which.
+    void actions.refreshChats();
   }
   if (event.kind === "run_finished" || event.kind === "run_failed") scheduleUsageRefresh(orgId);
   // Someone asked or decided: the sidebar count may be behind on other chats too.
@@ -855,7 +873,8 @@ const chatActions = {
    */
   viewThread(threadId: string): () => void {
     viewedThreadId = threadId;
-    actions.markRead(threadId);
+    // A chat opened in a background tab isn't read until you look at it (`onVisible`).
+    if (isLookingAt(threadId)) actions.markRead(threadId);
     const onVisible = () => {
       if (isLookingAt(threadId)) actions.markRead(threadId);
     };
@@ -866,19 +885,34 @@ const chatActions = {
     };
   },
 
-  /** Your chats again from the API: new counts, previews, groups you were added to or removed from. */
+  /**
+   * Your chats again from the API: new counts, previews, groups you were added to or removed from.
+   * The list may be a moment old when it lands, so it never undoes what happened meanwhile here:
+   * a chat started while it was on its way stays (it's not in the list yet), a chat read since it
+   * was asked for stays read, and a newer message heard on a stream keeps its preview.
+   */
   async refreshChats(): Promise<void> {
     if (isDemoMode() || state.authStatus !== "signed-in") return;
     const orgId = state.org.id;
+    const askedAt = Date.now();
+    const known = new Set(state.threads.map((t) => t.id));
     const apiThreads = await threadApi.list(orgId).catch(() => null);
     if (!apiThreads) return;
     set((st) => {
-      if (st.org.id !== orgId) return st;
-      const threads = apiThreads.map((t) => {
-        const thread = withBotName(toThread(t), st.bots);
-        return isLookingAt(thread.id) ? { ...thread, unread: 0 } : thread;
+      if (st.org.id !== orgId || st.botsLoading) return st; // the org's first load brings them all
+      const listed = apiThreads.map((t) => withBotName(toThread(t), st.bots));
+      const startedSince = st.threads.filter((t) => !known.has(t.id) && !listed.some((l) => l.id === t.id));
+      const threads = listed.map((fresh) => {
+        const here = st.threads.find((t) => t.id === fresh.id);
+        const newerHere = here !== undefined && Date.parse(here.lastMessageAt) > Date.parse(fresh.lastMessageAt);
+        const readSince = isLookingAt(fresh.id) || (readAt.get(fresh.id) ?? -1) >= askedAt;
+        return {
+          ...fresh,
+          ...(newerHere ? { lastMessageAt: here.lastMessageAt, lastMessagePreview: here.lastMessagePreview } : {}),
+          unread: readSince ? 0 : newerHere ? Math.max(fresh.unread, here.unread) : fresh.unread,
+        };
       });
-      return { ...st, threads };
+      return { ...st, threads: [...threads, ...startedSince] };
     });
   },
 
@@ -1061,9 +1095,12 @@ async function saveGroup(save: () => Promise<ApiThread>): Promise<ActionResult> 
   const orgId = state.org.id;
   try {
     const saved = toThread(await save());
-    set((st) =>
-      st.org.id !== orgId ? st : { ...st, threads: st.threads.map((t) => (t.id === saved.id ? { ...saved, unread: t.unread, pinned: t.pinned } : t)) },
-    );
+    const stillIn = saved.participants.some((p) => p.type === "user" && p.id === state.currentUserId);
+    set((st) => {
+      if (st.org.id !== orgId) return st;
+      if (!stillIn) return { ...st, threads: st.threads.filter((t) => t.id !== saved.id) };
+      return { ...st, threads: st.threads.map((t) => (t.id === saved.id ? { ...saved, unread: t.unread, pinned: t.pinned } : t)) };
+    });
     return { ok: true };
   } catch (error) {
     return failure(error);
@@ -1568,6 +1605,7 @@ export const actions = {
 
   /** You've seen this chat: its count drops to 0 here and, on the API, for your other devices too. */
   markRead(threadId: string) {
+    readAt.set(threadId, Date.now());
     set((st) => ({ ...st, threads: st.threads.map((t) => (t.id === threadId && t.unread !== 0 ? { ...t, unread: 0 } : t)) }));
     if (!isDemoMode() && state.authStatus === "signed-in") void threadApi.markRead(state.org.id, threadId).catch(() => {});
   },
@@ -1668,32 +1706,39 @@ export const actions = {
   async createBot(input: NewBotInput): Promise<ActionResult & { threadId?: string }> {
     if (isDemoMode()) return { ok: true, threadId: createMockBot(input) };
     const orgId = state.org.id;
-    let bot: Bot;
     try {
-      bot = toBot(await botApi.create(orgId, toApiBot(input)));
+      return await openNewBot(orgId, toBot(await botApi.create(orgId, toApiBot(input))));
     } catch (error) {
       return failure(error);
     }
-    set((st) => ({ ...st, bots: [...st.bots, bot] }));
-    try {
-      const dm = toThread(await threadApi.openDm(orgId, bot.id));
-      set((st) => ({ ...st, threads: [...st.threads.filter((t) => t.id !== dm.id), dm] }));
-      return { ok: true, threadId: dm.id };
-    } catch {
-      return { ok: false, error: `${bot.name} is on your team, but their chat didn't open. Reload the page to try again.` };
-    }
   },
 
-  /** Hire a ready-made bot from the marketplace, with safe defaults. On the API it uses the
-   * instance's default model (an empty modelId); "m_claude" is the demo's own model id. */
+  /** The marketplace again, after it failed to load (API). The demo has its own. */
+  async loadTemplates(): Promise<void> {
+    if (!isDemoMode() && state.authStatus === "signed-in") await loadTemplates();
+  },
+
+  /**
+   * Hire a ready-made bot from the marketplace and open its DM. On the API, the API makes it from
+   * its own catalogue: the template's instructions and Tools, the instance's default model, and the
+   * template's security level or the org's default, whichever is stricter. The demo does the same.
+   */
   async createBotFromTemplate(templateId: string): Promise<ActionResult & { threadId?: string }> {
-    const t = state.templates.find((x) => x.id === templateId);
+    const t = state.templates.items.find((x) => x.id === templateId);
     if (!t) return { ok: false, error: "That bot isn't in the marketplace any more." };
-    return actions.createBot({
-      name: t.name, role: t.role, description: t.description, avatarColor: t.avatarColor,
-      modelId: isDemoMode() ? "m_claude" : "", securityLevel: state.org.defaultSecurityLevel, computerMode: "own",
-      instructions: t.instructions ?? "", monthlyBudgetUsd: 20,
-    });
+    if (isDemoMode()) {
+      return actions.createBot({
+        name: t.name, role: t.role, description: t.description, avatarColor: t.avatarColor, instructions: t.instructions,
+        modelId: "m_claude", securityLevel: strictestLevel(t.securityLevel, state.org.defaultSecurityLevel), computerMode: "own",
+        monthlyBudgetUsd: HIRED_BUDGET_USD,
+      });
+    }
+    const orgId = state.org.id;
+    try {
+      return await openNewBot(orgId, toBot(await templateApi.hire(orgId, t.id)));
+    } catch (error) {
+      return failure(error);
+    }
   },
 
   /** Change a bot's profile, model, limits or instructions. */
@@ -2049,6 +2094,21 @@ function createMockBot(input: NewBotInput) {
     messages: [...st.messages, { id: id(), threadId, author: { type: "bot", id: botId }, createdAt: now(), parts: [{ type: "text", text: hello }] }],
   }));
   return threadId;
+}
+
+/** What a bot hired from the marketplace may spend a month (the API's `HIRED_BUDGET_USD`). */
+const HIRED_BUDGET_USD = 20;
+
+/** A bot the API just made joins the team, and its DM opens (every bot has one). */
+async function openNewBot(orgId: string, bot: Bot): Promise<ActionResult & { threadId?: string }> {
+  set((st) => (st.org.id !== orgId ? st : { ...st, bots: [...st.bots, bot] }));
+  try {
+    const dm = toThread(await threadApi.openDm(orgId, bot.id));
+    set((st) => (st.org.id !== orgId ? st : { ...st, threads: [...st.threads.filter((t) => t.id !== dm.id), dm] }));
+    return { ok: true, threadId: dm.id };
+  } catch {
+    return { ok: false, error: `${bot.name} is on your team, but their chat didn't open. Reload the page to try again.` };
+  }
 }
 
 /* ---------- Mock timers ---------- */
@@ -2455,7 +2515,9 @@ export const useModelProviders = () => useStore(useCallback((s: State) => s.mode
 export const useModelProblems = () => useStore(useCallback((s: State) => s.modelProblems, []));
 /** API only: true while providers and models are on their way. */
 export const useModelsLoading = () => useStore(useCallback((s: State) => s.modelsLoading, []));
-export const useTemplates = () => useStore(useCallback((s: State) => s.templates, []));
+export const useTemplates = () => useStore(useCallback((s: State) => s.templates.items, []));
+/** The marketplace with whether it has loaded (API), for a loading or error state. */
+export const useTemplateList = () => useStore(useCallback((s: State) => s.templates, []));
 export const useRoutines = () => useStore(useCallback((s: State) => s.routines, []));
 export const useRoutine = (routineId?: string) =>
   useStore(useCallback((s: State) => s.routines.find((r) => r.id === routineId), [routineId]));

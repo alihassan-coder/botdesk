@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 import { actions, getStoreSnapshot } from "@/data/store";
 import { renderUI } from "@/test/render";
 import { ThreadList } from "./thread-list";
+import { ThreadRow } from "./thread-row";
 
 // The list highlights the open chat from the URL; pretend the Inbox Manager chat is open.
 vi.mock("next/navigation", () => ({ usePathname: () => "/chat/t_inbox" }));
@@ -28,6 +29,14 @@ describe("ThreadList", () => {
     const row = await screen.findByRole("link", { name: /Inbox Manager/ });
     expect(within(row).getByText("2 replies waiting for you")).toBeInTheDocument();
     expect(within(row).getByText("2")).toBeInTheDocument();
+  });
+
+  it("a big unread count shows as 99+ and is read out in full", () => {
+    const inbox = getStoreSnapshot().threads.find((t) => t.id === "t_inbox")!;
+    renderUI(<ThreadRow thread={{ ...inbox, unread: 120 }} />);
+    const row = screen.getByRole("link", { name: /Inbox Manager/ });
+    expect(within(row).getByText("99+")).toBeInTheDocument();
+    expect(row).toHaveAccessibleName(/120 unread messages/);
   });
 
   it("the unread badge follows the store, and goes once the chat is read", async () => {

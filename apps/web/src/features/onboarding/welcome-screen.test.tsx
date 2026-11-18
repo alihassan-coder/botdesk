@@ -76,7 +76,7 @@ describe("Who goes to /welcome", () => {
 
 describe("WelcomeScreen", () => {
   it("walks through the steps and Finish opens the first bot's DM, with its welcome message", async () => {
-    api.routes["POST /api/v1/orgs/o1/bots"] = { status: 201, body: chief };
+    api.routes["POST /api/v1/orgs/o1/templates/chief/hire"] = { status: 201, body: chief };
     api.routes["POST /api/v1/orgs/o1/threads/dm"] = { status: 200, body: chiefDm };
     await signInAs("owner");
     const { user } = renderUI(<WelcomeScreen />);

@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { pluralize } from "@/lib/format";
 import { markdownToPlain } from "@/lib/plain-text";
 import { cn } from "@/lib/utils";
 import { TimeAgo } from "@/components/time-ago";
@@ -46,8 +47,10 @@ export function ThreadRow({ thread, onNavigate }: { thread: Thread; onNavigate?:
             {preview || "No messages yet"}
           </span>
           {thread.unread > 0 && (
-            <span className="ml-auto grid h-[18px] min-w-[18px] shrink-0 place-items-center rounded-full bg-brand px-1 text-[11px] font-semibold text-brand-foreground">
-              {thread.unread}
+            <span className="ml-auto grid h-[18px] min-w-[18px] shrink-0 place-items-center rounded-full bg-brand px-1 text-[11px] font-semibold text-brand-foreground tabular-nums">
+              {/* A big number would push the preview out of a narrow row. */}
+              <span aria-hidden>{thread.unread > 99 ? "99+" : thread.unread}</span>
+              <span className="sr-only">{pluralize(thread.unread, "unread message")}</span>
             </span>
           )}
         </span>

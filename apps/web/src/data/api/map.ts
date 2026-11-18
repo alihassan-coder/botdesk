@@ -1,7 +1,7 @@
-import type { AccountConnection, Approval, ArgsSchema, Bot, HandoffPart, Invitation, McpServer, MemoryItem, MemoryStatus, Message, MessagePart, Model, ModelProvider, Org, Routine, Thread, UsageSummary, User } from "../types";
+import type { AccountConnection, Approval, ArgsSchema, Bot, HandoffPart, Invitation, McpServer, MemoryItem, MemoryStatus, Message, MessagePart, Model, ModelProvider, Org, Routine, Template, Thread, UsageSummary, User } from "../types";
 import { describeCron } from "@/lib/schedule";
 import type { TaskChange } from "@/lib/tasks";
-import type { ApiApproval, ApiTask, ApiBot, ApiConnection, ApiBotInput, ApiInvitation, ApiMcpServer, ApiMemory, ApiMemoryStatus, ApiMessage, ApiModel, ApiModelProvider, ApiOrg, ApiRole, ApiRoutine, ApiThread, ApiUsage, ApiUser } from "./types";
+import type { ApiApproval, ApiTask, ApiBot, ApiConnection, ApiBotInput, ApiInvitation, ApiMcpServer, ApiMemory, ApiMemoryStatus, ApiMessage, ApiModel, ApiModelProvider, ApiOrg, ApiRole, ApiRoutine, ApiTemplate, ApiThread, ApiUsage, ApiUser } from "./types";
 
 /**
  * Turns API answers into the web app's own types, so screens never see API shapes.
@@ -30,6 +30,11 @@ export function toInvitation({ id, email, role, createdAt, expiresAt }: ApiInvit
 }
 
 /** Bots on the API don't have computers or connections yet. Spend comes from the usage report (toUsage). */
+/** A marketplace template. The API counts no hires, so `installs` stays out. */
+export function toTemplate({ id, name, role, category, description, instructions, avatarColor, securityLevel, plugins }: ApiTemplate): Template {
+  return { id, name, role, category, description, instructions, avatarColor, securityLevel, plugins };
+}
+
 export function toBot({ createdAt, ...bot }: ApiBot): Bot {
   return { ...bot, createdAt: asUtc(createdAt), computerMode: "none", connectionIds: [], spentThisMonthUsd: 0 };
 }

@@ -13,7 +13,7 @@ export function RenameGroupDialog({ thread }: { thread: Thread }) {
   return (
     <Dialog open={open} onOpenChange={setOpen}>
       <DialogTrigger asChild>
-        <Button variant="ghost" size="icon-sm" aria-label="Rename group" title="Rename group">
+        <Button variant="ghost" size="icon-sm" className="tap-target" aria-label="Rename group" title="Rename group">
           <Pencil />
         </Button>
       </DialogTrigger>

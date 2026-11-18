@@ -621,6 +621,51 @@ describe("chats on the API", () => {
       expect(state().threads.find((t) => t.id === "t1")?.title).toBe("Scout");
       stop();
     });
+
+    it("a chat opened in a background tab isn't read until you look at it", async () => {
+      routes["POST /api/v1/orgs/o1/threads/t1/read"] = { status: 204 };
+      const reads = () => calls.filter((c) => c === "POST /api/v1/orgs/o1/threads/t1/read").length;
+      hide(true);
+      const stop = actions.viewThread("t1");
+      expect(reads()).toBe(0);
+      hide(false);
+      document.dispatchEvent(new Event("visibilitychange"));
+      expect(reads()).toBe(1);
+      stop();
+    });
+
+    it("a chat list that was on its way doesn't undo what happened meanwhile", async () => {
+      // Asked for before you read t1, before a group was started, and before t1's newest message.
+      let answer = () => {};
+      const slow = new Promise<void>((resolve) => (answer = resolve));
+      routes["GET /api/v1/orgs/o1/threads"] = {
+        status: 200, wait: slow, body: [{ ...thread("t1", "b1"), unread: 4 }, { ...thread("g1", null, "group"), unread: 1 }],
+      };
+      routes["POST /api/v1/orgs/o1/threads/t1/read"] = { status: 204 };
+      routes["POST /api/v1/orgs/o1/threads/groups"] = { status: 201, body: { ...thread("g2", null, "group"), title: "New team" } };
+      const refreshed = actions.refreshChats();
+      await vi.waitFor(() => expect(calls).toContain("GET /api/v1/orgs/o1/threads"));
+      actions.markRead("t1");
+      await actions.createGroup({ title: "New team", botIds: ["b1"], userIds: [] });
+      routes["GET /api/v1/orgs/o1/threads/g1/messages?limit=50"] = { status: 200, body: [] };
+      actions.openThread("g1");
+      await vi.waitFor(() => expect(state().threadLoads.g1?.status).toBe("ready"));
+      FakeEventSource.last!.emit("message_saved", {
+        threadId: "g1", data: { message: { ...message("m5", "Shipped.", scoutSays, "2026-11-12T10:00:00Z"), threadId: "g1" } },
+      });
+      answer();
+      await refreshed;
+
+      expect(unreadOf("t1")).toBe(0);
+      expect(state().threads.find((t) => t.id === "g2")?.title).toBe("New team");
+      expect(state().threads.find((t) => t.id === "g1")).toMatchObject({ lastMessagePreview: "Shipped.", lastMessageAt: "2026-11-12T10:00:00Z" });
+    });
+
+    it("a chat the API no longer lists leaves, once the list was asked for after it", async () => {
+      routes["GET /api/v1/orgs/o1/threads"] = { status: 200, body: [thread("t1", "b1")] };
+      await actions.refreshChats();
+      expect(state().threads.map((t) => t.id)).toEqual(["t1"]);
+    });
   });
 
   describe("managing a group", () => {
@@ -661,7 +706,29 @@ describe("chats on the API", () => {
       await vi.waitFor(() => expect(state().threadLoads.g1?.status).toBe("ready"));
       FakeEventSource.last!.emit("thread_updated", { threadId: "g1", data: { thread: group({ title: "Renamed" }) } });
       expect(state().threads.find((t) => t.id === "g1")?.title).toBe("Renamed");
+      // The chat list confirms it: the group is no longer yours.
+      routes["GET /api/v1/orgs/o1/threads"] = { status: 200, body: [thread("t1", "b1")] };
       FakeEventSource.last!.emit("thread_updated", { threadId: "g1", data: { thread: group({ participants: [{ type: "user", id: "u2" }] }) } });
+      await vi.waitFor(() => expect(state().threads.some((t) => t.id === "g1")).toBe(false));
+    });
+
+    it("an old removal replayed after you were added back leaves the group in your list", async () => {
+      // Opening the group replays its events from before a run that is still going: you were
+      // removed, then added back.
+      routes["GET /api/v1/orgs/o1/threads/g1/messages?limit=50"] = { status: 200, body: [] };
+      actions.openThread("g1");
+      await vi.waitFor(() => expect(state().threadLoads.g1?.status).toBe("ready"));
+      const back = group({ participants: [{ type: "user", id: "u1" }, { type: "user", id: "u2" }] });
+      routes["GET /api/v1/orgs/o1/threads"] = { status: 200, body: [thread("t1", "b1"), back] };
+      FakeEventSource.last!.emit("thread_updated", { threadId: "g1", data: { thread: group({ participants: [{ type: "user", id: "u2" }] }) } });
+      FakeEventSource.last!.emit("thread_updated", { threadId: "g1", data: { thread: back } });
+      await vi.waitFor(() => expect(calls.filter((c) => c === "GET /api/v1/orgs/o1/threads").length).toBeGreaterThan(1));
+      await vi.waitFor(() => expect(state().threads.find((t) => t.id === "g1")?.participants).toEqual(back.participants));
+    });
+
+    it("taking yourself out of a group drops it from your list", async () => {
+      routes["DELETE /api/v1/orgs/o1/threads/g1/participants/user/u1"] = { status: 200, body: group({ participants: [{ type: "user", id: "u2" }] }) };
+      await expect(actions.removeFromGroup("g1", { type: "user", id: "u1" })).resolves.toEqual({ ok: true });
       expect(state().threads.some((t) => t.id === "g1")).toBe(false);
     });
   });

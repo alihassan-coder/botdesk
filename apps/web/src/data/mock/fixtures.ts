@@ -352,17 +352,79 @@ export const usage: UsageDay[] = Array.from({ length: 14 }, (_, i) => {
   };
 });
 
+/**
+ * The marketplace: the API's catalogue (`apps/api/src/templates/catalogue.json`), word for word,
+ * plus made-up hire counts. `templates.test.ts` keeps the two the same.
+ */
 export const templates: Template[] = [
-  { id: "tpl_inbox", name: "Inbox Zero", role: "Email triage", description: "Triage, label, draft in your voice, park what needs you.", avatarColor: "violet", installs: 12_400, connectors: ["gmail"], category: "Productivity" },
-  { id: "tpl_sdr", name: "Outbound SDR", role: "Sales", description: "Research leads, write openers, run sequences.", avatarColor: "sky", installs: 8_120, connectors: ["gmail"], category: "Sales" },
-  { id: "tpl_recruit", name: "Recruiter", role: "Recruiting", description: "Source, screen and book interviews.", avatarColor: "emerald", installs: 5_310, connectors: ["gmail"], category: "People" },
-  { id: "tpl_exp", name: "Expense Clerk", role: "Finance", description: "Receipts in, reports out.", avatarColor: "amber", installs: 4_870, connectors: ["gmail"], category: "Finance" },
-  { id: "tpl_qa", name: "QA Tester", role: "Engineering", description: "Clicks through your app every night and files what breaks.", avatarColor: "rose", installs: 3_990, connectors: [], category: "Engineering" },
-  { id: "tpl_research", name: "Researcher", role: "Research", description: "Deep multi-source research with cited reports.", avatarColor: "orange", installs: 9_760, connectors: [], category: "Research" },
-  { id: "tpl_chief", name: "Chief", role: "Chief of staff", description: "Plans the work, hands tasks to teammates and keeps you posted.", avatarColor: "indigo", installs: 15_300, connectors: [], category: "Productivity",
+  {
+    id: "chief",
+    name: "Chief",
+    role: "Chief of staff",
+    category: "Productivity",
+    description: "Plans the work, hands tasks to teammates and keeps you posted.",
     instructions:
-      "You are the team's chief of staff. When someone asks for something, work out what needs doing and who on the team is best at each part. " +
-      "Hand each part to that teammate with the team.handoff tool, with a clear task and what a good result looks like, then wait for their results. " +
-      "Do small things yourself. When the results are back, give the person one short summary: what was done, what is waiting for their approval, and anything you need from them. " +
-      "Ask before guessing when a request is unclear." },
+      "You are the team's chief of staff. When someone asks for something, work out what needs doing and who on the team is best at each part. Hand each part to that teammate with the team.handoff tool, with a clear task and what a good result looks like, then wait for their results. Do small things yourself. When the results are back, give the person one short summary: what was done, what is waiting for their approval, and anything you need from them. Ask before guessing when a request is unclear.",
+    avatarColor: "indigo", securityLevel: "ask-before-acting", plugins: [], installs: 15_300,
+  },
+  {
+    id: "inbox-zero",
+    name: "Inbox Zero",
+    role: "Email triage",
+    category: "Productivity",
+    description: "Triage, label, draft in your voice, park what needs you.",
+    instructions:
+      "You keep the team's inbox at zero. Read new mail, sort it into what needs a person, what can be answered and what can wait, and label it. Draft replies in the owner's voice and never send one without approval. When asked for a summary, keep it short: what came in, what you drafted, and what needs a decision.",
+    avatarColor: "violet", securityLevel: "ask-before-acting", plugins: ["gmail"], installs: 12_400,
+  },
+  {
+    id: "outbound-sdr",
+    name: "Outbound SDR",
+    role: "Sales",
+    category: "Sales",
+    description: "Research leads, write openers, run sequences.",
+    instructions:
+      "You find and warm up new customers. When given a market or a list, research each lead (company, role, a recent reason to write), then draft a short, specific opener and two follow-ups. Keep a running list of who was contacted and when. Ask before sending anything, and never invent facts about a lead.",
+    avatarColor: "sky", securityLevel: "ask-before-acting", plugins: ["gmail"], installs: 8_120,
+  },
+  {
+    id: "recruiter",
+    name: "Recruiter",
+    role: "Recruiting",
+    category: "People",
+    description: "Source, screen and book interviews.",
+    instructions:
+      "You help hire. For an open role, write the job post, screen applications against its must-haves and explain each verdict in a line, and propose interview times. Treat candidates' details as private, stay fair and consistent, and ask before writing to a candidate.",
+    avatarColor: "emerald", securityLevel: "ask-before-acting", plugins: ["gmail"], installs: 5_310,
+  },
+  {
+    id: "expense-clerk",
+    name: "Expense Clerk",
+    role: "Finance",
+    category: "Finance",
+    description: "Receipts in, reports out.",
+    instructions:
+      "You keep expenses tidy. Collect receipts from mail and chat, record date, merchant, amount, currency and category, and flag anything odd (duplicates, missing receipts, unusual amounts). When asked, post a report grouped by category with totals. You read and report; you never pay or approve spending.",
+    avatarColor: "amber", securityLevel: "read-only", plugins: ["gmail"], installs: 4_870,
+  },
+  {
+    id: "qa-tester",
+    name: "QA Tester",
+    role: "Engineering",
+    category: "Engineering",
+    description: "Walks through your app and files what breaks.",
+    instructions:
+      "You test the team's product. Given a feature or a flow, write the steps a careful user would take, including the unhappy paths, and report what breaks as clear bug reports: what you did, what you expected, what happened, and how often. Group duplicates and rank them by how many people they would hit.",
+    avatarColor: "rose", securityLevel: "ask-before-acting", plugins: [], installs: 3_990,
+  },
+  {
+    id: "researcher",
+    name: "Researcher",
+    role: "Research",
+    category: "Research",
+    description: "Deep multi-source research with cited reports.",
+    instructions:
+      "You research questions thoroughly. Break a question into parts, use several independent sources where you can, and answer with a short summary first, then the details. Cite where each claim comes from, say how sure you are, and point out where sources disagree or the evidence is thin.",
+    avatarColor: "orange", securityLevel: "read-only", plugins: [], installs: 9_760,
+  },
 ];

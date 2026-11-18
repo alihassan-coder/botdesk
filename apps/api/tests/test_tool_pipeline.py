@@ -638,6 +638,11 @@ def web_plugin(calls: Calls, *, idempotent: bool = False) -> PluginManifest:
         response = await ctx.http.request("GET", "https://api.example.com/check")
         raise RuntimeError(f"The check answered {response.status_code}, so nothing was sent.")
 
+    async def odd_send(args: CountArgs, ctx: ToolContext) -> Any:
+        method = "POST" if args.text == "send" else "GET"
+        await ctx.http.request(method, "https://api.example.com/send")
+        return ["an answer", "that isn't an object"]
+
     def spec(name: str, handler: Any) -> ToolSpec:
         return ToolSpec(
             name=name,
@@ -654,7 +659,7 @@ def web_plugin(calls: Calls, *, idempotent: bool = False) -> PluginManifest:
         name="Web",
         version="1",
         description="test",
-        tools=(spec("send", send), spec("checked_send", checked_send)),
+        tools=(spec("send", send), spec("checked_send", checked_send), spec("odd_send", odd_send)),
         egress=("api.example.com",),
     )
 
@@ -810,3 +815,11 @@ async def test_a_send_that_returns_something_unusable_may_have_gone(world: World
     with pytest.raises(NeedsAttention, match="returned a list"):
         await tool_pipeline.execute(world.execute_deps(), recorded.execution.id)
     assert (await _row(world, recorded.execution.id)).status == "started"
+
+    # Through ctx.http BotDesk can tell: after a POST it may have gone, after only a GET it didn't.
+    sent, deps = await _web_call(world, answers(200), tool="web.odd_send", text="send")
+    with pytest.raises(NeedsAttention, match="returned a list"):
+        await tool_pipeline.execute(deps, sent.execution.id)
+    looked, deps = await _web_call(world, answers(200), tool="web.odd_send", text="look")
+    outcome = await tool_pipeline.execute(deps, looked.execution.id)
+    assert outcome.text.startswith("The tool failed: web.odd_send returned a list")

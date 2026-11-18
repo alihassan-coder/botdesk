@@ -286,7 +286,7 @@ async def _run_tool(
             ) from None
         return None, why
     checked, problem = _checked_result(tool.name, result)
-    if problem and _changes_outside(tool):
+    if problem and _may_have_happened(tool, None, opened):
         # It ran to the end and did whatever it does; only its answer is unusable.
         raise OutcomeUnknown(f"{problem} It may have been done: check before trying again.")
     return checked, problem
@@ -297,8 +297,9 @@ def _changes_outside(tool: RegisteredTool) -> bool:
     return not tool.spec.idempotent and tool.spec.risk not in STAYS_INSIDE
 
 
-def _may_have_happened(tool: RegisteredTool, error: Exception, access: ToolAccess | None) -> bool:
-    """Whether a call that raised `error` may still have changed something outside BotDesk."""
+def _may_have_happened(tool: RegisteredTool, error: Exception | None, access: ToolAccess | None) -> bool:
+    """Whether a call that raised `error` (None: it returned an answer that can't be used) may
+    still have changed something outside BotDesk."""
     if not _changes_outside(tool):
         return False  # running it again is harmless: it fails, as it always did
     if access is None:

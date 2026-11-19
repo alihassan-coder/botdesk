@@ -51,7 +51,7 @@ Allow about 2 hours for everything, plus about 30 minutes for the Google setup (
 - [ ] Without any AI key, the bot answers with the stand-in reply (no crash).
 - [ ] New group with two bots and Member: the lead answers messages with no @mention; @mention another bot and it answers; bots handing over to each other stop after 3 hops with a notice.
 - [ ] In a DM, @mention another bot: it joins as a guest and replies with its own name.
-- [ ] Group details pane: rename the group, add people or bots, remove one. Member (second browser) sees the change live; a removed person loses the group.
+- [ ] Group details pane: rename the group, add people or bots, remove one (it asks first; Cancel keeps them). Member (second browser) sees the change live; a removed person loses the group.
 - [ ] As Member, Leave group at the foot of a group's details (Stay keeps you in): the group leaves your list and you land home; Owner sees you gone live. Leaving a group you're alone in says it's deleted, and it is.
 - [ ] Unread counts: Member sends a message in a group; Owner's chat list shows a badge within about 20 s, and it clears when Owner opens the chat.
 - [ ] Edit a bot (name, instructions, model, memory switch, budget) and remove a bot.

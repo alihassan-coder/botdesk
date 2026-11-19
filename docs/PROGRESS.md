@@ -2,11 +2,12 @@
 
 A short history of BotDesk, newest first. For one checklist of what is done and what is next, see [ROADMAP.md](ROADMAP.md).
 
-## 2026-11-19: Leave a group
+## 2026-11-19: Leave a group, confirm before removing someone
 
 Details: [backend guide](backend/README.md#bots-working-together) (managing a group), [frontend guide](frontend/README.md#talking-to-the-api).
 
 - **Leave group:** anyone in a group may leave it, not only its creator, owners and admins: `DELETE /threads/{id}/participants/user/{your id}` (a DM is still 400). It keeps the removal's rules: under the group's lock, one `thread_updated` for everyone with it open, and your open stream ends. The last person out deletes the group, its runs stopped first, as when someone leaves the organization (`delete_groups`); the old "A group needs at least one person." refusal is gone. Web: **Leave group** at the foot of a group's details, behind a confirm (which says the group is deleted when you're the last one); the group leaves your list and you go home. The demo does the same.
+- **Confirm before removing:** a group's Remove button asks first ("Remove Sara Khan from Launch crew? They lose access to this chat.", Cancel / Remove; a bot's says it stops replying there).
 
 ## 2026-11-18: Organization security ceiling, member keys, creating organizations
 
@@ -49,7 +50,7 @@ The 2026-11-17 entry below was written while that work was still partial; this f
 - **Dated prices, checked:** `ModelResolver` takes a `now` clock, and a test shows a run is priced at the moment of each call (December's price from the first call after midnight UTC); another checks every step list starts at `date.min` and runs oldest first.
 - **Marketplace templates from the API:** one catalogue, `apps/api/src/templates/catalogue.json` (Chief, with its chief-of-staff instructions, Inbox Zero, Outbound SDR, Recruiter, Expense Clerk, QA Tester, Researcher), served by `GET /templates` (plugins this server loaded only) and hired by `POST /orgs/{id}/templates/{templateId}/hire`: the API makes the bot with the template's instructions, its plugins switched on (Gmail on with no account yet), $20 a month, the default model, and the stricter of the template's security level and the org's default. The demo shows the same catalogue (a test keeps the copy word for word). Ids changed from `tpl_*` to slugs (`chief`, `inbox-zero`, …). Taken from the 2026-11-17 `wave4/gaps-chat` work; its separate unread table was dropped in favour of `last_read_at`.
 - **Review fixes:** deleting a bot locks its groups first (it could deadlock with a group change on Postgres); a run queued for a bot at the moment it was removed is cancelled when it would start; someone leaving the organization is announced to each group's people (`thread_updated`), and a group left with nobody in it is deleted; on the web, a chat that left your list (you left it, its bot was removed, a live removal) no longer comes back from a chat list that was on its way.
-- **Later (unchanged):** an org-wide event stream; a confirm before removing a person; a live `thread_updated` when a bot is deleted (its groups update on the next 20 s refresh).
+- **Later (unchanged):** an org-wide event stream; a live `thread_updated` when a bot is deleted (its groups update on the next 20 s refresh).
 
 ## 2026-11-17: Unread counts, managing groups, dated model prices
 
@@ -58,7 +59,7 @@ Details: [backend guide](backend/README.md#unread-counts), [frontend guide](fron
 - **Unread counts:** `thread_participants.last_read_at` (migration `4c1e9b7d2a80`, existing rows start read). The chat list returns `unread` per chat for you (messages after your mark by someone else; bots and system notices count, yours don't) in one grouped query. `POST /threads/{id}/read` marks a chat read; the web calls it when a chat is on screen in a visible tab (open, back to the tab, each new message), adds one live for messages heard elsewhere, and refreshes the list every 20 s while visible.
 - **Managing a group:** `PATCH /threads/{id}` (rename), `POST /threads/{id}/participants`, `DELETE /threads/{id}/participants/{type}/{id}`, for the group's creator, owners and admins (the lead's rule). Removing the lead bot clears it; a removed person can't open the group and their open stream ends; the last person stays; a DM can't be changed. Changes (and lead changes) go out live as `thread_updated`. Web: a rename pencil, "Add people or bots" and Remove buttons in the group's details pane.
 - **Dated prices:** `PRICE_TABLE` entries can be `(effective_from, price)` steps; the price in effect at the call's time is used. The Gemini changes on 2026-12-01 and 2027-01-01 are in, so nothing needs editing on the day.
-- **Later:** an org-wide event stream (unread counts for chats not open come from the 20 s refresh); a confirm before removing a person.
+- **Later:** an org-wide event stream (unread counts for chats not open come from the 20 s refresh).
 
 ## 2026-11-17: Onboarding (first-time setup)
 

@@ -41,9 +41,24 @@ describe("GroupMembers", () => {
     expect(screen.getByText("Omar Farooq")).toBeInTheDocument();
   });
 
-  it("removes a bot; removing the lead leaves the group without one", async () => {
+  it("removes a person only once you confirm", async () => {
+    const { user } = renderUI(<GroupMembers thread={launch()} />);
+    await user.click(screen.getByRole("button", { name: "Remove Sara Khan from the group" }));
+    const confirm = screen.getByRole("alertdialog", { name: "Remove Sara Khan from Launch crew?" });
+    expect(confirm).toHaveTextContent("They lose access to this chat.");
+    await user.click(within(confirm).getByRole("button", { name: "Cancel" }));
+    expect(launch().participants).toContainEqual({ type: "user", id: "u_sara" });
+
+    await user.click(screen.getByRole("button", { name: "Remove Sara Khan from the group" }));
+    await user.click(within(screen.getByRole("alertdialog")).getByRole("button", { name: "Remove" }));
+    expect(launch().participants).not.toContainEqual({ type: "user", id: "u_sara" });
+  });
+
+  it("removes a bot once you confirm; removing the lead leaves the group without one", async () => {
     const { user } = renderUI(<GroupMembers thread={launch()} />);
     await user.click(screen.getByRole("button", { name: "Remove Chief from the group" }));
+    const confirm = screen.getByRole("alertdialog", { name: "Remove Chief from Launch crew?" });
+    await user.click(within(confirm).getByRole("button", { name: "Remove" }));
     expect(launch().participants).not.toContainEqual({ type: "bot", id: "b_chief" });
     expect(launch().leadBotId).toBeUndefined();
   });

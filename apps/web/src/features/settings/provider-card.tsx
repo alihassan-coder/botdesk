@@ -1,4 +1,3 @@
-import { useState } from "react";
 import { toast } from "sonner";
 import { Plus } from "lucide-react";
 import {
@@ -13,6 +12,7 @@ import type { ModelProvider } from "@/data/types";
 import { maskedKey } from "@/lib/models";
 import { AddKeyDialog } from "./add-key-dialog";
 import { ProviderIcon } from "./provider-icon";
+import { TestKeyButton } from "./test-key-button";
 
 /**
  * One model provider in Settings → Models & keys: connected (••••1234, Test / Replace / Remove)
@@ -44,7 +44,7 @@ export function ProviderCard({ provider, canManage }: { provider: ModelProvider;
       )}
       {canManage && (
         <div className="mt-auto flex flex-wrap gap-2">
-          {ownKey && <TestButton provider={provider} />}
+          {ownKey && <TestKeyButton provider={provider} />}
           <AddKeyDialog provider={provider} trigger={
             <Button size="sm" variant={provider.connected ? "outline" : "default"}>
               {ownKey ? "Replace" : <><Plus /> Add key</>}
@@ -55,18 +55,6 @@ export function ProviderCard({ provider, canManage }: { provider: ModelProvider;
       )}
     </li>
   );
-}
-
-function TestButton({ provider }: { provider: ModelProvider }) {
-  const [testing, setTesting] = useState(false);
-  const test = async () => {
-    setTesting(true);
-    const result = await actions.testProviderKey(provider.id);
-    setTesting(false);
-    if (result.ok) toast.success(`${provider.name}: the key works`);
-    else toast.error(result.error);
-  };
-  return <Button size="sm" variant="outline" disabled={testing} onClick={test}>{testing ? "Testing…" : "Test"}</Button>;
 }
 
 function RemoveKeyButton({ provider }: { provider: ModelProvider }) {

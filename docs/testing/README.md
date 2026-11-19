@@ -42,6 +42,7 @@ Allow about 2 hours for everything, plus about 30 minutes for the Google setup (
 - [ ] Settings → Models & keys: add a key for one provider. "Checking…" then connected with `••••1234`. A wrong key shows the provider's reason.
 - [ ] Test, Replace and Remove work. The model list shows prices and context windows; Refresh reloads it.
 - [ ] My keys: as Member, add your own key. Owner can't read it; Member's runs use it as the settings page says, and nobody else's do.
+- [ ] My keys → Test on your key: "your key works"; revoke it at the provider and Test again: the provider's reason, and the card says "Key not working".
 - [ ] Create a bot and pick a model with the searchable picker.
 
 ## 5. Bots and chats

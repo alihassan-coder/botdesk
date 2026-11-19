@@ -1,4 +1,5 @@
 import { screen, within } from "@testing-library/react";
+import { toast } from "sonner";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { actions, getStoreSnapshot } from "@/data/store";
 import { renderUI } from "@/test/render";
@@ -66,6 +67,24 @@ describe("My keys, on the API", () => {
     expect(api.sent.some((r) => r.key === "DELETE /api/v1/orgs/o1/me/providers/openai")).toBe(true);
   });
 
+  it("tests your key: says why it failed and marks it, or that it works", async () => {
+    api.routes["GET /api/v1/orgs/o1/me/providers"] = { status: 200, body: [mineOpenai, groq] };
+    const failed = "That key didn't work: 401: Incorrect API key provided.";
+    api.routes["POST /api/v1/orgs/o1/me/providers/openai/test"] = { status: 200, body: { ok: false, error: failed, provider: { ...mineOpenai, status: "invalid" } } };
+    await signInOnApi();
+    const { user } = renderUI(<MyKeys />);
+    expect((await card("Groq")).queryByRole("button", { name: "Test" })).not.toBeInTheDocument(); // no key of yours there
+
+    await user.click((await card("OpenAI")).getByRole("button", { name: "Test" }));
+    expect(await (await card("OpenAI")).findByText("Key not working")).toBeInTheDocument();
+    expect(toast.error).toHaveBeenCalledWith(failed);
+
+    api.routes["POST /api/v1/orgs/o1/me/providers/openai/test"] = { status: 200, body: { ok: true, error: null, provider: mineOpenai } };
+    await user.click((await card("OpenAI")).getByRole("button", { name: "Test" }));
+    expect(await (await card("OpenAI")).findByText("Your key")).toBeInTheDocument();
+    expect(toast.success).toHaveBeenCalledWith("OpenAI: your key works");
+  });
+
   it("members manage their own keys too", async () => {
     api.routes["POST /api/v1/auth/sign-in"] = { status: 200, body: { ...apiMe, organizations: [{ ...apiOrg, role: "member" }] } };
     await signInOnApi();
@@ -94,5 +113,8 @@ describe("My keys, in the demo", () => {
     await user.click(screen.getByRole("button", { name: "Check and save" }));
     expect(await (await card("Groq")).findByText(/••••wxyz/)).toBeInTheDocument();
     expect(screen.queryByText("Custom", { selector: "p" })).not.toBeInTheDocument();
+
+    await user.click((await card("Groq")).getByRole("button", { name: "Test" }));
+    expect(toast.success).toHaveBeenCalledWith("Groq: your key works");
   });
 });

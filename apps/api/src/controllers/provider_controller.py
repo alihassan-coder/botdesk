@@ -69,8 +69,21 @@ async def test_key(
     db: AsyncSession, access: Access, provider_id: str, *, secrets: SecretBox, catalog: ModelCatalog
 ) -> ProviderTestOut:
     access.require_admin()
-    org_id = access.org.id
-    credential = await provider_service.find_credential(db, org_id, provider_service.parse_target(provider_id))
+    target = provider_service.parse_target(provider_id)
+    return await _test(db, access.org.id, target, member_id=None, secrets=secrets, catalog=catalog)
+
+
+async def _test(
+    db: AsyncSession,
+    org_id: uuid.UUID,
+    target: provider_service.Target,
+    *,
+    member_id: uuid.UUID | None,
+    secrets: SecretBox,
+    catalog: ModelCatalog,
+) -> ProviderTestOut:
+    """Check a saved key (the organization's, or `member_id`'s own) with a live call, and save how it went."""
+    credential = await provider_service.find_credential(db, org_id, target, member_id=member_id)
     if credential is None:
         raise NotFound(provider_service.NOT_CONNECTED)
     credential_id = credential.id
@@ -169,6 +182,14 @@ async def save_my_key(
     # Your next model list is instant (cached apart from the organization's).
     catalog.remember(org_id, replace(draft, source="member", credential_id=credential.id), models)
     return provider_service.view_of(credential)
+
+
+async def test_my_key(
+    db: AsyncSession, access: Access, provider_id: str, *, secrets: SecretBox, catalog: ModelCatalog
+) -> ProviderTestOut:
+    """Like the organization's Test, on your own key only: anyone else's is never found (404)."""
+    target = provider_service.member_target(provider_id)
+    return await _test(db, access.org.id, target, member_id=access.user.id, secrets=secrets, catalog=catalog)
 
 
 async def remove_my_key(db: AsyncSession, access: Access, provider_id: str, *, catalog: ModelCatalog) -> None:

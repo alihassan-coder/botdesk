@@ -14,6 +14,7 @@ import type { ModelProvider } from "@/data/types";
 import { maskedKey } from "@/lib/models";
 import { AddKeyDialog } from "./add-key-dialog";
 import { ProviderIcon } from "./provider-icon";
+import { TestKeyButton } from "./test-key-button";
 
 /**
  * My keys: your own API key per built-in provider in this organization. Any member adds them.
@@ -60,6 +61,7 @@ function MyKeyCard({ provider }: { provider: ModelProvider }) {
         </p>
       )}
       <div className="mt-auto flex flex-wrap gap-2">
+        {provider.connected && <TestKeyButton mine provider={provider} />}
         <AddKeyDialog mine provider={provider} trigger={
           <Button size="sm" variant={provider.connected ? "outline" : "default"}>
             {provider.connected ? "Replace" : <><Plus /> Add your key</>}

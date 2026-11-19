@@ -60,6 +60,14 @@ describe("Models & keys in the demo", () => {
     await expect(actions.testProviderKey("openai")).resolves.toEqual({ ok: true });
     expect(provider("openai")?.status).toBe("ok");
   });
+
+  it("testing your own key records when it was checked, in My keys only", async () => {
+    await actions.saveMyKey("groq", "gsk_1234567890wxyz");
+    const before = provider("groq");
+    await expect(actions.testMyKey("groq")).resolves.toEqual({ ok: true });
+    expect(state().myKeys?.find((p) => p.id === "groq")).toEqual(expect.objectContaining({ status: "ok", lastVerifiedAt: expect.any(String) }));
+    expect(provider("groq")).toEqual(before);
+  });
 });
 
 describe("API → web shapes for models", () => {

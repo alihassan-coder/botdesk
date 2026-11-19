@@ -261,6 +261,9 @@ export const modelApi = {
   /** Any member; checked live before it's saved, like the org's keys. */
   saveMyKey: (orgId: string, providerId: string, apiKey: string) =>
     apiFetch<ApiModelProvider>(`/api/v1/orgs/${orgId}/me/providers/${providerId}`, { method: "PUT", body: { apiKey } }),
+  /** Check your own saved key again (yours only; 404 if you have none). */
+  testMyKey: (orgId: string, providerId: string) =>
+    apiFetch<ApiProviderTest>(`/api/v1/orgs/${orgId}/me/providers/${providerId}/test`, { method: "POST" }),
   removeMyKey: (orgId: string, providerId: string) =>
     apiFetch<void>(`/api/v1/orgs/${orgId}/me/providers/${providerId}`, { method: "DELETE" }),
   /** Every connected provider's models, live (cached ~10 minutes on the API unless `refresh`), as your runs reach them: your own key first. */

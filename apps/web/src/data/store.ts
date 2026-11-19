@@ -1486,6 +1486,22 @@ const modelActions = {
     return { ok: true };
   },
 
+  /** Check your own saved key again, like `testProviderKey` for the org's. `ok: false` carries the provider's reason. */
+  async testMyKey(providerId: string): Promise<ActionResult> {
+    const orgId = state.org.id;
+    if (isDemoMode()) {
+      set((st) => ({ ...st, myKeys: (st.myKeys ?? []).map((p) => (p.id === providerId ? { ...p, status: "ok", lastVerifiedAt: now() } : p)) }));
+      return { ok: true };
+    }
+    try {
+      const result = await modelApi.testMyKey(orgId, providerId);
+      set((st) => (st.org.id === orgId ? { ...st, myKeys: withProvider(st.myKeys ?? [], toModelProvider(result.provider)) } : st));
+      return result.ok ? { ok: true } : { ok: false, error: result.error ?? "That key didn't work." };
+    } catch (error) {
+      return failure(error);
+    }
+  },
+
   /** Remove your own key. Your runs go back to the org's key, if it has one. */
   async removeMyKey(providerId: string): Promise<ActionResult> {
     const orgId = state.org.id;

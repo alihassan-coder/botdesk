@@ -2,12 +2,13 @@
 
 A short history of BotDesk, newest first. For one checklist of what is done and what is next, see [ROADMAP.md](ROADMAP.md).
 
-## 2026-11-19: Leave a group, confirm before removing someone
+## 2026-11-19: Leave a group, confirm before removing someone, test your own key
 
-Details: [backend guide](backend/README.md#bots-working-together) (managing a group), [frontend guide](frontend/README.md#talking-to-the-api).
+Details: [backend guide](backend/README.md#bots-working-together) (managing a group; [member keys](backend/README.md#member-keys)), [frontend guide](frontend/README.md#talking-to-the-api).
 
 - **Leave group:** anyone in a group may leave it, not only its creator, owners and admins: `DELETE /threads/{id}/participants/user/{your id}` (a DM is still 400). It keeps the removal's rules: under the group's lock, one `thread_updated` for everyone with it open, and your open stream ends. The last person out deletes the group, its runs stopped first, as when someone leaves the organization (`delete_groups`); the old "A group needs at least one person." refusal is gone. Web: **Leave group** at the foot of a group's details, behind a confirm (which says the group is deleted when you're the last one); the group leaves your list and you go home. The demo does the same.
 - **Confirm before removing:** a group's Remove button asks first ("Remove Sara Khan from Launch crew? They lose access to this chat.", Cancel / Remove; a bot's says it stops replying there).
+- **Test your own key:** `POST /orgs/{id}/me/providers/{provider}/test` checks a member's own key live and saves the result, sharing the org Test's code (`provider_controller._test`). Only yours: anyone else, owners and admins included, gets 404, and the answer never carries the key, even when the provider quotes it. Web: Test on each My keys card that has a key (the org card's button, moved to `settings/test-key-button.tsx`).
 
 ## 2026-11-18: Organization security ceiling, member keys, creating organizations
 
@@ -18,7 +19,7 @@ Details: [backend guide](backend/README.md#the-security-ceiling) ([member keys](
 - **Create organization:** `POST /orgs` (`{name, slug?}`), the creator is owner; a slug is made from the name (cut to fit the 64-character column) or must be free (409). Web: "New organization" in the org switcher opens a dialog, then switches to the new org, where first-time setup starts.
 - **Web:** Settings → Security has "Highest level for every bot"; the security-level picker shows levels above the ceiling as unavailable (Create bot, Edit bot, the default), "Your bots" and the bot details say "Capped at … by the organization". Settings → Models & keys has My keys. The stand-in reply mentions My keys.
 - **Review fixes (same day):** an approved call meets the policy again before it runs, so one approved after the ceiling dropped to a level that denies it is refused, never run (the card stays Approved, the tool line and the bot say why); refusals say whether the bot's level or the organization's ceiling caused them. OpenRouter prices come from the org's key first, and a member's broken key only pauses that member's price lookups. A key saved just as its member was removed isn't kept, and removing a member drops their cached model lists. Creating organizations is limited to 5 an hour per person.
-- **Later:** a Test button for your own key; your own key for memory.
+- **Later:** your own key for memory.
 
 
 ## 2026-11-18: Email can't be sent twice, and send cards show everything that's sent

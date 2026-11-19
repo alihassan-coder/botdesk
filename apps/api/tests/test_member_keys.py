@@ -142,6 +142,59 @@ async def test_members_see_and_remove_only_their_own_keys(client: httpx.AsyncCli
     assert _by_id((await client.get(f"{path}/me/providers")).json())["openai"]["connected"] is False
 
 
+def refuses_every_key(request: httpx.Request) -> httpx.Response:
+    """OpenAI once a key is revoked: 401, quoting the key it was sent, as OpenAI does."""
+    sent = request.headers.get("authorization", "").removeprefix("Bearer ")
+    return httpx.Response(401, json={"error": {"message": f"Incorrect API key provided: {sent}."}})
+
+
+async def test_a_member_tests_their_own_key(client: httpx.AsyncClient, providers: FakeProviders) -> None:
+    """Test checks the saved key again with a live call and saves how it went, like the
+    organization's Test. The answer never carries the key, even when the provider quotes it."""
+    path, _, _ = await _team(client)
+    providers.answer("api.openai.com", handler=openai_answer)
+    assert (await client.put(f"{path}/me/providers/openai", json={"apiKey": OPENAI_KEY})).status_code == 200
+
+    works = await client.post(f"{path}/me/providers/openai/test")
+    assert works.status_code == 200, works.text
+    body = works.json()
+    assert (body["ok"], body["error"], body["provider"]["source"], body["provider"]["keyHint"]) == (
+        True,
+        None,
+        "member",
+        "abcd",
+    )
+
+    providers.answer("api.openai.com", handler=refuses_every_key)
+    broken = await client.post(f"{path}/me/providers/openai/test")
+    assert broken.status_code == 200, broken.text
+    assert broken.json()["ok"] is False
+    assert broken.json()["error"].startswith("That key didn't work")
+    assert broken.json()["provider"]["status"] == "invalid"
+    assert _by_id((await client.get(f"{path}/me/providers")).json())["openai"]["status"] == "invalid"
+    assert OPENAI_KEY not in works.text + broken.text
+
+
+async def test_only_you_test_your_own_key(client: httpx.AsyncClient, providers: FakeProviders) -> None:
+    """Nobody else reaches it: the owner's own Test finds no key of theirs (404), the
+    organization's Test never touches a member's key (404), and outsiders get 404 too."""
+    path, _, sara = await _team(client)
+    providers.answer("api.openai.com", handler=openai_answer)
+    assert (await client.put(f"{path}/me/providers/openai", json={"apiKey": OPENAI_KEY})).status_code == 200
+    assert (await client.post(f"{path}/me/providers/groq/test")).status_code == 404  # no key of yours there
+    assert (await client.post(f"{path}/me/providers/custom/test")).status_code == 400  # built-in only
+
+    await _sign_in(client, "ali@acme.dev")  # the owner
+    mine = await client.post(f"{path}/me/providers/openai/test")
+    assert mine.status_code == 404
+    assert mine.json()["detail"] == provider_service.NOT_CONNECTED
+    assert (await client.post(f"{path}/providers/openai/test")).status_code == 404
+    saras_own = f"{ORGS}/{sara['organizations'][0]['id']}"  # an organization Ali isn't in
+    assert (await client.post(f"{saras_own}/me/providers/openai/test")).status_code == 404
+    client.cookies.clear()
+    assert (await client.post(f"{path}/me/providers/openai/test")).status_code == 401
+
+
 async def test_your_key_and_the_organizations_live_side_by_side(providers: FakeProviders) -> None:
     async with api_client(TEST_SETTINGS, providers) as (app, client):
         path, _, _ = await _team(client)

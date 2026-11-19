@@ -50,6 +50,14 @@ async def save_my_key(
     return await provider_controller.save_my_key(db, access, provider_id, body, secrets=secrets, catalog=catalog)
 
 
+@router.post("/me/providers/{provider_id}/test")
+async def test_my_key(
+    provider_id: str, access: OrgAccess, db: Db, secrets: Secrets, catalog: Catalog
+) -> ProviderTestOut:
+    """Check your own saved key again with a live call (any member, your key only; 404 if you have none)."""
+    return await provider_controller.test_my_key(db, access, provider_id, secrets=secrets, catalog=catalog)
+
+
 @router.delete("/me/providers/{provider_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def remove_my_key(provider_id: str, access: OrgAccess, db: Db, catalog: Catalog) -> None:
     """Remove your own key. Your runs go back to the organization's key, if any."""

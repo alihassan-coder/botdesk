@@ -85,6 +85,16 @@ describe("Models & keys on the API", () => {
     expect(state().modelProviders[0].status).toBe("invalid");
   });
 
+  it("testMyKey checks your own key, records the result in My keys and passes on the reason", async () => {
+    const mine = { ...connectedOpenai, source: "member" };
+    routes["GET /api/v1/orgs/o1/me/providers"] = { status: 200, body: [mine, groq] };
+    routes["POST /api/v1/orgs/o1/me/providers/openai/test"] = { status: 200, body: { ok: false, error: "That key didn't work: 401", provider: { ...mine, status: "invalid" } } };
+    await actions.loadMyKeys();
+    await expect(actions.testMyKey("openai")).resolves.toEqual({ ok: false, error: "That key didn't work: 401" });
+    expect(state().myKeys?.[0].status).toBe("invalid");
+    expect(state().modelProviders[0].status).toBeUndefined(); // the organization's key isn't touched
+  });
+
   it("removeProviderKey disconnects it, then asks the API again (a server key may take over)", async () => {
     routes["DELETE /api/v1/orgs/o1/providers/openai"] = { status: 204 };
     await expect(actions.removeProviderKey("openai")).resolves.toEqual({ ok: true });

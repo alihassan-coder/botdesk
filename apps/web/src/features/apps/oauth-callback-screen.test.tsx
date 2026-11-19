@@ -1,14 +1,52 @@
-import { screen } from "@testing-library/react";
-import { describe, expect, it } from "vitest";
+import { act, screen } from "@testing-library/react";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import { rememberOAuthReturn } from "@/lib/connections";
 import { renderUI } from "@/test/render";
 import { signInOnApi, withFakeApi } from "@/test/fake-api";
-import { OAuthCallbackScreen } from "./oauth-callback-screen";
+import { OAuthCallbackScreen, RETURN_AFTER_MS } from "./oauth-callback-screen";
+
+const router = vi.hoisted(() => ({ replace: vi.fn(), push: vi.fn() }));
+vi.mock("next/navigation", () => ({ useRouter: () => router }));
+
+beforeEach(() => router.replace.mockClear());
 
 describe("The OAuth callback page", () => {
   it("says the account is connected, with a way back to Connect apps", () => {
     renderUI(<OAuthCallbackScreen result="connected" code={null} connector="gmail" />);
     expect(screen.getByText("Connected", { selector: "[data-slot=alert-title]" })).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Back to Connect apps" })).toHaveAttribute("href", "/apps");
+  });
+
+  it("goes back to where Connect was pressed after a moment", () => {
+    vi.useFakeTimers();
+    rememberOAuthReturn("/chat/t1");
+    renderUI(<OAuthCallbackScreen result="connected" code={null} connector="gmail" />);
+
+    expect(screen.getByRole("link", { name: "Back to the chat" })).toHaveAttribute("href", "/chat/t1");
+    act(() => vi.advanceTimersByTime(RETURN_AFTER_MS - 1));
+    expect(router.replace).not.toHaveBeenCalled();
+    act(() => vi.advanceTimersByTime(1));
+    expect(router.replace).toHaveBeenCalledWith("/chat/t1");
+  });
+
+  it("never goes back to another site, whatever was remembered", () => {
+    vi.useFakeTimers();
+    rememberOAuthReturn("//evil.com/phish");
+    renderUI(<OAuthCallbackScreen result="connected" code={null} connector="gmail" />);
+
+    expect(screen.getByRole("link", { name: "Back to Connect apps" })).toHaveAttribute("href", "/apps");
+    act(() => vi.advanceTimersByTime(RETURN_AFTER_MS));
+    expect(router.replace).toHaveBeenCalledWith("/apps");
+  });
+
+  it("stays when connecting failed, so the reason can be read, with the way back", () => {
+    vi.useFakeTimers();
+    rememberOAuthReturn("/chat/t1");
+    renderUI(<OAuthCallbackScreen result="error" code="denied" connector={null} />);
+
+    expect(screen.getByRole("link", { name: "Back to the chat" })).toHaveAttribute("href", "/chat/t1");
+    act(() => vi.advanceTimersByTime(RETURN_AFTER_MS * 2));
+    expect(router.replace).not.toHaveBeenCalled();
   });
 
   it("says why nothing was connected when the person cancelled", () => {
@@ -50,5 +88,6 @@ describe("The OAuth callback page after an MCP server's sign-in", () => {
     expect(screen.getByText(/1 tool to review\. No bot gets this MCP server's tools until an owner or admin has reviewed them/)).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Review tools" })).toHaveAttribute("href", "/apps/mcp/m1");
     expect(screen.getByRole("link", { name: "Back to Connect apps" })).toHaveAttribute("href", "/apps");
+    expect(router.replace).not.toHaveBeenCalled(); // the review comes first: it doesn't leave by itself
   });
 });

@@ -87,6 +87,7 @@ Allow about 2 hours for everything, plus about 30 minutes for the Google setup (
 ## 10. Connect apps and bot Tools
 
 - [ ] Connect apps lists Built in (Demo), Gmail (Ready or Not set up), and the "Coming soon" catalogue with real logos (light and dark).
+- [ ] Connect Gmail: after Google, the page says Connected and goes back by itself to where you pressed Connect (Connect apps; your chats after setup's Gmail step), with a "Back to …" link. Cancel at Google: the page stays with the reason and the same link.
 - [ ] Connect the Demo with a label and key. Disconnect behind a confirm.
 - [ ] Bot details → Tools: switch a plugin on/off and pick an account; only accounts you may use are offered.
 - [ ] Gmail: follow [gmail.md](gmail.md) completely.

@@ -1,5 +1,7 @@
 import { screen, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { actions } from "@/data/store";
+import { readOAuthReturn } from "@/lib/connections";
 import { browser } from "@/lib/navigate";
 import { renderUI } from "@/test/render";
 import { apiMe, apiOrg, signInOnApi, withFakeApi } from "@/test/fake-api";
@@ -23,7 +25,10 @@ describe("Connect apps on the API", () => {
     leave = vi.spyOn(browser, "leaveFor").mockImplementation(() => {});
     api.routes["GET /api/v1/orgs/o1/mcp-servers"] = { status: 200, body: [] };
   });
-  afterEach(() => leave.mockRestore());
+  afterEach(() => {
+    leave.mockRestore();
+    window.history.pushState({}, "", "/");
+  });
   const tools = [
     { name: "demo.send_email", title: "Send email", description: "Sends an email.", risk: "external-send" },
     { name: "demo.read_notes", title: "Read notes", description: "Reads notes.", risk: "read" },
@@ -73,6 +78,28 @@ describe("Connect apps on the API", () => {
 
     await vi.waitFor(() => expect(leave).toHaveBeenCalledWith("https://accounts.example/authorize?x=1"));
     expect(api.sent.find((r) => r.key === "POST /api/v1/orgs/o1/connections/oauth/start")?.body).toEqual({ connectorId: "gmail", ownerKind: "org", access: "read" });
+  });
+
+  it("remembers the page Connect was pressed on, so signing in comes back there", async () => {
+    api.routes["POST /api/v1/orgs/o1/connections/oauth/start"] = { status: 200, body: { authorizeUrl: "https://accounts.example/authorize" } };
+    await signInOnApi();
+    window.history.pushState({}, "", "/chat/t1?from=connect");
+
+    await expect(actions.startOAuth("gmail", { kind: "member" }, "full")).resolves.toEqual({ ok: true });
+
+    expect(leave).toHaveBeenCalledWith("https://accounts.example/authorize");
+    expect(readOAuthReturn()).toBe("/chat/t1?from=connect");
+  });
+
+  it("remembers nothing when the start is refused", async () => {
+    api.routes["POST /api/v1/orgs/o1/connections/oauth/start"] = { status: 400, body: { detail: "Gmail isn't set up on this server." } };
+    await signInOnApi();
+    window.history.pushState({}, "", "/chat/t1");
+
+    await expect(actions.startOAuth("gmail", { kind: "member" })).resolves.toEqual({ ok: false, error: "Gmail isn't set up on this server." });
+
+    expect(leave).not.toHaveBeenCalled();
+    expect(readOAuthReturn()).toBe("/apps"); // nothing remembered: the default
   });
 
   it("says when an app isn't set up on this server, with Connect off and a link to the guide", async () => {

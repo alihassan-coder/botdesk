@@ -15,17 +15,18 @@ import { accessLabel } from "@/lib/connections";
 
 /**
  * Connect an account on the API: whose it is (you, a bot, the organization), then sign in with
- * the provider (OAuth, the whole tab goes there) or paste an API key.
+ * the provider (OAuth, the whole tab goes there) or paste an API key. After signing in the tab
+ * comes back to `returnTo`, by default the page the dialog was opened on.
  */
-export function AccountConnectDialog({ connector, onClose }: { connector: ServerConnector | null; onClose: () => void }) {
+export function AccountConnectDialog({ connector, onClose, returnTo }: { connector: ServerConnector | null; onClose: () => void; returnTo?: string }) {
   return (
     <Dialog open={connector !== null} onOpenChange={(open) => !open && onClose()}>
-      <DialogContent>{connector && <ConnectForm key={connector.id} connector={connector} onClose={onClose} />}</DialogContent>
+      <DialogContent>{connector && <ConnectForm key={connector.id} connector={connector} onClose={onClose} returnTo={returnTo} />}</DialogContent>
     </Dialog>
   );
 }
 
-function ConnectForm({ connector: c, onClose }: { connector: ServerConnector; onClose: () => void }) {
+function ConnectForm({ connector: c, onClose, returnTo }: { connector: ServerConnector; onClose: () => void; returnTo?: string }) {
   const isAdmin = useCurrentUser().role !== "member";
   const bots = useBots();
   const [ownerKind, setOwnerKind] = useState<ConnectionOwner["kind"]>("member");
@@ -43,7 +44,7 @@ function ConnectForm({ connector: c, onClose }: { connector: ServerConnector; on
     setError("");
     const result = isKey
       ? await actions.connectApiKey(c.id, owner, label.trim(), apiKey.trim())
-      : await actions.startOAuth(c.id, owner, c.accessLevels.length > 0 ? access : undefined);
+      : await actions.startOAuth(c.id, owner, c.accessLevels.length > 0 ? access : undefined, returnTo);
     setBusy(false); // after OAuth the tab is leaving; nothing else to do
     if (!result.ok) return setError(result.error);
     if (isKey) {

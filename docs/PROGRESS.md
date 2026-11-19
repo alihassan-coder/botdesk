@@ -2,12 +2,13 @@
 
 A short history of BotDesk, newest first. For one checklist of what is done and what is next, see [ROADMAP.md](ROADMAP.md).
 
-## 2026-11-19: Answering a run that needs attention
+## 2026-11-19: Answering a run that needs attention, and back where you were after connecting Google
 
 Details: [backend guide](backend/README.md#tools-and-approvals), [frontend guide](frontend/README.md#talking-to-the-api).
 
 - **It was done / It wasn't done.** A run stopped because a send may have gone out (its call left `started`, ADR 0004 §2) can now be answered, not only stopped: `POST /runs/{id}/resolve` with `{outcome: "done" | "not_done"}`. "Done" finishes the call `succeeded` with "A person checked: it was done.", "not done" finishes it `failed` with "A person checked: it wasn't done." The run carries on from its checkpoint (`tool_finished` with the real status, then `run_resumed` with `after: "attention"`); the model reads the answer and the call is never run again. After "not done" the model may try again as a new call, which the policy decides again (Ask before acting asks again). Who may answer: whoever can see the run, but only the account's member for a call through a member's own account (the approvals rule). One conditional UPDATE, so of two answers at once one wins and the other gets 409.
 - **Web:** the needs-attention notice has It was done and It wasn't done next to Stop, all off while one is sending; errors are toasts.
+- **Back where you were after connecting Google.** `actions.startOAuth` remembers the page Connect was pressed on (path and query, sessionStorage, this tab only) before the tab leaves for Google; `/apps/callback` says how it went, then goes back there by itself after 2 s, with a "Back to …" link (the chat, Connect apps, …). Only a path on this site counts (`sitePath` in `lib/next-path.ts`: no full URL, `//`, backslash or control character, and never the callback page itself); anything else, or nothing remembered, goes to Connect apps as before. A failed sign-in stays on the page so its reason can be read; an MCP sign-in stays too (Review tools comes first). Setup's Gmail step comes back to the app (`/`), not to setup's first step.
 
 ## 2026-11-18: Organization security ceiling, member keys, creating organizations
 
@@ -68,7 +69,7 @@ Details: [frontend guide](frontend/README.md#routes).
 - **Who sees it:** after sign-up, the owner of an organization with no bots goes from `/` to `/welcome` (`lib/onboarding.ts`, `onboarding/use-onboarding-redirect.ts`; `/welcome` itself sends members and the demo home). Invited members, admins, teams with bots and the demo never do. Finishing or skipping is remembered per organization in this browser (`botdesk.onboarding.done.<orgId>`), so it never nags; no new API field.
 - **Steps** (`features/onboarding/`, outside the app shell, progress bars and Skip on each): name the organization (prefilled, `PATCH /orgs/{id}` only if changed); add an AI key (the Models & keys dialog; "Skip — bots will use a stand-in reply"); hire Chief (a new marketplace template) or Inbox Zero, or leave to create one from scratch; connect Gmail (the Connect apps dialog; a server without a Google client says so and links the guide). Finish opens the first hired bot's DM.
 - **Welcome message:** an empty DM now opens with the bot introducing itself (`threads/dm-welcome.tsx`, `lib/bot-welcome.ts`), so a new bot's chat never starts blank on the API either.
-- **Later:** after Google sign-in the browser lands on `/apps/callback`, not back in the bot's DM; the store has no "bots failed to load" state, so an owner whose bot list fails to load is offered setup (Skip setup gets out). (Chief's chief-of-staff instructions were in fact added that day; see 2026-11-18.)
+- **Later:** the store has no "bots failed to load" state, so an owner whose bot list fails to load is offered setup (Skip setup gets out). (Chief's chief-of-staff instructions were in fact added that day; see 2026-11-18. Coming back from Google's sign-in to where you were: done 2026-11-19.)
 
 ## 2026-11-17: Gmail extras: easier HTML mail, attachments, Markdown mail, drafts
 

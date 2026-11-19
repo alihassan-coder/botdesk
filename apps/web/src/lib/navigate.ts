@@ -6,4 +6,8 @@ export const browser = {
   leaveFor(url: string): void {
     window.location.assign(url);
   },
+  /** The page this tab is on (path and query), to come back to after leaving. */
+  here(): string {
+    return `${window.location.pathname}${window.location.search}`;
+  },
 };

@@ -1,4 +1,5 @@
 import type { AccountConnection, ConnectionOwner } from "@/data/types";
+import { sitePath } from "./next-path";
 
 /** How a self-hoster sets up Google sign-in (Connect apps links it when a connector isn't set up). */
 export const GOOGLE_SETUP_GUIDE_URL = "https://github.com/alihassan-coder/botdesk/blob/main/docs/self-hosting/google-oauth.md";
@@ -28,6 +29,45 @@ const CALLBACK_ERRORS: Record<string, string> = {
 export function callbackOutcome(result: string | null, code: string | null, connector: string | null): CallbackOutcome {
   if (result === "connected") return { ok: true, connectorId: connector };
   return { ok: false, message: CALLBACK_ERRORS[code ?? ""] ?? CALLBACK_ERRORS.failed };
+}
+
+/*
+ * Signing in with a provider takes the whole tab away, and the API sends it back to
+ * /apps/callback. The page Connect was pressed on (a bot's DM, Connect apps) is remembered for
+ * this tab (sessionStorage) so the callback page can go back there.
+ */
+const OAUTH_RETURN_KEY = "botdesk.oauthReturnTo";
+/** Connect apps: where the callback page goes back to by default. */
+export const CONNECT_APPS = "/apps";
+
+/** Remember where to come back to after the provider's sign-in. */
+export function rememberOAuthReturn(path: string): void {
+  try {
+    sessionStorage.setItem(OAUTH_RETURN_KEY, path);
+  } catch {} // storage blocked: the callback page falls back to Connect apps
+}
+
+/** Where the callback page goes back to: the remembered page, or Connect apps. */
+export function readOAuthReturn(): string {
+  let saved: string | null = null;
+  try {
+    saved = sessionStorage.getItem(OAUTH_RETURN_KEY);
+  } catch {}
+  return oauthReturnPath(saved);
+}
+
+/** Only a page on this site (lib/next-path.ts), never the callback page itself; else Connect apps. */
+export function oauthReturnPath(saved: string | null): string {
+  const path = sitePath(saved, CONNECT_APPS);
+  return path.startsWith("/apps/callback") ? CONNECT_APPS : path;
+}
+
+/** "Back to …" the page it goes back to. */
+export function returnLabel(path: string): string {
+  if (path === CONNECT_APPS || path.startsWith(`${CONNECT_APPS}?`)) return "Connect apps";
+  if (path.startsWith("/chat/")) return "the chat";
+  if (path === "/") return "your chats";
+  return "where you were";
 }
 
 /** Who a connection belongs to, as the Connect dialog's owner choice. */

@@ -504,6 +504,34 @@ describe("chats on the API", () => {
     expect(state().runs).toEqual([]);
   });
 
+  it("resolveRun answers a stuck run, and the bot carries on at once", async () => {
+    routes["GET /api/v1/orgs/o1/threads/t1/runs?active=true"] = {
+      status: 200, body: { runs: [apiRun({ status: "needs_attention", error: "Check the outbox." })], lastEventId: 7 },
+    };
+    actions.openThread("t1");
+    await vi.waitFor(() => expect(state().runs[0]?.status).toBe("needs_attention"));
+    routes["POST /api/v1/orgs/o1/runs/r1/resolve"] = { status: 200, body: apiRun({ status: "needs_attention" }) };
+
+    await expect(actions.resolveRun("r1", "not_done")).resolves.toEqual({ ok: true });
+
+    const fetched = vi.mocked(fetch).mock.calls.find(([url]) => String(url).endsWith("/runs/r1/resolve"));
+    expect(JSON.parse(String(fetched?.[1]?.body))).toEqual({ outcome: "not_done" });
+    expect(state().runs[0]).toMatchObject({ id: "r1", status: "running", error: undefined });
+    expect(state().bots[0]).toMatchObject({ status: "working", statusText: "Thinking…" });
+  });
+
+  it("resolveRun says why when the answer isn't taken, and the notice stays", async () => {
+    routes["GET /api/v1/orgs/o1/threads/t1/runs?active=true"] = {
+      status: 200, body: { runs: [apiRun({ status: "needs_attention", error: "Check the outbox." })], lastEventId: 7 },
+    };
+    actions.openThread("t1");
+    await vi.waitFor(() => expect(state().runs[0]?.status).toBe("needs_attention"));
+    routes["POST /api/v1/orgs/o1/runs/r1/resolve"] = { status: 409, body: { detail: "This run isn't waiting for anyone to check on it." } };
+
+    await expect(actions.resolveRun("r1", "done")).resolves.toEqual({ ok: false, error: "This run isn't waiting for anyone to check on it." });
+    expect(state().runs[0]).toMatchObject({ id: "r1", status: "needs_attention" });
+  });
+
   it("sendMessage shows your message at once, then the saved one, and knows a bot is replying", async () => {
     actions.openThread("t1");
     await vi.waitFor(() => expect(state().threadLoads.t1?.status).toBe("ready"));

@@ -14,7 +14,8 @@ import type { ApiRun, ApiRunEvent } from "./types";
  * reply ("Used Send email · done"). A risky call pauses the run with `approval_requested`
  * (its card goes into the reply), someone decides (`approval_decided`), and the run carries
  * on with `run_resumed`. A run that may have half done something stops with
- * `run_needs_attention` until a person stops it.
+ * `run_needs_attention` until a person stops it, or says whether it was done: the call's line
+ * then gets its real `tool_finished`, and the run carries on (`run_resumed`, `after: "attention"`).
  *
  * Cards and tool lines sit above the reply's text in the order they arrived, which is the
  * order the saved reply has them too, so nothing jumps when the reply is saved.
@@ -244,9 +245,9 @@ export function withWaitingApprovals(chat: ChatSlice, approvals: Approval[], act
 /**
  * A chat that just opened, told which of its runs are still going (`GET /threads/{id}/runs?active=true`).
  * That list sets this chat's runs: a running one shows the bot thinking, a paused one waits for a
- * decision or for a person (the needs-attention notice, with Stop). Runs we thought were going but
- * aren't in it have ended, except ones the list may predate: one you just started, or one heard
- * on the stream after the list's `lastEventId`.
+ * decision or for a person (the needs-attention notice: It was done, It wasn't done, Stop). Runs
+ * we thought were going but aren't in it have ended, except ones the list may predate: one you
+ * just started, or one heard on the stream after the list's `lastEventId`.
  *
  * The stream follows from the list's `replayFrom`, so it replays the running runs' events from
  * their start: their words so far and tool lines. A paused run isn't replayed (it may wait for

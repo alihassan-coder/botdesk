@@ -140,7 +140,7 @@ async def decide(
     """Approve (maybe with edited arguments) or deny. Only a pending approval can be decided,
     and only once, even when two people click at the same moment."""
     approval = (await get_approval(db, org_id=org_id, user_id=user.id, approval_id=approval_id)).approval
-    await _require_may_decide(db, approval, user.id)
+    await require_may_decide(db, approval.connection_id, user.id)
     if approval.status != "pending":
         raise Conflict(ALREADY_DECIDED)
 
@@ -168,13 +168,14 @@ async def decide(
     return Decided(view=await view_by_id(db, approval.id), expired=False)
 
 
-async def _require_may_decide(db: AsyncSession, approval: Approval, user_id: uuid.UUID) -> None:
-    """A call through a member-owned connection acts as that member: only they decide it. Calls
-    through a bot's or the organization's connection keep the chat's rule (its members)."""
-    if approval.connection_id is None:
+async def require_may_decide(db: AsyncSession, connection_id: uuid.UUID | None, user_id: uuid.UUID) -> None:
+    """A call through a member-owned connection acts as that member: only they decide it (its
+    approval, or whether it was done when its run needs attention). Calls through a bot's or the
+    organization's connection keep the chat's rule (its members)."""
+    if connection_id is None:
         return
     owner = await db.execute(
-        select(Connection.owner_kind, Connection.owner_user_id).where(Connection.id == approval.connection_id)
+        select(Connection.owner_kind, Connection.owner_user_id).where(Connection.id == connection_id)
     )
     row = owner.first()
     if row is not None and row.owner_kind == "member" and row.owner_user_id != user_id:

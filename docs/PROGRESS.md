@@ -2,6 +2,13 @@
 
 A short history of BotDesk, newest first. For one checklist of what is done and what is next, see [ROADMAP.md](ROADMAP.md).
 
+## 2026-11-19: Answering a run that needs attention
+
+Details: [backend guide](backend/README.md#tools-and-approvals), [frontend guide](frontend/README.md#talking-to-the-api).
+
+- **It was done / It wasn't done.** A run stopped because a send may have gone out (its call left `started`, ADR 0004 §2) can now be answered, not only stopped: `POST /runs/{id}/resolve` with `{outcome: "done" | "not_done"}`. "Done" finishes the call `succeeded` with "A person checked: it was done.", "not done" finishes it `failed` with "A person checked: it wasn't done." The run carries on from its checkpoint (`tool_finished` with the real status, then `run_resumed` with `after: "attention"`); the model reads the answer and the call is never run again. After "not done" the model may try again as a new call, which the policy decides again (Ask before acting asks again). Who may answer: whoever can see the run, but only the account's member for a call through a member's own account (the approvals rule). One conditional UPDATE, so of two answers at once one wins and the other gets 409.
+- **Web:** the needs-attention notice has It was done and It wasn't done next to Stop, all off while one is sending; errors are toasts.
+
 ## 2026-11-18: Organization security ceiling, member keys, creating organizations
 
 Details: [backend guide](backend/README.md#the-security-ceiling) ([member keys](backend/README.md#member-keys)), [frontend guide](frontend/README.md#talking-to-the-api). Finishes work started on 2026-11-17 (branch `wave4/gaps-org`), re-applied on the current code, completed and tested.
@@ -22,7 +29,7 @@ Details: [backend guide](backend/README.md#tools-and-approvals), [plugin README]
 - **`gmail.send_draft` shows the draft's text.** `gmail.list_drafts` returns each draft's whole text and attachments' names; `send_draft` carries them, the card shows them, and nothing is sent if the draft's text or attachments changed since (as for its recipients and subject).
 - **No hidden characters on a card.** Gmail refuses zero-width characters, right-to-left overrides, invisible "tag" letters and line separators in subjects, bodies and attachment names; every card writes any that reach it as `[U+202E]` (SDK: `hidden_characters`, `show_hidden`). Emoji and scripts keep the joiners they need. Also checked: summaries already list cc and bcc, Markdown HTML already escapes the model's markup, header injection was already refused; tests added for each.
 - **Review fixes (same day):** an MCP answer that can't be used (an internal error, not MCP, a request for input) now counts as "may have been done" (only method-not-found / invalid-params reach the model); `ctx.http` counts each request on its own, so sends at once can't clear each other; a send cut off by Stop or the time limit is noted, and a run that ran out of time with one needs attention; a draft whose HTML says something else, hides text, has another kind of part or holds invisible characters is never sent by a bot; a pile of combining marks counts as hidden. MCP: adding and refreshing keep no transaction open while the server is called, each sign-in request has 15 s in all, a server's own error text is never its status on Connect apps, and snapshot changes lock the server's row.
-- **Later:** a needs-attention run still only offers Stop (no "it was sent / it wasn't" answer that lets it go on); after Stop, the next run isn't told that a send may have gone out (the chat's line says so).
+- **Later:** after Stop, the next run isn't told that a send may have gone out (the chat's line says so). (Answering a needs-attention run: done 2026-11-19.)
 
 ## 2026-11-18: MCP sign-in with OAuth, and reviewing MCP tools (slices 7.3, 7.4)
 

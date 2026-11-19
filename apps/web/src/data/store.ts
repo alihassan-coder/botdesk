@@ -1092,6 +1092,30 @@ const chatActions = {
   },
 
   /**
+   * Answer a run that needs attention: the call it stopped on was done, or wasn't. The bot then
+   * carries on (it shows as working at once; the stream follows) and never repeats the call by
+   * itself. In the mock it's over at once.
+   */
+  async resolveRun(runId: string, outcome: "done" | "not_done"): Promise<ActionResult> {
+    if (isDemoMode()) {
+      setMockRun(null, runId);
+      return { ok: true };
+    }
+    try {
+      await runApi.resolve(state.org.id, runId, outcome);
+      set((st) =>
+        withRunStatus({
+          ...st,
+          runs: st.runs.map((r) => (r.id === runId && r.status === "needs_attention" ? { ...r, status: "running", error: undefined } : r)),
+        }),
+      );
+      return { ok: true };
+    } catch (error) {
+      return failure(error);
+    }
+  },
+
+  /**
    * Starts a group chat with you plus the bots and people you pick, and returns its id so
    * the screen can open it. A group needs at least one bot: they're who does the work.
    */

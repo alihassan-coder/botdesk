@@ -1,6 +1,6 @@
 import uuid
 from datetime import datetime
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import Field
 
@@ -29,6 +29,12 @@ class RunOut(ApiModel):
     # ADR 0014: for a `waiting_handoff` run in a chat's run list, the open tasks it waits for
     # (so a chat opened mid-wait can say who it's waiting for). Empty otherwise.
     task_ids: list[uuid.UUID] = Field(default_factory=list)
+
+
+class ResolveIn(ApiModel):
+    """A person's answer to a run that needs attention: was the call it stopped on done?"""
+
+    outcome: Literal["done", "not_done"]
 
 
 class ThreadRunsOut(ApiModel):

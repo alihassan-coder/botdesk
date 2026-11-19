@@ -310,8 +310,8 @@ export type ApiRunEvent = {
     }
   | { kind: "approval_requested"; data: { approval: ApiApproval } }
   | { kind: "approval_decided"; data: { approval: ApiApproval } }
-  /** `after` is missing on older events: read it as "approval". */
-  | { kind: "run_resumed"; data: { botId: string; after?: "approval" | "tasks" } }
+  /** `after` is missing on older events: read it as "approval". "attention": a person said whether a half-run call was done. */
+  | { kind: "run_resumed"; data: { botId: string; after?: "approval" | "tasks" | "attention" } }
   | { kind: "run_needs_attention"; data: { status: "needs_attention"; error: string } }
   /** Sent on the parent run: a Task was created, started or ended. */
   | { kind: "task_updated"; data: { task: ApiTask } }

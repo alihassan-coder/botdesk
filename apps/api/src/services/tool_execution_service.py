@@ -13,13 +13,17 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import func, select, update
+from sqlalchemy import exists, func, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.core.database import utcnow
 from src.models import Approval, Run, ToolExecution
 from src.plugins.team import is_core_tool
+
+# What a run reads when it carries on after a person checked a call that may have been done.
+CHECKED_DONE = "A person checked: it was done."
+CHECKED_NOT_DONE = "A person checked: it wasn't done."
 
 
 def args_hash(args: dict[str, Any]) -> str:
@@ -172,6 +176,37 @@ async def note_unknown_outcome(db: AsyncSession, execution_id: uuid.UUID, *, err
         update(ToolExecution)
         .where(ToolExecution.id == execution_id, ToolExecution.status == "started")
         .values(error=error)
+    )
+
+
+async def started_call(db: AsyncSession, run_id: uuid.UUID) -> ToolExecution | None:
+    """This run's call left `started` (it may or may not have happened), if any."""
+    return await db.scalar(
+        select(ToolExecution)
+        .where(ToolExecution.run_id == run_id, ToolExecution.status == "started")
+        .order_by(ToolExecution.created_at.desc())
+        .limit(1)
+    )
+
+
+async def settle_by_a_person(
+    db: AsyncSession, execution_id: uuid.UUID, *, run_id: uuid.UUID, done: bool
+) -> ToolExecution | None:
+    """A person checked whether a call left `started` happened: `succeeded` with a note that says
+    so, or `failed` with "it wasn't done" (the model may try again, as a new call). Only while its
+    run waits for that answer, and only once: None if someone answered first or the run was
+    stopped. The caller commits."""
+    waiting = exists().where(Run.id == run_id, Run.status == "needs_attention")
+    answer: dict[str, Any] = (
+        {"status": "succeeded", "result": {"note": CHECKED_DONE}, "error": None}
+        if done
+        else {"status": "failed", "result": None, "error": CHECKED_NOT_DONE}
+    )
+    return await db.scalar(
+        update(ToolExecution)
+        .where(ToolExecution.id == execution_id, ToolExecution.status == "started", waiting)
+        .values(**answer, finished_at=utcnow())
+        .returning(ToolExecution)
     )
 
 

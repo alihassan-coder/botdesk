@@ -63,6 +63,7 @@ Allow about 2 hours for everything, plus about 30 minutes for the Google setup (
 - [ ] Approvals page: pending and past decisions, the bot filter, the sidebar count.
 - [ ] Bot on "Read only": it can't draft or send, and says so.
 - [ ] A bot that read outside text (an email, a web page) always asks before sending, even on Autonomous.
+- [ ] A run that needs attention (the API restarted mid-send, or a send lost its answer): **It was done** lets the bot carry on without sending again; **It wasn't done** lets it try again (on Ask before acting it asks again); of two people answering at once only one wins, the other gets a toast.
 
 ## 7. Handoffs (bots working together)
 

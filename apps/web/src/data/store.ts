@@ -26,7 +26,6 @@ import { HOP_LIMIT, chainStoppedText, routeMessage, type BotReply, type ChatBots
 import { previewFromArgs } from "@/lib/args-form";
 import { strictestLevel } from "@/lib/security-ceiling";
 import { browser } from "@/lib/navigate";
-import { strictestLevel } from "@/lib/security-level";
 import { approvalApi, authApi, botApi, connectionApi, inviteApi, mcpApi, memoryApi, modelApi, orgApi, pluginApi, routineApi, runApi, templateApi, threadApi, usageApi } from "./api/botdesk";
 import { ApiError, apiBaseUrl } from "./api/client";
 import { toAccountConnection, toApiBot, toApproval, toBot, toInvitation, toMcpServer, toMemory, toMemoryStatus, toMessage, toModel, toModelProvider, toOrg, toRoutine, toTemplate, toThread, toUsage, toUser } from "./api/map";

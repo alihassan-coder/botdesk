@@ -11,8 +11,9 @@ import { StepFrame } from "./step-frame";
 /**
  * Step 4: connect Gmail with the same dialog as Connect apps. Signing in with Google takes the
  * whole tab away (OAuth), so `onLeave` marks setup done when the dialog opens (cancelling it
- * still leaves you here, with Finish). A server without a Google client
- * says so, with the setup guide, and the step can be skipped.
+ * still leaves you here, with Finish), and the sign-in comes back to the app ("/"), not to
+ * setup's first step. A server without a Google client says so, with the setup guide, and the
+ * step can be skipped.
  */
 export function GmailStep({ onFinish, onLeave }: { onFinish: () => void; onLeave: () => void }) {
   const connectors = useServerConnectors();
@@ -68,7 +69,7 @@ export function GmailStep({ onFinish, onLeave }: { onFinish: () => void; onLeave
           )}
         </div>
       )}
-      <AccountConnectDialog connector={connecting ? gmail ?? null : null} onClose={() => setConnecting(false)} />
+      <AccountConnectDialog connector={connecting ? gmail ?? null : null} onClose={() => setConnecting(false)} returnTo="/" />
     </StepFrame>
   );
 }

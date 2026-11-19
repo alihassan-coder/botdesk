@@ -12,7 +12,9 @@ succeeded, failed or cancelled, or pauses it:
   `wait_for_tasks`. Its job ends, so the chat's lock is free for the children. When the last of
   its tasks ends, `task_service` says so and `resume` defers its job, which continues the
   checkpoint with the tasks' results (`task_service.resume_answer`).
-- **needs_attention:** a tool may have half run. A person has to look.
+- **needs_attention:** a tool may have half run. A person has to look. When they answer (It was
+  done / It wasn't done, `run_service.resolve_attention`), `resume` defers its job, which carries
+  on from the checkpoint: the call's node runs again and reads the answer instead of the tool.
 
 When a run ends, `task_service.run_ended` ends its task if it was a child (resuming the parent
 when it was the last one), and cancels the tasks it still had open (their children are stopped).
@@ -310,8 +312,9 @@ class RunManager:
 
     async def take_turn(self, run_id: uuid.UUID) -> bool:
         """The `run_bot` job: move this run forward. Starts a queued run, resumes a paused one
-        whose approval was decided, or carries on with one a restart interrupted. Does nothing for
-        a run that has ended or still waits for a person; safe to call again.
+        whose approval was decided (or whose half-run call a person answered for), or carries on
+        with one a restart interrupted. Does nothing for a run that has ended or still waits for
+        a person; safe to call again.
 
         False when the run can't go yet (an older run in its chat is still queued, or its bot
         already has `BOT_MAX_RUNNING_RUNS` going): defer the job again a little later."""
@@ -367,6 +370,20 @@ class RunManager:
                 return True
             await reporter.send("run_resumed", {"botId": str(ticket.bot_id), "after": "tasks"})
             graph_input = Command(resume=tasks_answer)
+        elif status == "needs_attention":
+            async with self.sessionmaker() as db:
+                if await tool_execution_service.runs_with_a_started_call(db, [ticket.id]):
+                    return True  # nobody has said yet whether the call was done
+            snapshot = await self._graph.aget_state(self._config(ticket))
+            claimed = await self._claim(ticket, "needs_attention")
+            if claimed is not True:
+                return claimed is None
+            if not snapshot.next:
+                # The checkpoint is gone (in-memory checkpoints don't survive a restart).
+                await self._finish(ticket, reporter, Outcome("failed", run_service.LOST_PAUSE_ERROR))
+                return True
+            await reporter.send("run_resumed", {"botId": str(ticket.bot_id), "after": "attention"})
+            graph_input = None  # on from the last saved step: the call that stopped it, now answered
         elif status == "running":
             # A restart stopped it mid-way: carry on from the last saved step (from the start if
             # it hadn't saved one). A tool call left half done stops it as needs_attention.

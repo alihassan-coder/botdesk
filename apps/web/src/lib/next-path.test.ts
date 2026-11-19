@@ -14,6 +14,8 @@ describe("safeNextPath", () => {
     expect(safeNextPath("?next=https://evil.com")).toBe("/");
     expect(safeNextPath("?next=//evil.com")).toBe("/");
     expect(safeNextPath("?next=/%5Cevil.com")).toBe("/");
+    // Browsers drop tabs and newlines from a URL, so this one would become "//evil.com".
+    expect(safeNextPath("?next=/%09/evil.com")).toBe("/");
   });
 });
 

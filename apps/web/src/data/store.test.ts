@@ -280,6 +280,11 @@ describe("smaller actions", () => {
     expect(part).toMatchObject({ type: "question", answered: "No" });
   });
 
+  it("resolveRun answers a run that needs attention at once, with nothing to send", async () => {
+    await expect(actions.resolveRun("mock-run-1", "done")).resolves.toEqual({ ok: true });
+    expect(state().runs).toEqual([]);
+  });
+
   it("markRead clears the unread count", () => {
     actions.markRead("t_inbox");
     expect(state().threads.find((t) => t.id === "t_inbox")?.unread).toBe(0);

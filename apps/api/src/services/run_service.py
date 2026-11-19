@@ -2,8 +2,9 @@
 
 A run moves queued → running → succeeded / failed / cancelled. While running it can pause:
 running → waiting_approval (a risky tool call waits for a person) → running again, or
-running → needs_attention (a tool may have half run; a person must look). Every change of
-state is a single conditional UPDATE, so two API copies (or a double-clicked Stop) can't both win.
+running → needs_attention (a tool may have half run; a person must look, and says whether it was
+done) → running again. Every change of state is a single conditional UPDATE, so two API copies
+(or a double-clicked Stop) can't both win.
 """
 
 import json
@@ -18,23 +19,37 @@ from sqlalchemy.orm import aliased
 
 from src.core.config import Settings
 from src.core.database import utcnow
-from src.core.errors import NotFound
+from src.core.errors import Conflict, NotFound
 from src.core.handles import mentioned_handles
-from src.models import Approval, Bot, Message, Organization, Run, RunEvent, Task, Thread, ThreadParticipant, User
+from src.models import (
+    Approval,
+    Bot,
+    Message,
+    Organization,
+    Run,
+    RunEvent,
+    Task,
+    Thread,
+    ThreadParticipant,
+    ToolExecution,
+    User,
+)
 from src.models.bot import SecurityLevel
 from src.models.run import ACTIVE_STATUSES, PAUSED_STATUSES
 from src.models.task import OPEN_TASK_STATUSES
 from src.runtime.policy import LEVELS, strictest_level
 from src.runtime.prompt import ROSTER_LIMIT, TaskBrief, Teammate, handoff_prompt
 from src.schemas.run import RunOut
+from src.services import approval_service
 from src.services.mention_routing import BotAuthor, ChatBots, Reply, route
 from src.services.run_event_service import add_event
 from src.services.thread_service import message_out, text_of, text_part
-from src.services.tool_execution_service import runs_with_a_started_call
+from src.services.tool_execution_service import runs_with_a_started_call, settle_by_a_person, started_call
 
 HISTORY_LENGTH = 30  # messages the bot sees: the newest ones up to its trigger
 RESTART_ERROR = "Interrupted by a restart. Send your message again."
 LOST_PAUSE_ERROR = "This run can't continue: its saved progress is gone (the API restarted). Send your message again."
+NOT_WAITING_FOR_AN_ANSWER = "This run isn't waiting for anyone to check on it."
 
 
 def half_run_tool_error(tool_name: str) -> str:
@@ -140,8 +155,8 @@ async def create_runs(
 
 
 async def claim_run(db: AsyncSession, run_id: uuid.UUID, *, bot_cap: int, from_status: str = "queued") -> bool:
-    """Try to move a queued run (or, to resume it, a run waiting for approval) to running.
-    True if this caller got it.
+    """Try to move a queued run (or, to resume it, a paused one) to running. True if this caller
+    got it. A run that needed attention drops the reason now that a person has answered.
 
     It only starts when it's this chat's turn: no older run in the chat is still queued, and
     the bot has fewer than `bot_cap` runs going. A partial unique index allows one running
@@ -161,7 +176,7 @@ async def claim_run(db: AsyncSession, run_id: uuid.UUID, *, bot_cap: int, from_s
         result = await db.execute(
             update(this)
             .where(this.id == run_id, this.status == from_status, ~older_queued, bot_running < bot_cap)
-            .values(status="running", started_at=func.coalesce(this.started_at, utcnow()))
+            .values(status="running", error=None, started_at=func.coalesce(this.started_at, utcnow()))
             .returning(this.id)
         )
         claimed = result.first() is not None
@@ -647,6 +662,22 @@ async def get_run(db: AsyncSession, *, org_id: uuid.UUID, user_id: uuid.UUID, ru
     if run is None:
         raise NotFound("This run doesn't exist.")
     return run
+
+
+async def resolve_attention(db: AsyncSession, run: Run, *, user_id: uuid.UUID, done: bool) -> ToolExecution:
+    """It was done / It wasn't done: a person answers for the call a run stopped on (left
+    `started`, ADR 0004 §2), and the call is finished with that answer. Who may answer: whoever can
+    see the run, but only the member whose account the call used when it used a member's own
+    (the same rule as approvals). 409 unless the run waits for this answer; when two people answer
+    at once, one wins. The caller commits and resumes the run."""
+    call = await started_call(db, run.id) if run.status == "needs_attention" else None
+    if call is None:
+        raise Conflict(NOT_WAITING_FOR_AN_ANSWER)
+    await approval_service.require_may_decide(db, call.connection_id, user_id)
+    settled = await settle_by_a_person(db, call.id, run_id=run.id, done=done)
+    if settled is None:
+        raise Conflict(NOT_WAITING_FOR_AN_ANSWER)
+    return settled
 
 
 async def request_stop(db: AsyncSession, run: Run) -> bool:

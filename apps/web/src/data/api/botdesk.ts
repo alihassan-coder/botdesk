@@ -190,6 +190,9 @@ export const approvalApi = {
 export const runApi = {
   /** The Stop button: a queued or paused run stops at once, a running one within moments. */
   cancel: (orgId: string, runId: string) => apiFetch<unknown>(`/api/v1/orgs/${orgId}/runs/${runId}/cancel`, { method: "POST" }),
+  /** It was done / It wasn't done, for a run that needs attention: the run then carries on. */
+  resolve: (orgId: string, runId: string, outcome: "done" | "not_done") =>
+    apiFetch<unknown>(`/api/v1/orgs/${orgId}/runs/${runId}/resolve`, { method: "POST", body: { outcome } }),
 };
 
 /** Connect apps: the plugins the server loaded. */

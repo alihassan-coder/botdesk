@@ -65,6 +65,7 @@ Allow about 2 hours for everything, plus about 30 minutes for the Google setup (
 - [ ] Approvals page: pending and past decisions, the bot filter, the sidebar count.
 - [ ] Bot on "Read only": it can't draft or send, and says so.
 - [ ] A bot that read outside text (an email, a web page) always asks before sending, even on Autonomous.
+- [ ] A run that needs attention (the API restarted mid-send, or a send lost its answer): **It was done** lets the bot carry on without sending again; **It wasn't done** lets it try again (on Ask before acting it asks again); of two people answering at once only one wins, the other gets a toast.
 
 ## 7. Handoffs (bots working together)
 
@@ -88,6 +89,7 @@ Allow about 2 hours for everything, plus about 30 minutes for the Google setup (
 ## 10. Connect apps and bot Tools
 
 - [ ] Connect apps lists Built in (Demo), Gmail (Ready or Not set up), and the "Coming soon" catalogue with real logos (light and dark).
+- [ ] Connect Gmail: after Google, the page says Connected and goes back by itself to where you pressed Connect (Connect apps; your chats after setup's Gmail step), with a "Back to …" link. Cancel at Google: the page stays with the reason and the same link.
 - [ ] Connect the Demo with a label and key. Disconnect behind a confirm.
 - [ ] Bot details → Tools: switch a plugin on/off and pick an account; only accounts you may use are offered.
 - [ ] Gmail: follow [gmail.md](gmail.md) completely.

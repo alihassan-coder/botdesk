@@ -365,6 +365,44 @@ async def test_a_send_that_may_have_gone_out_stops_the_run_instead_of_being_sent
     assert (await pg.client.get(f"{org}/runs/{run_id}")).json()["status"] == "needs_attention"
 
 
+async def test_two_people_answering_a_stuck_run_at_once_resume_it_once(pg: Postgres) -> None:
+    """It was done / It wasn't done is one conditional UPDATE, like deciding an approval: one
+    answer wins, the other gets 409, and the run carries on from its Postgres checkpoint once."""
+    sent: list[str] = []
+
+    async def send(_args: NoArgs, _ctx: ToolContext) -> dict[str, Any]:
+        sent.append("email")
+        raise RuntimeError("the answer was lost")
+
+    tool = ToolSpec(
+        name="send", title="Send", description="Send it.", args_model=NoArgs, risk="external-send", handler=send
+    )
+    pg.runs.registry.register(PluginManifest(id="lost", name="Lost", version="1", description="test", tools=(tool,)))
+    use_model(pg, ScriptedToolModel(script=[("lost.send", {})]))
+    me = await sign_up(pg.client)
+    org = f"/api/v1/orgs/{me['organizations'][0]['id']}"
+    bot = (await pg.client.post(f"{org}/bots", json={"name": "Scout", "securityLevel": "autonomous"})).json()
+    chat = (await pg.client.post(f"{org}/threads/dm", json={"botId": bot["id"]})).json()
+    thread = f"{org}/threads/{chat['id']}"
+    run_id = await _send(pg.client, thread, "Send the launch email")
+    await pg.runs.wait_until_idle()
+    assert (await pg.client.get(f"{org}/runs/{run_id}")).json()["status"] == "needs_attention"
+
+    resolve = f"{org}/runs/{run_id}/resolve"
+    responses = await asyncio.gather(
+        pg.client.post(resolve, json={"outcome": "done"}), pg.client.post(resolve, json={"outcome": "done"})
+    )
+    await pg.runs.wait_until_idle()
+
+    assert sorted(response.status_code for response in responses) == [200, 409]
+    assert sent == ["email"]
+    (execution,) = await _executions(pg)
+    assert execution.status == "succeeded"
+    kinds = [event["event"] for event in await _events(pg.client, thread)]
+    assert kinds.count("run_resumed") == 1
+    assert (await pg.client.get(f"{org}/runs/{run_id}")).json()["status"] == "succeeded"
+
+
 async def test_a_send_cut_off_by_the_runs_time_limit_waits_for_a_person(pg: Postgres) -> None:
     """The run's time limit cancels a send in flight: it may be out, so the run needs attention
     (not "failed", after which a new message could have the bot send it again)."""

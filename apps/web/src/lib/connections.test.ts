@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { AccountConnection } from "@/data/types";
-import { accessLabel, bindableConnections, callbackOutcome, ownerLabel, ownerOf } from "./connections";
+import { accessLabel, bindableConnections, callbackOutcome, oauthReturnPath, ownerLabel, ownerOf, returnLabel } from "./connections";
 
 const account = (patch: Partial<AccountConnection>): AccountConnection => ({
   id: "c1", connectorId: "gmail", ownerKind: "member", ownerUserId: "u1", ownerBotId: null, authType: "oauth2",
@@ -21,6 +21,23 @@ describe("connections", () => {
     expect(callbackOutcome("error", "expired", null)).toMatchObject({ message: expect.stringContaining("took too long") });
     expect(callbackOutcome("error", "<script>", null)).toMatchObject({ message: "Couldn't finish connecting the app. Try again." });
     expect(callbackOutcome(null, null, null)).toMatchObject({ ok: false });
+  });
+
+  it("goes back after signing in only to a page on this site, never the callback itself", () => {
+    expect(oauthReturnPath("/chat/t1")).toBe("/chat/t1");
+    expect(oauthReturnPath("/apps?tab=mcp")).toBe("/apps?tab=mcp");
+    for (const unsafe of [null, "", "chat/t1", "https://evil.com", "//evil.com", "/\\evil.com", "/\t/evil.com", "/\n/evil.com", "javascript:alert(1)"]) {
+      expect(oauthReturnPath(unsafe)).toBe("/apps");
+    }
+    expect(oauthReturnPath("/apps/callback?result=connected")).toBe("/apps");
+  });
+
+  it("names the page it goes back to", () => {
+    expect(returnLabel("/apps")).toBe("Connect apps");
+    expect(returnLabel("/apps?tab=mcp")).toBe("Connect apps");
+    expect(returnLabel("/chat/t1")).toBe("the chat");
+    expect(returnLabel("/")).toBe("your chats");
+    expect(returnLabel("/bots/b1")).toBe("where you were");
   });
 
   it("says whose account it is", () => {

@@ -1,6 +1,7 @@
 import { screen, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { getStoreSnapshot } from "@/data/store";
+import { readOAuthReturn } from "@/lib/connections";
 import { browser } from "@/lib/navigate";
 import { renderUI } from "@/test/render";
 import { apiOrg, apiScout, signInOnApi, withFakeApi } from "@/test/fake-api";
@@ -159,9 +160,13 @@ describe("Step 4: connect Gmail", () => {
     leave = vi.spyOn(browser, "leaveFor").mockImplementation(() => {});
     api.routes["GET /api/v1/orgs/o1/connections"] = { status: 200, body: [] };
   });
-  afterEach(() => leave.mockRestore());
+  afterEach(() => {
+    leave.mockRestore();
+    window.history.pushState({}, "", "/");
+  });
 
   it("signs in with Google through the Connect apps dialog, marking setup done first", async () => {
+    window.history.pushState({}, "", "/welcome");
     api.routes["GET /api/v1/orgs/o1/connectors"] = { status: 200, body: [gmail] };
     api.routes["POST /api/v1/orgs/o1/connections/oauth/start"] = { status: 200, body: { authorizeUrl: "https://accounts.example/authorize" } };
     await signInOnApi();
@@ -172,6 +177,8 @@ describe("Step 4: connect Gmail", () => {
     expect(onLeave).toHaveBeenCalled();
     await user.click(screen.getByRole("button", { name: "Continue to Gmail" }));
     await vi.waitFor(() => expect(leave).toHaveBeenCalledWith("https://accounts.example/authorize"));
+    // Setup is marked done, so Google's sign-in comes back to the app, not to the setup's first step.
+    expect(readOAuthReturn()).toBe("/");
   });
 
   it("says when Gmail isn't set up on this server, links the guide, and can be skipped", async () => {

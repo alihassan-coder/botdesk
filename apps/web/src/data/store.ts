@@ -25,6 +25,7 @@ import { parseMentions } from "@/lib/mentions";
 import { HOP_LIMIT, chainStoppedText, routeMessage, type BotReply, type ChatBots } from "@/lib/mention-routing";
 import { previewFromArgs } from "@/lib/args-form";
 import { strictestLevel } from "@/lib/security-ceiling";
+import { rememberOAuthReturn } from "@/lib/connections";
 import { browser } from "@/lib/navigate";
 import { approvalApi, authApi, botApi, connectionApi, inviteApi, mcpApi, memoryApi, modelApi, orgApi, pluginApi, routineApi, runApi, templateApi, threadApi, usageApi } from "./api/botdesk";
 import { ApiError, apiBaseUrl } from "./api/client";
@@ -1102,6 +1103,30 @@ const chatActions = {
   },
 
   /**
+   * Answer a run that needs attention: the call it stopped on was done, or wasn't. The bot then
+   * carries on (it shows as working at once; the stream follows) and never repeats the call by
+   * itself. In the mock it's over at once.
+   */
+  async resolveRun(runId: string, outcome: "done" | "not_done"): Promise<ActionResult> {
+    if (isDemoMode()) {
+      setMockRun(null, runId);
+      return { ok: true };
+    }
+    try {
+      await runApi.resolve(state.org.id, runId, outcome);
+      set((st) =>
+        withRunStatus({
+          ...st,
+          runs: st.runs.map((r) => (r.id === runId && r.status === "needs_attention" ? { ...r, status: "running", error: undefined } : r)),
+        }),
+      );
+      return { ok: true };
+    } catch (error) {
+      return failure(error);
+    }
+  },
+
+  /**
    * Starts a group chat with you plus the bots and people you pick, and returns its id so
    * the screen can open it. A group needs at least one bot: they're who does the work.
    */
@@ -2011,12 +2036,14 @@ export const actions = {
 
   /**
    * Sign in with the provider (OAuth): the API gives the provider's page, and the whole tab goes
-   * there. It comes back to /apps/callback. Reconnecting is the same, with the same owner.
+   * there. It comes back to /apps/callback, which then goes back to `returnTo`: the page you
+   * pressed Connect on, unless said otherwise. Reconnecting is the same, with the same owner.
    */
-  async startOAuth(connectorId: string, owner: ConnectionOwner, access?: string): Promise<ActionResult> {
+  async startOAuth(connectorId: string, owner: ConnectionOwner, access?: string, returnTo = browser.here()): Promise<ActionResult> {
     if (isDemoMode()) return { ok: false, error: "Signing in to apps works once botdesk is connected to its API." };
     try {
       const { authorizeUrl } = await connectionApi.startOAuth(state.org.id, { connectorId, ...ownerFields(owner), ...(access ? { access } : {}) });
+      rememberOAuthReturn(returnTo);
       browser.leaveFor(authorizeUrl);
       return { ok: true };
     } catch (error) {

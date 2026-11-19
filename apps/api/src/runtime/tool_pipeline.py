@@ -5,7 +5,9 @@
 `prepare` is pure: it decides, it doesn't touch the database. `record` saves the decision.
 `execute` runs the tool at most once, through the `tool_executions` record: a call already
 `succeeded` returns its saved result; a call left `started` (we can't tell if it finished)
-stops the run for a person unless the tool is idempotent.
+stops the run for a person unless the tool is idempotent. The person's answer (It was done /
+It wasn't done, `run_service.resolve_attention`) finishes the row, and the resumed run comes
+back here to read it: never to run the call again.
 
 A call that fails is `failed`, and the model reads why and may try again, unless it may still
 have changed something outside BotDesk: a tool that isn't idempotent, with a risk above

@@ -8,7 +8,7 @@ import uuid
 from sqlalchemy import func, select
 
 from src.core.database import utcnow
-from src.models import Message, ThreadParticipant
+from src.models import Message, Thread, ThreadParticipant
 from tests.conftest import Postgres, sign_up
 
 
@@ -50,7 +50,8 @@ async def test_unread_counts_marks_read_and_removing_the_lead(pg: Postgres) -> N
 async def test_changes_to_a_group_at_the_same_moment_wait_for_each_other(pg: Postgres) -> None:
     """The group's row is locked while it changes, so two requests at once can't both pass a check
     the other is about to break: adding the same bot twice puts it in once (no duplicate-key
-    error), and two removals at once never leave a group with nobody in it."""
+    error), and two people going at once never leave a group with nobody in it: the last one out
+    deletes it."""
     me = await sign_up(pg.client, name="Sara", email="sara@acme.dev")
     org = f"/api/v1/orgs/{me['organizations'][0]['id']}"
     invite = await pg.client.post(f"{org}/invitations", json={"email": "lina@acme.dev", "role": "admin"})
@@ -83,16 +84,17 @@ async def test_changes_to_a_group_at_the_same_moment_wait_for_each_other(pg: Pos
         pg.client.delete(f"{path}/participants/user/{lina}"),
         pg.client.delete(f"{path}/participants/user/{me['user']['id']}"),
     )
-    # One wins; the other finds the last person (400), or, had Sara's own removal gone first, a
-    # group she's no longer in (404).
-    assert sorted(r.status_code for r in removed) in ([200, 400], [200, 404])
+    # One goes first. Lina out first: Sara then leaves it last, which deletes it. Sara out first:
+    # the other finds a group she's no longer in (404), and Lina stays.
+    codes = sorted(r.status_code for r in removed)
     async with pg.runs.sessionmaker() as db:
         people = await db.scalar(
             select(func.count())
             .select_from(ThreadParticipant)
             .where(ThreadParticipant.thread_id == uuid.UUID(group["id"]), ThreadParticipant.participant_type == "user")
         )
-    assert people == 1
+        gone = await db.get(Thread, uuid.UUID(group["id"])) is None
+    assert (codes, people, gone) in (([200, 200], 0, True), ([200, 404], 1, False))
 
 
 async def test_deleting_a_bot_while_its_group_changes_never_deadlocks(pg: Postgres) -> None:

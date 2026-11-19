@@ -1,5 +1,6 @@
 """Managing a group: rename it, add and remove people and bots. Its creator, and the
-organization's owners and admins who are in it, may (the same rule as changing the lead, ADR 0009)."""
+organization's owners and admins who are in it, may (the same rule as changing the lead, ADR 0009).
+Anyone in a group may leave it."""
 
 import asyncio
 import uuid
@@ -161,11 +162,39 @@ async def test_removing_the_lead_bot_clears_the_lead(acme: Org) -> None:
     assert (await acme.remove(group, "bot", acme.bots["Writer"])).status_code == 404
 
 
-async def test_the_last_person_cant_be_removed(acme: Org) -> None:
+async def test_anyone_in_a_group_may_leave_it(acme: Org) -> None:
+    """Leaving is taking yourself out: any person in the group may, not only those who manage it.
+    The others hear it live, and the one who left can't open it any more."""
+    group = await acme.group(bots=["Chief"], people=["omar@acme.dev", "nadia@acme.dev"])
+    omar, nadia = acme.people["omar@acme.dev"], acme.people["nadia@acme.dev"]
+
+    await acme.sign_in("omar@acme.dev")  # a member who didn't make it
+    assert (await acme.remove(group, "user", nadia)).status_code == 403  # leaving is only for yourself
+    response = await acme.remove(group, "user", omar)
+
+    assert response.status_code == 200, response.text
+    assert _ids(response.json(), "user") == {acme.people["sara@acme.dev"], nadia}
+    assert (await acme.client.get(acme.path(group))).status_code == 404
+    assert all(t["id"] != group["id"] for t in (await acme.client.get(f"{acme.org}/threads")).json())
+    assert (await acme.remove(group, "user", omar)).status_code == 404  # already gone
+
+    await acme.sign_in("nadia@acme.dev")
+    events = (await acme.client.get(acme.path(group, "/events"), params={"after": 0, "follow": "false"})).text
+    assert "event: thread_updated" in events and omar not in events.split("thread_updated")[-1]
+
+
+async def test_the_last_person_to_leave_a_group_deletes_it(acme: Org) -> None:
+    """Nobody could reach it again, so it goes, as when its last person leaves the organization
+    (its bots' unfinished runs there are stopped first)."""
     group = await acme.group(bots=["Chief"], people=[])
+    await acme.client.post(acme.path(group, "/messages"), json={"text": "Draft it"})  # a queued run for Chief
+
     response = await acme.remove(group, "user", acme.people["sara@acme.dev"])
-    assert response.status_code == 400
-    assert response.json()["detail"] == "A group needs at least one person."
+
+    assert response.status_code == 200, response.text
+    assert _ids(response.json(), "user") == set()
+    async with acme.app.state.sessionmaker() as db:
+        assert await db.get(Thread, uuid.UUID(group["id"])) is None
 
 
 async def test_a_dm_cant_be_renamed_or_changed(acme: Org) -> None:
@@ -174,8 +203,9 @@ async def test_a_dm_cant_be_renamed_or_changed(acme: Org) -> None:
         await acme.client.patch(acme.path(dm), json={"title": "Renamed"}),
         await acme.add(dm, bots=("Scout",)),
         await acme.remove(dm, "bot", acme.bots["Chief"]),
+        await acme.remove(dm, "user", acme.people["sara@acme.dev"]),  # nor left
     ]
-    assert [r.status_code for r in responses] == [400, 400, 400]
+    assert [r.status_code for r in responses] == [400, 400, 400, 400]
     assert responses[0].json()["detail"] == "Only a group can be changed."
 
 

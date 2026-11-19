@@ -96,17 +96,25 @@ async def remove_participant(
     """A bot taken out of a group stops what it was doing there, so it doesn't post into a group
     it's no longer in: its unfinished runs in the group are listed once the change is saved (so a
     run queued while it was saving is in the list) and stopped, each in its own transaction like
-    the Stop button. One queued even later never starts (`run_service.left_its_group`)."""
+    the Stop button. One queued even later never starts (`run_service.left_its_group`).
+    You leaving a group last deletes it, every run in it stopped first, as `remove_member` does."""
     thread = await thread_service.get_thread(db, org_id=access.org.id, user_id=access.user.id, thread_id=thread_id)
-    await thread_service.remove_participant(
+    emptied = await thread_service.remove_participant(
         db, thread, user_id=access.user.id, role=access.role, kind=kind, participant_id=participant_id
     )
     out = await _saved_change(db, access, runs, thread)
-    if kind == "bot":
+    if emptied:
+        going = await run_service.unfinished_in_threads(db, [thread.id])
+    elif kind == "bot":
         going = await run_service.unfinished_in_thread(db, thread.id, bot_id=participant_id)
-        await db.commit()  # end the read before stopping
-        for run_id in going:
-            await runs.stop(run_id)
+    else:
+        return out
+    await db.commit()  # end the read before stopping
+    for run_id in going:
+        await runs.stop(run_id)
+    if emptied:
+        await thread_service.delete_groups(db, [thread.id])
+        await db.commit()
     return out
 
 

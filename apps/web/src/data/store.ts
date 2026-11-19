@@ -1000,11 +1000,16 @@ const chatActions = {
     return saveGroup(() => threadApi.addParticipants(state.org.id, threadId, add));
   },
 
-  /** Take a person or a bot out of a group. Removing the lead bot leaves it without a lead. */
+  /**
+   * Take a person or a bot out of a group. Removing the lead bot leaves it without a lead.
+   * Taking yourself out is leaving (`leaveGroup`): the group leaves your list.
+   */
   async removeFromGroup(threadId: string, who: Participant): Promise<ActionResult> {
     if (isDemoMode()) {
-      const people = state.threads.find((t) => t.id === threadId)?.participants.filter((p) => p.type === "user") ?? [];
-      if (who.type === "user" && people.length === 1) return { ok: false, error: "A group needs at least one person." };
+      if (who.type === "user" && who.id === state.currentUserId) {
+        set((st) => dropThreads(st, new Set([threadId])));
+        return { ok: true };
+      }
       return putGroup(threadId, (t) => ({
         ...t,
         participants: t.participants.filter((p) => !(p.type === who.type && p.id === who.id)),
@@ -1012,6 +1017,11 @@ const chatActions = {
       }));
     }
     return saveGroup(() => threadApi.removeParticipant(state.org.id, threadId, who.type, who.id));
+  },
+
+  /** Leave a group (anyone in it may). It leaves your list; one you were the last person in is deleted. */
+  leaveGroup(threadId: string): Promise<ActionResult> {
+    return actions.removeFromGroup(threadId, { type: "user", id: state.currentUserId });
   },
   /**
    * Call when a chat opens; call what it returns when it closes. On the API this loads the

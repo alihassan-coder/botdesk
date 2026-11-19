@@ -1,8 +1,11 @@
 import { screen, within } from "@testing-library/react";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { actions, getStoreSnapshot } from "@/data/store";
 import { renderUI } from "@/test/render";
 import { GroupMembers } from "./group-members";
+
+const push = vi.fn();
+vi.mock("next/navigation", () => ({ useRouter: () => ({ push, back: vi.fn(), replace: vi.fn() }) }));
 
 const launch = () => getStoreSnapshot().threads.find((t) => t.id === "t_launch")!;
 
@@ -45,25 +48,38 @@ describe("GroupMembers", () => {
     expect(launch().leadBotId).toBeUndefined();
   });
 
-  it("you have no Remove on yourself (leaving a group comes later)", () => {
+  it("you have no Remove on yourself: you leave instead", () => {
     renderUI(<GroupMembers thread={launch()} />);
     expect(screen.queryByRole("button", { name: "Remove Ali Hassan from the group" })).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Remove Sara Khan from the group" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Leave group" })).toBeInTheDocument();
   });
 
-  it("the last person in a group has no Remove", async () => {
-    await actions.removeFromGroup("t_launch", { type: "user", id: "u_sara" });
-    renderUI(<GroupMembers thread={launch()} />);
-    expect(screen.queryByRole("button", { name: "Remove Ali Hassan from the group" })).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Remove Chief from the group" })).toBeInTheDocument();
-  });
-
-  it("a member who didn't make the group sees who's in it, without the controls", async () => {
+  it("a member who didn't make the group sees who's in it, without the controls, and may leave it", async () => {
+    push.mockClear();
     await expect(actions.changeMemberRole("u_me", "member")).resolves.toEqual({ ok: true });
-    renderUI(<GroupMembers thread={{ ...launch(), createdBy: "u_sara" }} />);
+    const { user } = renderUI(<GroupMembers thread={{ ...launch(), createdBy: "u_sara" }} />);
     expect(screen.getByText("Sara Khan")).toBeInTheDocument();
     for (const name of ["Rename group", "Add people or bots", "Remove Chief from the group"]) {
       expect(screen.queryByRole("button", { name })).not.toBeInTheDocument();
     }
+
+    await user.click(screen.getByRole("button", { name: "Leave group" }));
+    const confirm = screen.getByRole("alertdialog", { name: "Leave Launch crew?" });
+    await user.click(within(confirm).getByRole("button", { name: "Stay" }));
+    expect(launch()).toBeDefined();
+
+    await user.click(screen.getByRole("button", { name: "Leave group" }));
+    await user.click(within(screen.getByRole("alertdialog")).getByRole("button", { name: "Leave" }));
+    expect(getStoreSnapshot().threads.some((t) => t.id === "t_launch")).toBe(false);
+    expect(push).toHaveBeenCalledWith("/");
+  });
+
+  it("leaving as the last person says the group is deleted", async () => {
+    await actions.removeFromGroup("t_launch", { type: "user", id: "u_sara" });
+    const { user } = renderUI(<GroupMembers thread={launch()} />);
+    expect(screen.queryByRole("button", { name: "Remove Ali Hassan from the group" })).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Leave group" }));
+    expect(screen.getByRole("alertdialog")).toHaveTextContent("You're the last person in it, so it's deleted");
   });
 });

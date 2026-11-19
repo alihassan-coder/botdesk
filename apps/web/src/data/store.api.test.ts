@@ -696,8 +696,9 @@ describe("chats on the API", () => {
     });
 
     it("a refusal is passed on", async () => {
-      routes["DELETE /api/v1/orgs/o1/threads/g1/participants/user/u1"] = { status: 400, body: { detail: "A group needs at least one person." } };
-      await expect(actions.removeFromGroup("g1", { type: "user", id: "u1" })).resolves.toEqual({ ok: false, error: "A group needs at least one person." });
+      const refused = "Only the group's creator, owners and admins can change it.";
+      routes["DELETE /api/v1/orgs/o1/threads/g1/participants/user/u2"] = { status: 403, body: { detail: refused } };
+      await expect(actions.removeFromGroup("g1", { type: "user", id: "u2" })).resolves.toEqual({ ok: false, error: refused });
     });
 
     it("a group you're removed from leaves your chat list as soon as its stream says so", async () => {
@@ -740,9 +741,9 @@ describe("chats on the API", () => {
       expect(state().threads.find((t) => t.id === "g1")?.participants).toEqual(back.participants);
     });
 
-    it("taking yourself out of a group drops it from your list", async () => {
+    it("leaving a group takes you out on the API and drops it from your list", async () => {
       routes["DELETE /api/v1/orgs/o1/threads/g1/participants/user/u1"] = { status: 200, body: group({ participants: [{ type: "user", id: "u2" }] }) };
-      await expect(actions.removeFromGroup("g1", { type: "user", id: "u1" })).resolves.toEqual({ ok: true });
+      await expect(actions.leaveGroup("g1")).resolves.toEqual({ ok: true });
       expect(state().threads.some((t) => t.id === "g1")).toBe(false);
     });
 

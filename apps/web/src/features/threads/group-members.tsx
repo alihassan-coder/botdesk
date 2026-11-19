@@ -1,29 +1,26 @@
-import { useTransition } from "react";
-import { X } from "lucide-react";
-import { toast } from "sonner";
-import { Button } from "@/components/ui/button";
 import { pluralize } from "@/lib/format";
-import { actions, useBot, useCanChangeLead, useCurrentUser, useUser } from "@/data/store";
+import { useBot, useCanChangeLead, useCurrentUser, useUser } from "@/data/store";
 import type { Participant, Thread } from "@/data/types";
 import { BotAvatar, MemberAvatar } from "@/features/bots/bot-avatar";
 import { BOT_STATUS } from "@/features/bots/bot-status";
 import { AddToGroupDialog } from "./add-to-group-dialog";
 import { GroupLead } from "./group-lead";
+import { LeaveGroupButton } from "./leave-group-button";
+import { RemoveMemberButton } from "./remove-member-button";
 import { RenameGroupDialog } from "./rename-group-dialog";
 
 /**
  * The details pane for a group chat: its name, lead bot, then everyone in it, people first, then
  * bots. Its creator, owners and admins (the same rule as the lead) rename it and add or remove
- * people and bots.
+ * people and bots. Anyone in it may leave it.
  */
 export function GroupMembers({ thread }: { thread: Thread }) {
   const canManage = useCanChangeLead(thread);
   const me = useCurrentUser().id;
   const people = thread.participants.filter((p) => p.type === "user");
   const bots = thread.participants.filter((p) => p.type === "bot");
-  // A group keeps at least one person, so the last one has no Remove. Nor do you: taking yourself
-  // out would be leaving the group, which comes later.
-  const removable = (p: Participant) => canManage && (p.type === "bot" || (people.length > 1 && p.id !== me));
+  // You don't remove yourself: you leave (the button at the foot).
+  const removable = (p: Participant) => canManage && (p.type === "bot" || p.id !== me);
 
   return (
     <div className="flex flex-col gap-5 overflow-y-auto p-4">
@@ -40,6 +37,7 @@ export function GroupMembers({ thread }: { thread: Thread }) {
       <GroupLead thread={thread} />
       <MemberSection title="People" thread={thread} members={people} removable={removable} />
       <MemberSection title="Bots" thread={thread} members={bots} removable={removable} />
+      <LeaveGroupButton thread={thread} />
     </div>
   );
 }
@@ -63,38 +61,11 @@ function MemberSection({
         {members.map((m) => (
           <li key={m.id} className="group/member flex items-center gap-2">
             <span className="min-w-0 flex-1">{m.type === "bot" ? <BotMember id={m.id} /> : <PersonMember id={m.id} />}</span>
-            {removable(m) && <RemoveButton thread={thread} member={m} />}
+            {removable(m) && <RemoveMemberButton thread={thread} member={m} />}
           </li>
         ))}
       </ul>
     </section>
-  );
-}
-
-/** Takes someone out of the group at once (adding them back is just as quick); a refusal shows as a toast. */
-function RemoveButton({ thread, member }: { thread: Thread; member: Participant }) {
-  const bot = useBot(member.type === "bot" ? member.id : undefined);
-  const user = useUser(member.type === "user" ? member.id : undefined);
-  const name = bot?.name ?? user?.name ?? "them";
-  const [removing, startRemoving] = useTransition();
-
-  return (
-    <Button
-      variant="ghost"
-      size="icon-sm"
-      aria-label={`Remove ${name} from the group`}
-      title={`Remove ${name}`}
-      disabled={removing}
-      className="tap-target text-muted-foreground opacity-100 hover:text-foreground focus-visible:opacity-100 [@media(hover:hover)]:opacity-0 [@media(hover:hover)]:group-hover/member:opacity-100"
-      onClick={() =>
-        startRemoving(async () => {
-          const result = await actions.removeFromGroup(thread.id, member);
-          if (!result.ok) toast.error(result.error);
-        })
-      }
-    >
-      <X />
-    </Button>
   );
 }
 

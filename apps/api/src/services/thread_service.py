@@ -267,15 +267,17 @@ async def set_lead(
     return thread
 
 
-async def _check_can_manage(db: AsyncSession, thread: Thread, *, user_id: uuid.UUID, role: str) -> None:
+async def _check_can_manage(
+    db: AsyncSession, thread: Thread, *, user_id: uuid.UUID, role: str, leaving: bool = False
+) -> None:
     """A group (never a DM) whose creator, or an owner or admin of the organization, is asking
-    (ADR 0009's rule for the lead). Then the group's row is locked until the caller commits, so
-    changes to one group happen one at a time: two at once can't both pass a check (who's in it,
-    the last person) that the other is about to break. Under the lock, the asker must still be in
-    the group (someone may have removed them a moment ago)."""
+    (ADR 0009's rule for the lead); anyone in it may leave it. Then the group's row is locked
+    until the caller commits, so changes to one group happen one at a time: two at once can't
+    both pass a check (who's in it, the last person) that the other is about to break. Under the
+    lock, the asker must still be in the group (someone may have removed them a moment ago)."""
     if thread.kind != "group":
         raise BadRequest("Only a group can be changed.")
-    if thread.created_by != user_id and role not in ("owner", "admin"):
+    if not leaving and thread.created_by != user_id and role not in ("owner", "admin"):
         raise Forbidden("Only the group's creator, owners and admins can change it.")
     await _lock(db, thread, user_id=user_id)
 
@@ -340,19 +342,15 @@ async def remove_participant(
     role: str,
     kind: ParticipantType,
     participant_id: uuid.UUID,
-) -> Thread:
-    """Take a person or a bot out of the group. A person removed can't see it any more; removing
-    the lead bot leaves the group without a lead. The last person stays. The caller commits (and
-    stops the bot's unfinished runs in the group, `run_service.unfinished_in_thread`)."""
-    await _check_can_manage(db, thread, user_id=user_id, role=role)
+) -> bool:
+    """Take a person or a bot out of the group, or leave it (take yourself out: anyone in it may).
+    A person removed can't see it any more; removing the lead bot leaves the group without a lead.
+    Returns whether nobody is left in it (you left it last): then the caller deletes it once its
+    runs are stopped (`delete_groups`), as when its last person leaves the organization. The caller
+    commits (and stops a removed bot's unfinished runs in the group, `run_service.unfinished_in_thread`)."""
+    leaving = kind == "user" and participant_id == user_id
+    await _check_can_manage(db, thread, user_id=user_id, role=role, leaving=leaving)
     in_group = ThreadParticipant.thread_id == thread.id
-    people = list(
-        await db.scalars(
-            select(ThreadParticipant.participant_id).where(in_group, ThreadParticipant.participant_type == "user")
-        )
-    )
-    if kind == "user" and participant_id in people and len(people) == 1:
-        raise BadRequest("A group needs at least one person.")
     removed = await db.execute(
         delete(ThreadParticipant).where(
             in_group,
@@ -365,7 +363,10 @@ async def remove_participant(
     if kind == "bot" and thread.lead_bot_id == participant_id:
         thread.lead_bot_id = None
     await db.flush()
-    return thread
+    if not leaving:
+        return False  # you're still in it
+    person = select(ThreadParticipant.participant_id).where(in_group, ThreadParticipant.participant_type == "user")
+    return await db.scalar(person.limit(1)) is None
 
 
 async def _is_in(db: AsyncSession, thread_id: uuid.UUID, user_id: uuid.UUID) -> bool:

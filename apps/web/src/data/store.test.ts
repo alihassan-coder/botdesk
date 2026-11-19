@@ -266,6 +266,13 @@ describe("createGroup", () => {
   });
 });
 
+describe("leaveGroup (mock)", () => {
+  it("the group leaves your chat list", async () => {
+    await expect(actions.leaveGroup("t_launch")).resolves.toEqual({ ok: true });
+    expect(state().threads.some((t) => t.id === "t_launch")).toBe(false);
+  });
+});
+
 describe("smaller actions", () => {
   it("answerQuestion stores the chosen option", () => {
     actions.answerQuestion("m13", "No");

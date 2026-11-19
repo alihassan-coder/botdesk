@@ -75,8 +75,9 @@ async def add_participants(
 async def remove_participant(
     thread_id: uuid.UUID, kind: ParticipantType, participant_id: uuid.UUID, access: OrgAccess, db: Db, runs: Runs
 ) -> ThreadOut:
-    """Remove a person (`user`) or a bot from a group (its creator, owners and admins). A person
-    removed can't open it any more; removing the lead bot clears the lead. The last person stays."""
+    """Remove a person (`user`) or a bot from a group (its creator, owners and admins), or leave it
+    (your own id: anyone in it). A person removed can't open it any more; removing the lead bot
+    clears the lead. The last person leaving deletes the group (the answer shows it with no people)."""
     return await thread_controller.remove_participant(db, access, runs, thread_id, kind, participant_id)
 
 

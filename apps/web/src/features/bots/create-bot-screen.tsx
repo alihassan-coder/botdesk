@@ -7,8 +7,8 @@ import { Button } from "@/components/ui/button";
 import { Field, FieldDescription, FieldError, FieldGroup, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
-import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
-import { actions, isDemoMode, useCurrentUser, useOrg, useTemplates, type NewBotInput } from "@/data/store";
+import { Badge } from "@/components/ui/badge";
+import { actions, useCurrentUser, useOrg, useTemplates, type NewBotInput } from "@/data/store";
 import type { SecurityLevel, Template } from "@/data/types";
 import { strictestLevel } from "@/lib/security-level";
 import { PageHeader } from "@/features/shell/page-header";
@@ -110,16 +110,14 @@ export function CreateBotScreen() {
                 <FieldLabel htmlFor="bot-model">Model</FieldLabel>
                 <ModelPicker id="bot-model" value={bot.modelId} onChange={(v) => update("modelId", v)} />
               </Field>
-              {/* Computers aren't on the API yet, so only the demo offers one. */}
-              {isDemoMode() && <Field>
-                <FieldLabel>Computer</FieldLabel>
-                <ToggleGroup type="single" variant="outline" value={bot.computerMode} onValueChange={(v) => v && update("computerMode", v as NewBotInput["computerMode"])} className="w-full">
-                  <ToggleGroupItem value="own" className="flex-1">Its own</ToggleGroupItem>
-                  <ToggleGroupItem value="shared" className="flex-1">Shared</ToggleGroupItem>
-                  <ToggleGroupItem value="none" className="flex-1">None</ToggleGroupItem>
-                </ToggleGroup>
-                <FieldDescription>A computer lets it use websites and apps that have no integration.</FieldDescription>
-              </Field>}
+              {/* Bot computers aren't built yet: say so instead of offering a choice that does nothing. */}
+              <Field>
+                <div className="flex items-center gap-2">
+                  <FieldLabel>Computer</FieldLabel>
+                  <Badge variant="secondary">Coming soon</Badge>
+                </div>
+                <FieldDescription>A computer will let it use websites and apps that have no integration.</FieldDescription>
+              </Field>
             </Section>
 
             <Section title="What it may do">

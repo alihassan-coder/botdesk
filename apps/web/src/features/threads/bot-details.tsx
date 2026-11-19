@@ -1,6 +1,7 @@
 import { useEffect } from "react";
 import Link from "next/link";
 import { Monitor } from "lucide-react";
+import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
 import { Switch } from "@/components/ui/switch";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -65,7 +66,7 @@ function Profile({ bot }: { bot: Bot }) {
         <dt className="text-muted-foreground">Security level</dt>
         <dd><BotLevel level={bot.securityLevel} /></dd>
         <dt className="text-muted-foreground">Computer</dt>
-        <dd>{bot.computerMode === "own" ? "Its own" : bot.computerMode === "shared" ? "Shared" : "None"}</dd>
+        <dd><Badge variant="secondary">Coming soon</Badge></dd>
       </dl>
       <BudgetThisMonth bot={bot} />
     </div>
@@ -118,15 +119,20 @@ function Routines({ botId }: { botId: string }) {
   );
 }
 
+/** Bot computers aren't built yet (roadmap: "Bot computers"), so the tab says so plainly. */
 function Computer({ bot }: { bot: Bot }) {
-  if (bot.computerMode === "none") return <Empty text={`${bot.name} works through apps only, without a computer of its own.`} />;
   return (
     <div className="flex flex-col gap-2">
-      <div className="grid aspect-[16/10] place-items-center rounded-xl border bg-muted text-muted-foreground">
-        <Monitor className="size-8" />
+      <div className="grid aspect-[16/10] place-items-center rounded-xl border border-dashed bg-muted/50 text-muted-foreground">
+        <Monitor className="size-8" aria-hidden />
       </div>
-      <p className="text-sm font-medium">{bot.name}&apos;s screen</p>
-      <p className="text-xs text-muted-foreground">Live view and take over arrive with the Computer view.</p>
+      <div className="flex items-center gap-2">
+        <p className="text-sm font-medium">{bot.name}&apos;s computer</p>
+        <Badge variant="secondary">Coming soon</Badge>
+      </div>
+      <p className="text-xs text-muted-foreground">
+        Each bot will get its own computer with a browser, for websites and apps that have no integration. You&apos;ll watch it live and take over to sign in. Until then, bots work through connected apps.
+      </p>
     </div>
   );
 }

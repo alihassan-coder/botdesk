@@ -11,7 +11,7 @@ from langchain_core.messages import HumanMessage
 
 from src.core.url_guard import GuardedTransport, UnsafeUrl, check_base_url
 from src.model_providers import adapter_for
-from src.model_providers.anthropic import SafeChatAnthropic
+from src.model_providers.anthropic_chat import SafeChatAnthropic
 
 PUBLIC = "93.184.216.34"
 METADATA = "http://169.254.169.254/latest/meta-data/"

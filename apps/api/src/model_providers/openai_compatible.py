@@ -13,7 +13,6 @@ from typing import Any
 
 import httpx
 from langchain_core.language_models import BaseChatModel
-from langchain_openai import ChatOpenAI
 from pydantic import SecretStr
 
 from src.model_providers.base import (
@@ -126,6 +125,8 @@ class OpenAICompatibleAdapter:
     ) -> BaseChatModel:
         """Our own HTTP clients: they never follow redirects, time out, and send a custom
         server's requests through `transport` (see `chat_http_client`)."""
+        from langchain_openai import ChatOpenAI  # slow SDK: load on first use
+
         return ChatOpenAI(
             model_name=model,
             openai_api_key=SecretStr(api_key or NO_KEY),

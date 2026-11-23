@@ -1,6 +1,6 @@
 # 0017: Bot browsers and file storage, bring your own provider
 
-- Status: proposed (owner liked the direction on 2026-11-23; the decisions at the end need the owner's OK before any code)
+- Status: accepted (owner, 2026-11-23: the recommended answers below, plus the folder layout in §3)
 - Date: 2026-11-23
 - Based on: [ADR 0004](0004-agent-runtime-and-safety.md) (policy, taint), [ADR 0008](0008-free-and-open-source.md) (free, bring your own keys), [ADR 0010](0010-connections-and-credentials.md) (vault, bot-owned accounts), [high-level.md §6](../architecture/high-level.md#6-bot-computers-sandboxes) (full computers)
 - Changes: the build order for "Bot computers" in [ROADMAP](../ROADMAP.md): a browser and files come first, the full computer later
@@ -60,12 +60,13 @@ Google Drive, Dropbox and OneDrive are **members' apps**, not where bots keep th
 - `FileStorage`: `put`, `get`, `delete`, `list`, `signed_url(expires)`, `test()`.
   - Local, S3-compatible (and later Azure) through one object-store library. Candidates: `obstore` (one async API for local, S3, GCS and Azure) or `aioboto3`. Check licence and API with Context7 before coding.
   - Cloudinary through its REST upload and admin API over `httpx` (no SDK needed).
-- A `files` table in Postgres is the list of record: org, bot, name, size, type, sha256, storage key, provider, the run that made it, created at. The UI lists files from it, never by listing a bucket. Keys look like `orgs/{org}/bots/{bot}/{file id}-{name}`, plus `orgs/{org}/shared/` for files every bot in the organization may read.
+- A `files` table in Postgres is the list of record: org, bot (none for shared), path, size, type, sha256, storage key, provider, the run that made it, created at. The UI lists files from it, never by listing a bucket.
+- **Folders (owner, 2026-11-23):** everything goes under a `botdesk/` folder, with one folder per bot named after its @handle and `botdesk/shared/` for files every bot in the organization may read: `botdesk/inbox-manager/reports/march.csv`. In the organization's own bucket that is `{prefix}/botdesk/…`; Local keeps each organization apart, `{FILES_DIR}/{org id}/botdesk/…`. Connecting storage creates `botdesk/`, a short README, and a folder for each bot. A file keeps its key if the bot's handle changes later; new files go to the new folder.
 - Changing provider doesn't move old files. They stay readable while the old provider's settings are kept; a "copy files over" job can come later.
 
 ### 4. What a bot can do, through the normal policy
 
-Two built-in plugins. A bot gets them only through a binding (ADR 0010), switched on by its computer setting.
+Two core plugins (always loaded, like Team), `files` and `browser`. A bot gets them through a binding (ADR 0010): new bots have them on, existing bots get a binding when each lands, and the bot's Tools tab can switch them off.
 
 | Tool | Risk class |
 |---|---|
@@ -119,7 +120,7 @@ Each step is usable on its own and ends with tests and a browser check.
 - Reading the risk from the clicked element is a guess. A plain button can still send or buy something, which is why buttons and posting forms are `write-external` and ask.
 - Bring-your-own means each organization signs up somewhere for anything beyond Local. In exchange BotDesk never pays for or holds anyone's browsing or files.
 
-## Owner decisions
+## Owner decisions (answered 2026-11-23: all as recommended)
 
 1. **With nothing set up, use Local for both** (recommended), or ask the admin to choose first?
 2. **One provider per organization** (recommended), or a choice per bot now?

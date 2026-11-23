@@ -67,6 +67,9 @@ services:
         condition: service_completed_successfully
     ports:
       - "${BIND_ADDRESS:-127.0.0.1}:${API_PORT:-8000}:8000"
+    # Bots' files when an organization keeps them on this server (Local, ADR 0017).
+    volumes:
+      - botdesk-files:/var/lib/botdesk/files
     # Health check: built into the image (GET /api/v1/health, which also checks the database).
 
   # Runs bot runs, approval expiry and other jobs in its own process (ADR 0013). Only with
@@ -76,6 +79,8 @@ services:
     <<: [*api-image, *api-env]
     command: ["python", "-m", "src.worker"]
     restart: unless-stopped
+    volumes:
+      - botdesk-files:/var/lib/botdesk/files
     profiles: ["worker"]
     # SIGTERM stops it cleanly: running jobs get 5 s, then go back in the queue.
     stop_grace_period: 15s
@@ -102,3 +107,4 @@ services:
 
 volumes:
   postgres-data:
+  botdesk-files:

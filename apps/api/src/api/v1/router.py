@@ -8,6 +8,7 @@ from src.api.v1.routes import (
     bots,
     connections,
     connectors,
+    files,
     health,
     invitations,
     mcp_servers,
@@ -36,6 +37,7 @@ api_router.include_router(providers.router)
 api_router.include_router(plugins.router)
 api_router.include_router(connections.router)
 api_router.include_router(connectors.router)
+api_router.include_router(files.router)
 api_router.include_router(oauth.router)
 api_router.include_router(routines.router)
 api_router.include_router(memories.router)

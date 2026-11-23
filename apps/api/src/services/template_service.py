@@ -16,7 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src.core.errors import NotFound
 from src.models import Bot, Organization
 from src.models.bot import SecurityLevel
-from src.plugins import team
+from src.plugins.core import CORE_PLUGIN_IDS
 from src.plugins.registry import ToolRegistry
 from src.runtime.policy import strictest_level
 from src.schemas.bot import BotIn
@@ -31,7 +31,7 @@ HIRED_BUDGET_USD = 20
 
 def listed(registry: ToolRegistry) -> list[TemplateOut]:
     """Every template, with only the plugins this server loaded (core ones aren't apps)."""
-    loaded = {plugin.id for plugin in registry.plugins()} - team.CORE_PLUGIN_IDS
+    loaded = {plugin.id for plugin in registry.plugins()} - CORE_PLUGIN_IDS
     return [t.model_copy(update={"plugins": [p for p in t.plugins if p in loaded]}) for t in TEMPLATES]
 
 

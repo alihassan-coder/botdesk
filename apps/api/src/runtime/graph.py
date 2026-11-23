@@ -54,7 +54,7 @@ from src.models.bot import Bot, SecurityLevel
 from src.models.run import Run
 from src.models.task import Task
 from src.plugins.registry import ToolRegistry
-from src.plugins.team import HANDOFF_TOOL, HandoffArgs, is_core_tool
+from src.plugins.team import HANDOFF_TOOL, HandoffArgs, is_team_tool
 from src.runtime import tool_pipeline, toolset
 from src.runtime.chat_model import (
     ModelPrice,
@@ -524,7 +524,7 @@ async def prepare_call(state: RunState, runtime: Runtime[RunDeps]) -> RunState:
         )
         execution = recorded.execution
         # Core tools (`team.handoff`) send no tool events: the handoff card is what people see.
-        if recorded.created and execution.decision in ("deny", "invalid") and not is_core_tool(execution.tool_name):
+        if recorded.created and execution.decision in ("deny", "invalid") and not is_team_tool(execution.tool_name):
             status = "denied" if execution.decision == "deny" else "failed"
             event = finished_event(execution.id, execution.tool_name, error=execution.error, status=status)
             deps.reporter.add(db, "tool_finished", event)
@@ -584,7 +584,7 @@ async def recheck_call(state: RunState, runtime: Runtime[RunDeps]) -> RunState:
             db, row.id, error=refusal, trace=f" · after approval: {policy.trace}"
         ):
             return {}
-        if not is_core_tool(row.tool_name):
+        if not is_team_tool(row.tool_name):
             event = finished_event(row.id, row.tool_name, error=refusal, status="denied")
             deps.reporter.add(db, "tool_finished", event)
         await db.commit()

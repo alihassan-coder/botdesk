@@ -5,8 +5,8 @@ off per organization comes with installations (build step 5)."""
 from botdesk_plugin_sdk import ApiKeyAuth, OAuth2Auth, PluginManifest
 
 from src.core.config import Settings
+from src.plugins.core import CORE_PLUGIN_IDS
 from src.plugins.registry import ToolRegistry
-from src.plugins.team import CORE_PLUGIN_IDS
 from src.schemas.plugin import ConnectorOut, PluginOut, PluginToolOut
 from src.services.oauth_flow import default_access, setup_state
 

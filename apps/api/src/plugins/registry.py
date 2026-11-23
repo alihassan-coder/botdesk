@@ -11,7 +11,9 @@ from typing import Any
 
 from botdesk_plugin_sdk import PluginManifest, ToolSpec, validate_manifest
 
-from src.plugins import team
+from src.plugins import files, team
+from src.plugins.core import CORE_PLUGIN_IDS
+from src.plugins.files import FileAccess
 from src.plugins.loader import installed_plugins, load_plugins
 
 MODEL_NAME_SEPARATOR = "__"
@@ -92,21 +94,24 @@ class ToolRegistry:
         return self._plugins.get(plugin_id)
 
 
-def build_registry(plugin_ids: list[str]) -> ToolRegistry:
+def build_registry(plugin_ids: list[str], *, files_access: FileAccess | None = None) -> ToolRegistry:
     """The registry for the allowlisted plugins, found through their entry points.
 
     A plugin that is installed but broken is skipped (and logged) so one bad plugin can't take
     the API down. An id in `PLUGINS` that no installed package provides is an operator typo, and
     stops startup with a clear message instead of quietly running without the plugin.
 
-    The core plugins (Team, ADR 0014) are always registered first. Their ids are reserved: naming
-    one in `PLUGINS`, or installing a package that claims one, stops startup.
+    The core plugins (Team, ADR 0014; Files, ADR 0017) are always registered first. Their ids are
+    reserved: naming one in `PLUGINS`, or installing a package that claims one, stops startup.
+    `files_access` is what the Files tools do; without it (a registry built only to read
+    manifests) they fail when called.
     """
     for plugin_id in [*plugin_ids, *installed_plugins()]:
-        if plugin_id in team.CORE_PLUGIN_IDS:
+        if plugin_id in CORE_PLUGIN_IDS:
             raise ValueError(f"The plugin id {plugin_id!r} is reserved.")
     registry = ToolRegistry()
     registry.register(team.manifest())
+    registry.register(files.manifest(files_access))
     for manifest in load_plugins(plugin_ids):
         registry.register(manifest)
     return registry

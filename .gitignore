@@ -22,3 +22,6 @@ __pycache__/
 .mypy_cache/
 .ruff_cache/
 *.db
+
+# Bots' Local files (ADR 0017)
+apps/api/data/

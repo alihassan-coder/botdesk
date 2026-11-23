@@ -11,6 +11,7 @@
 
 import asyncio
 import os
+import tempfile
 from collections.abc import AsyncIterator, Callable, Mapping
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
@@ -35,8 +36,13 @@ from src.services.email_service import EmailMessage
 # Custom servers in these tests live on "localhost" (answered by FakeProviders, never the
 # network), so the SSRF guard is opted out of here, as on a developer's machine. The guard
 # itself is tested in test_model_providers.py and test_url_guard.py.
+# Bots' Local files go to a temporary folder, never apps/api/data.
 TEST_SETTINGS = Settings(
-    environment="test", database_url="sqlite+aiosqlite://", allow_private_model_urls=True, _env_file=None
+    environment="test",
+    database_url="sqlite+aiosqlite://",
+    allow_private_model_urls=True,
+    files_dir=tempfile.mkdtemp(prefix="botdesk-files-"),
+    _env_file=None,
 )
 
 PASSWORD = "correct-horse-battery"
@@ -154,6 +160,7 @@ async def _empty_database(url: str) -> None:
 
 
 def pg_settings(**changes: Any) -> Settings:
+    changes = {"files_dir": TEST_SETTINGS.files_dir, **changes}
     return Settings(environment="test", database_url=TEST_DATABASE_URL, _env_file=None, **changes)
 
 

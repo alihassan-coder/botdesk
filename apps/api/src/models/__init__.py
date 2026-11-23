@@ -4,7 +4,9 @@
 from src.models.approval import Approval
 from src.models.bot import Bot
 from src.models.bot_tool import BotTool
+from src.models.computer_provider import ComputerProvider
 from src.models.connection import AuditEntry, Connection
+from src.models.file import File
 from src.models.invitation import Invitation
 from src.models.mcp_server import McpServer
 from src.models.oauth_flow import OAuthFlow
@@ -23,7 +25,9 @@ __all__ = [
     "AuditEntry",
     "Bot",
     "BotTool",
+    "ComputerProvider",
     "Connection",
+    "File",
     "Invitation",
     "McpServer",
     "Membership",

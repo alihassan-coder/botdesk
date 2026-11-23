@@ -1,0 +1,8 @@
+"""Core plugins: always loaded (never named in `PLUGINS`), their ids reserved, and not apps people
+connect (left out of `GET /plugins`). Team hands tasks to teammates (ADR 0014); Files keeps a
+bot's files (ADR 0017)."""
+
+from src.plugins.files import FILES_PLUGIN_ID
+from src.plugins.team import TEAM_PLUGIN_ID
+
+CORE_PLUGIN_IDS = frozenset({TEAM_PLUGIN_ID, FILES_PLUGIN_ID})

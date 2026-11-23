@@ -19,7 +19,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.core.database import utcnow
 from src.models import Approval, Run, ToolExecution
-from src.plugins.team import is_core_tool
+from src.plugins.team import is_team_tool
 
 # What a run reads when it carries on after a person checked a call that may have been done.
 CHECKED_DONE = "A person checked: it was done."
@@ -247,7 +247,7 @@ async def reply_cards(
     excluded = set(exclude_execution_ids)
     cards: list[dict[str, Any]] = []
     for execution, approval_id, approval_status in rows:
-        if str(execution.id) in excluded or is_core_tool(execution.tool_name):
+        if str(execution.id) in excluded or is_team_tool(execution.tool_name):
             continue
         if approval_id:
             cards.append({"type": "approval", "approvalId": str(approval_id)})

@@ -608,6 +608,24 @@ The stand-in model (no key for the bot's provider, from the org or the environme
 
 Set the bot to *Autonomous* and `send_email` runs without asking; to *Read only* and it is refused. Demo notes and "sent" emails live in memory only; their results are in `tool_executions`.
 
+## Files
+
+Bots keep files ([ADR 0017](../adr/0017-bot-browsers-and-file-storage.md)). Each bot has a folder named after its @handle, and the organization has a shared one: `botdesk/inbox-manager/reports/march.csv`, `botdesk/_shared/brand.md`.
+
+- **Storage.** No choice made = **Local**: `FILES_DIR/<organization id>/botdesk/…` on the API's server (`LOCAL_FILES_QUOTA_MB` per organization; `LOCAL_FILES=false` turns it off). Or the organization's own **S3-compatible** bucket (AWS S3, Cloudflare R2, Backblaze B2, Tigris, MinIO…), through `obstore` (`src/storage/`). The keys are sealed by the vault, people see the access key's last 4 characters, and every value obstore needs is passed explicitly so the server's own `AWS_*` variables never leak in. An endpoint must be https and public unless `ALLOW_PRIVATE_STORAGE_URLS`.
+- **The list of record** is the `files` table (`services/file_service.py`): path, size, type, sha256, where it is (`storage_key`, and which storage). Saving a path again replaces the file in place. A file saved before the organization switched storage stays listed with `available: false`.
+- **Rules for people and bots alike:** paths like `reports/march.csv` (no leading `/`, no `..`, none of `< > : " | ? * \`, at most 6 levels), `FILE_MAX_MB` each.
+- **Bots** use the core **Files** plugin (on for every bot; its Tools tab can switch it off): `files.list` and `files.read` (`read`; text comes 20,000 characters at a time, and reading taints the run), `files.save` (`write-internal`, text), `files.delete` (`destructive`).
+
+| Method & path | What it does |
+|---|---|
+| `GET /api/v1/orgs/{id}/storage` | `{provider: "local" \| "s3", s3: {endpoint, region, bucket, prefix, accessKeyHint} \| null, localAvailable, checkedAt}` |
+| `PUT /api/v1/orgs/{id}/storage` | Owners and admins. `{provider: "local"}` or `{provider: "s3", s3: {endpoint?, region, bucket, prefix?, accessKeyId, secretAccessKey?}}` (leave the secret out to keep the saved one). Checked with a live write, read and delete; then `botdesk/README.txt`, a folder per bot and `_shared` are created. 400 with the reason when it doesn't work |
+| `GET /api/v1/orgs/{id}/files?botId=` | A bot's files, or the shared ones without `botId` |
+| `POST /api/v1/orgs/{id}/files` | Multipart `file`, optional `botId` and `path` (default: the file's name). Any member. 201 |
+| `GET /api/v1/orgs/{id}/files/{fileId}/content` | The bytes. Images, video, audio and plain text are shown inline; everything else downloads. Always `nosniff` and a `sandbox` CSP |
+| `DELETE /api/v1/orgs/{id}/files/{fileId}` | Removes it from the list and from storage. 204 |
+
 ## Memory
 
 Bots remember with mem0 on pgvector, in the same Postgres database ([agents-and-plugins.md §9](../architecture/agents-and-plugins.md#9-memory)). It's on when `MEMORY_ENABLED=true`, the database is Postgres and `OPENAI_API_KEY` is set (mem0 uses OpenAI to pick what's worth keeping and to embed it); otherwise `NoMemory` remembers nothing and says why.

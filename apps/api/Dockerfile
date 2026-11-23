@@ -50,10 +50,14 @@ ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     PATH="/app/.venv/bin:${PATH}" \
     MEM0_DIR=/home/botdesk/.mem0 \
-    MEM0_TELEMETRY=False
+    MEM0_TELEMETRY=False \
+    FILES_DIR=/var/lib/botdesk/files
 
+# Bots' Local files (ADR 0017) live in FILES_DIR, owned by the app's user (compose mounts a volume there).
 RUN groupadd --system --gid 10001 botdesk \
- && useradd --system --uid 10001 --gid botdesk --create-home --home-dir /home/botdesk botdesk
+ && useradd --system --uid 10001 --gid botdesk --create-home --home-dir /home/botdesk botdesk \
+ && mkdir -p /var/lib/botdesk/files \
+ && chown botdesk:botdesk /var/lib/botdesk/files
 
 COPY --from=build /app/.venv /app/.venv
 COPY --from=build /app/apps/api /app/apps/api

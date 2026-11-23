@@ -65,6 +65,16 @@ class Settings(BaseSettings):
     # by default. Set to true in development to try an MCP server running on your own machine.
     allow_private_mcp_urls: bool = False
 
+    # Bots' files (ADR 0017). An organization that hasn't chosen a storage provider keeps its
+    # files on this server in FILES_DIR/<organization id>/botdesk/, unless LOCAL_FILES=false
+    # (a host whose disk is wiped on every deploy). Each organization gets LOCAL_FILES_QUOTA_MB there.
+    files_dir: str = "data/files"
+    local_files: bool = True
+    local_files_quota_mb: int = 5120
+    file_max_mb: int = 25
+    # S3-compatible storage on a private address (MinIO on your own network): refused by default.
+    allow_private_storage_urls: bool = False
+
     # Run limits (agents-and-plugins.md §4.2) and how many runs one bot may have going at once.
     run_max_steps: int = 25
     run_max_seconds: int = 900

@@ -15,8 +15,6 @@ from pydantic import BaseModel, Field
 
 TEAM_PLUGIN_ID = "team"
 HANDOFF_TOOL = "team.handoff"
-# Core plugins: always loaded, ids reserved, and not apps people connect (left out of `/plugins`).
-CORE_PLUGIN_IDS = frozenset({TEAM_PLUGIN_ID})
 
 HANDOFF_DESCRIPTION = (
     "Hand a task to a teammate bot. They do it in this chat with their own tools, and their result comes back "
@@ -68,6 +66,6 @@ def manifest() -> PluginManifest:
     )
 
 
-def is_core_tool(tool_name: str) -> bool:
+def is_team_tool(tool_name: str) -> bool:
     """`team.handoff` and friends: no tool line, no tool events (the handoff card shows them)."""
-    return tool_name.split(".", 1)[0] in CORE_PLUGIN_IDS
+    return tool_name.split(".", 1)[0] == TEAM_PLUGIN_ID

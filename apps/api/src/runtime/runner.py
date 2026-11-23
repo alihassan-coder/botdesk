@@ -62,6 +62,7 @@ from src.runtime.tool_access import ToolAccessProvider
 from src.runtime.tool_pipeline import NeedsAttention
 from src.services import approval_service, run_event_service, run_service, task_service, tool_execution_service
 from src.services.credential_vault import CredentialVault
+from src.services.file_tools import FileTools
 from src.services.mcp_server_service import McpRuntime
 from src.services.model_catalog import ModelCatalog
 from src.services.oauth_flow import OAuth
@@ -122,10 +123,12 @@ class RunManager:
         self.sessionmaker = sessionmaker
         self.bus = bus or EventBus()
         self.memory: MemoryService = memory or NoMemory()
-        self.registry = registry or build_registry(settings.plugin_ids)
+        vault = CredentialVault.from_settings(settings)
+        # The Files tools keep files through the same service as people's uploads (ADR 0017).
+        files_access = FileTools(sessionmaker, settings, vault)
+        self.registry = registry or build_registry(settings.plugin_ids, files_access=files_access)
         # What tools may reach: their plugin's hosts, with its connection's credential (ADR 0010).
         # Tests set `tool_access.transport` to answer tools' requests without a network.
-        vault = CredentialVault.from_settings(settings)
         # OAuth tokens are refreshed just before a tool uses them (services/oauth_flow.py).
         oauth = OAuth(settings, vault, self.registry)
         # In tests, GMAIL_API_BASE_URL points tool calls at a fake Gmail (ignored unless ENVIRONMENT=test).

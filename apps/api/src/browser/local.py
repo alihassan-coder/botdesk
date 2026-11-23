@@ -12,6 +12,7 @@ are open at once on this server.
 import asyncio
 import contextlib
 import logging
+import shutil
 import sys
 import threading
 import time
@@ -19,7 +20,7 @@ import uuid
 from collections.abc import Awaitable, Callable, Coroutine
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from botdesk_plugin_sdk import NotDone
 from playwright.async_api import BrowserContext, Page, Playwright, Route, WebSocketRoute, async_playwright
@@ -43,6 +44,7 @@ NOT_INSTALLED = (
 )
 BUSY = "Every browser on this server is in use. Try again in a few minutes."
 NO_PAGE = "The browser has no page open. Open one first with browser.open."
+NOT_OPEN = "The bot's browser isn't open. Open a page to start it."
 GONE = "There's no element [{ref}] on the page now. Read the page again to get the current numbers."
 
 
@@ -74,6 +76,36 @@ class _Session:
 
 
 BotKey = tuple[uuid.UUID, uuid.UUID]  # (organization, bot)
+
+# Keys a person may press on the live view (letters and digits arrive as `type`).
+KEYS = (
+    "Enter",
+    "Tab",
+    "Shift+Tab",
+    "Backspace",
+    "Delete",
+    "Escape",
+    "Space",
+    "ArrowUp",
+    "ArrowDown",
+    "ArrowLeft",
+    "ArrowRight",
+    "Home",
+    "End",
+    "PageUp",
+    "PageDown",
+)
+
+
+@dataclass(frozen=True)
+class PersonInput:
+    """One thing a person did on the live view. `x`, `y`: a click in page pixels (the screen is
+    `VIEWPORT`); `y` alone: how far to scroll. `text`: what they typed, the key, or the address."""
+
+    kind: Literal["click", "type", "key", "scroll", "open"]
+    x: int = 0
+    y: int = 0
+    text: str = ""
 
 
 class LocalBrowsers:
@@ -146,9 +178,60 @@ class LocalBrowsers:
 
         return await self._call(self._with_session(key, shoot))
 
+    # Take over: a person watches the bot's browser and uses it (to sign in), ADR 0017 §5
+
+    async def state(self, key: BotKey) -> tuple[str, str] | None:
+        """The open page's (address, title), or None when the bot's browser isn't open."""
+
+        async def look() -> tuple[str, str] | None:
+            session = self._sessions.get(key)
+            page = session.page if session else None
+            return (page.url, await page.title()) if page else None
+
+        return await self._call(look())
+
+    async def screen(self, key: BotKey) -> bytes:
+        """What the browser shows now, as a JPEG (the live view polls this)."""
+
+        async def shoot(session: _Session) -> bytes:
+            return await _page(session).screenshot(type="jpeg", quality=60, timeout=ACTION_MS)
+
+        return await self._call(self._with_open_session(key, shoot))
+
+    async def take_over(self, key: BotKey, person: PersonInput) -> None:
+        """Do what the person did on the live view. `open` starts the browser if it isn't open."""
+
+        async def do(session: _Session) -> None:
+            if person.kind == "open":
+                why_not = await session.guard.why_not(person.text)
+                if why_not:
+                    raise BrowserUnavailable(why_not)
+                page = session.page or await session.context.new_page()
+                with contextlib.suppress(PlaywrightTimeout):
+                    await page.goto(person.text, wait_until="domcontentloaded", timeout=NAVIGATION_MS)
+                return
+            page = _page(session)
+            if person.kind == "click":
+                await page.mouse.click(person.x, person.y)
+            elif person.kind == "type":
+                await page.keyboard.type(person.text)
+            elif person.kind == "key":
+                await page.keyboard.press(person.text)
+            elif person.kind == "scroll":
+                await page.mouse.wheel(0, person.y)
+            await page.wait_for_timeout(SETTLE_MS // 2)
+
+        if person.kind == "open":
+            await self._call(self._with_session(key, do))
+        else:
+            await self._call(self._with_open_session(key, do))
+
     async def forget(self, key: BotKey) -> None:
-        """Close the bot's browser (its profile, and so its sign-ins, stay on disk)."""
+        """Close the bot's browser and delete its profile: every site it was signed in to forgets it."""
         await self._call(self._close_session(key))
+        org_id, bot_id = key
+        profile = self.settings.profiles_dir / str(org_id) / str(bot_id)
+        await asyncio.to_thread(shutil.rmtree, profile, True)
 
     async def close(self) -> None:
         """Close every browser and the thread. Safe to call when nothing was ever opened."""
@@ -205,6 +288,12 @@ class LocalBrowsers:
                 raise BrowserUnavailable(_explain(error)) from None
             finally:
                 session.last_used = time.monotonic()
+
+    async def _with_open_session[T](self, key: BotKey, work: Callable[[_Session], Awaitable[T]]) -> T:
+        """Like `_with_session`, but never starts a browser: the live view only shows one that's open."""
+        if key not in self._sessions:
+            raise BrowserUnavailable(NOT_OPEN)
+        return await self._with_session(key, work)
 
     async def _session(self, key: BotKey) -> _Session:
         self._opening = self._opening or asyncio.Lock()

@@ -633,7 +633,15 @@ Bots open web pages with the core **Browser** plugin (ADR 0017 step 2; on for ev
 - **What the bot sees:** the address, title, visible text (6,000 characters at a time) and a numbered list of what it can use: `[1] link "Pricing" → https://…`, `[2] search box "Search"`, `[4] button "Buy now"`.
 - **Tools and risk:** `open`, `read`, `follow` (links only), `search` (search boxes only) and `back` are `read`; `click`, `type` and `choose` are `write-external`, so at *Ask before acting* a person approves each, and the card shows the element's own words (the tool refuses when they don't match the element). Typing into a password field is refused: a person signs in instead. `screenshot` saves a PNG to the bot's files (`write-internal`). Pages are outside text, so reading one taints the run.
 - **Addresses:** only http(s); every request a page makes (and its WebSockets) is checked against the same public-address rule as model servers, unless `ALLOW_PRIVATE_BROWSER_URLS`. Service workers are blocked so nothing skips the check.
+- **Take over** (signing in, 2FA, CAPTCHAs): any member can watch a bot's browser and use it. The live view polls a JPEG of the screen; clicks (in page pixels, 1280×800), typing, a fixed list of keys, scrolling and opening an address go to `POST …/browser/input`. What a person types goes to the page and is never stored or logged; the sign-in stays in the bot's profile. "Forget sign-ins" deletes the profile. It works where the browser runs, so with `WORKER_MODE=separate` it says it isn't available.
 - **Installing the browser:** `LOCAL_BROWSER_CHANNEL=chrome` (or `msedge`) uses the browser already installed; empty uses Playwright's Chromium (`uv run playwright install chromium` in `apps/api`, about 150 MB). The Docker image has no browser yet, so there the tools say it isn't installed.
+
+| Method & path | What it does |
+|---|---|
+| `GET /api/v1/orgs/{id}/bots/{botId}/browser` | `{available, open, url, title, width, height}` |
+| `GET /api/v1/orgs/{id}/bots/{botId}/browser/screen` | The screen now, `image/jpeg` (400 when the browser isn't open) |
+| `POST /api/v1/orgs/{id}/bots/{botId}/browser/input` | One of `{kind: "click", x, y}`, `{kind: "type", text}`, `{kind: "key", key}` (Enter, Tab, Shift+Tab, Backspace, Delete, Escape, Space, arrows, Home, End, PageUp, PageDown), `{kind: "scroll", dy}`, `{kind: "open", url}` (starts the browser). Returns the state. 400 with the reason (a private address, not installed) |
+| `DELETE /api/v1/orgs/{id}/bots/{botId}/browser` | Close it and forget every sign-in. 204 |
 
 ## Memory
 

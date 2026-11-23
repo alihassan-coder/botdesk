@@ -42,6 +42,10 @@ TEST_SETTINGS = Settings(
     database_url="sqlite+aiosqlite://",
     allow_private_model_urls=True,
     files_dir=tempfile.mkdtemp(prefix="botdesk-files-"),
+    # Bots' browsers: the installed Chrome (tests skip without one), test pages on 127.0.0.1.
+    browser_profiles_dir=tempfile.mkdtemp(prefix="botdesk-browsers-"),
+    local_browser_channel="chrome",
+    allow_private_browser_urls=True,
     _env_file=None,
 )
 

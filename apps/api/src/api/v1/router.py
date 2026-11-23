@@ -6,6 +6,7 @@ from src.api.v1.routes import (
     approvals,
     auth,
     bots,
+    browser,
     connections,
     connectors,
     files,
@@ -30,6 +31,7 @@ api_router.include_router(auth.router)
 api_router.include_router(organizations.router)
 api_router.include_router(invitations.router)
 api_router.include_router(bots.router)
+api_router.include_router(browser.router)
 api_router.include_router(threads.router)
 api_router.include_router(runs.router)
 api_router.include_router(approvals.router)

@@ -617,6 +617,63 @@ export interface MemoryList {
   error?: string;
 }
 
+/* ---------- Files and storage (ADR 0017) ---------- */
+
+/** Where the organization keeps bots' files: on the BotDesk server (Local) or its own S3-compatible bucket. */
+export type StorageProviderId = "local" | "s3";
+
+/** An S3-compatible bucket as the API shows it: never the keys, only the access key's last 4 characters. */
+export interface S3Storage {
+  /** Empty for AWS itself. */
+  endpoint: string;
+  region: string;
+  bucket: string;
+  /** A folder inside the bucket; empty for its top. */
+  prefix: string;
+  accessKeyHint: string;
+}
+
+/** The organization's file storage (Settings → Computers). */
+export interface FileStorage {
+  provider: StorageProviderId;
+  s3?: S3Storage;
+  /** Whether this server lets organizations keep files on its own disk (the operator can turn Local off). */
+  localAvailable: boolean;
+  /** When the S3 bucket last passed its check. */
+  checkedAt?: ISODate;
+}
+
+/** The organization's storage as last loaded. */
+export interface StorageLoad {
+  status: "loading" | "ready" | "error";
+  current?: FileStorage;
+}
+
+/** A file in a bot's folder (no `botId`: the shared folder every bot can read). */
+export interface BotFile {
+  id: ID;
+  botId?: ID;
+  /** Inside the folder: "reports/march.csv". */
+  path: string;
+  /** "botdesk/inbox-manager", or "botdesk/_shared". */
+  folder: string;
+  contentType: string;
+  sizeBytes: number;
+  /** False when it was saved to storage the organization no longer uses: listed, but it can't be opened. */
+  available: boolean;
+  createdAt: ISODate;
+  updatedAt: ISODate;
+  /** Where the browser opens it. Empty when there's nothing to open (a demo file in tests). */
+  url: string;
+}
+
+/** One bot's files as last loaded. */
+export interface BotFileList {
+  status: "loading" | "ready" | "error";
+  items: BotFile[];
+  error?: string;
+}
+
 /** One UTC day of spend. Token counts come from the API; the demo has dollars only. */
 export interface UsageDay {
   date: ISODate;

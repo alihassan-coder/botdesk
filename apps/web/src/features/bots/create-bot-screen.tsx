@@ -3,8 +3,9 @@
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
+import { FolderOpen, Globe } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Field, FieldDescription, FieldError, FieldGroup, FieldLabel } from "@/components/ui/field";
+import { Field, FieldDescription, FieldError, FieldGroup, FieldLabel, FieldTitle } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
@@ -110,13 +111,15 @@ export function CreateBotScreen() {
                 <FieldLabel htmlFor="bot-model">Model</FieldLabel>
                 <ModelPicker id="bot-model" value={bot.modelId} onChange={(v) => update("modelId", v)} />
               </Field>
-              {/* Bot computers aren't built yet: say so instead of offering a choice that does nothing. */}
+              {/* Every bot gets Files (ADR 0017); the browser isn't built yet, so there's nothing to choose. */}
               <Field>
-                <div className="flex items-center gap-2">
-                  <FieldLabel>Computer</FieldLabel>
-                  <Badge variant="secondary">Coming soon</Badge>
-                </div>
-                <FieldDescription>A computer will let it use websites and apps that have no integration.</FieldDescription>
+                <FieldTitle>Computer</FieldTitle>
+                <ul className="flex flex-col gap-1.5 text-sm">
+                  <li className="flex items-center gap-2"><FolderOpen className="size-4 text-muted-foreground" aria-hidden /> Gets its own folder for files</li>
+                  <li className="flex flex-wrap items-center gap-2 text-muted-foreground">
+                    <Globe className="size-4" aria-hidden /> A browser for websites with no integration <Badge variant="secondary">Coming soon</Badge>
+                  </li>
+                </ul>
               </Field>
             </Section>
 

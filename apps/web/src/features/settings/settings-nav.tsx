@@ -1,7 +1,7 @@
 import { Suspense, useEffect, useRef } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Brain, Building2, Gauge, KeyRound, Palette, Shield, User, Users } from "lucide-react";
+import { Brain, Building2, Gauge, HardDrive, KeyRound, Palette, Shield, User, Users } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 export const SETTINGS_SECTIONS = [
@@ -9,6 +9,7 @@ export const SETTINGS_SECTIONS = [
   { href: "/settings/organization", label: "Organization", icon: Building2 },
   { href: "/settings/appearance", label: "Appearance", icon: Palette },
   { href: "/settings/models", label: "Models & keys", icon: KeyRound },
+  { href: "/settings/computers", label: "Computers", icon: HardDrive },
   { href: "/settings/security", label: "Security", icon: Shield },
   { href: "/settings/members", label: "Members", icon: Users },
   { href: "/settings/usage", label: "Usage & budgets", icon: Gauge },

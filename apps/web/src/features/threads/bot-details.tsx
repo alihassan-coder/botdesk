@@ -1,6 +1,6 @@
 import { useEffect } from "react";
 import Link from "next/link";
-import { Monitor } from "lucide-react";
+import { Globe } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
 import { Switch } from "@/components/ui/switch";
@@ -13,13 +13,14 @@ import type { Bot, SecurityLevel } from "@/data/types";
 import { BotAvatar } from "@/features/bots/bot-avatar";
 import { BotTools } from "@/features/bots/bot-tools";
 import { EditBotDialog } from "@/features/bots/edit-bot-dialog";
+import { BotFiles } from "@/features/files/bot-files";
 import { BotMemories } from "@/features/memory/bot-memories";
 import { RemoveBotButton } from "@/features/bots/remove-bot-button";
 import { canChangeRoutine, toggle } from "@/features/routines/routine-card";
 import { barColor } from "@/features/settings/budget-list";
 import { securityLabel } from "@/features/bots/security-levels";
 
-/** The details pane for a DM: who this bot is, its tools, routines, what it remembers, its computer. */
+/** The details pane for a DM: who this bot is, its tools, routines, what it remembers, its files. */
 export function BotDetails({ bot }: { bot: Bot }) {
   return (
     <Tabs defaultValue="details" className="flex h-full flex-col gap-0">
@@ -66,7 +67,7 @@ function Profile({ bot }: { bot: Bot }) {
         <dt className="text-muted-foreground">Security level</dt>
         <dd><BotLevel level={bot.securityLevel} /></dd>
         <dt className="text-muted-foreground">Computer</dt>
-        <dd><Badge variant="secondary">Coming soon</Badge></dd>
+        <dd className="flex flex-wrap items-center gap-2">Files <Badge variant="secondary">Browser coming soon</Badge></dd>
       </dl>
       <BudgetThisMonth bot={bot} />
     </div>
@@ -119,20 +120,20 @@ function Routines({ botId }: { botId: string }) {
   );
 }
 
-/** Bot computers aren't built yet (roadmap: "Bot computers"), so the tab says so plainly. */
+/** What the bot has besides apps (ADR 0017): its Files now; a browser is next. */
 function Computer({ bot }: { bot: Bot }) {
   return (
-    <div className="flex flex-col gap-2">
-      <div className="grid aspect-[16/10] place-items-center rounded-xl border border-dashed bg-muted/50 text-muted-foreground">
-        <Monitor className="size-8" aria-hidden />
+    <div className="flex flex-col gap-5">
+      <BotFiles bot={bot} />
+      <div className="flex items-start gap-3 rounded-xl border border-dashed p-3">
+        <Globe className="mt-0.5 size-4 shrink-0 text-muted-foreground" aria-hidden />
+        <div className="min-w-0 flex-1">
+          <p className="flex flex-wrap items-center gap-2 text-sm font-medium">Browser <Badge variant="secondary">Coming soon</Badge></p>
+          <p className="text-xs text-pretty text-muted-foreground">
+            For websites with no integration. You&apos;ll watch {bot.name} work and take over to sign in.
+          </p>
+        </div>
       </div>
-      <div className="flex items-center gap-2">
-        <p className="text-sm font-medium">{bot.name}&apos;s computer</p>
-        <Badge variant="secondary">Coming soon</Badge>
-      </div>
-      <p className="text-xs text-muted-foreground">
-        Each bot will get its own computer with a browser, for websites and apps that have no integration. You&apos;ll watch it live and take over to sign in. Until then, bots work through connected apps.
-      </p>
     </div>
   );
 }

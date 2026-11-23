@@ -30,6 +30,17 @@ describe("apiFetch", () => {
     });
   });
 
+  it("sends a FormData as is, so the browser sets the multipart boundary", async () => {
+    vi.stubEnv("NEXT_PUBLIC_API_URL", "http://api.test");
+    const fetchMock = answer(201, { id: "f1" });
+    const form = new FormData();
+    form.append("file", new Blob(["hi"]), "hi.txt");
+
+    await apiFetch("/api/v1/orgs/o1/files", { method: "POST", body: form });
+
+    expect(fetchMock).toHaveBeenCalledWith("http://api.test/api/v1/orgs/o1/files", { method: "POST", credentials: "include", body: form });
+  });
+
   it("returns undefined for 204 No Content", async () => {
     vi.stubEnv("NEXT_PUBLIC_API_URL", "http://api.test");
     answer(204);

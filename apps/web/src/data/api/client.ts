@@ -26,17 +26,20 @@ const SERVER_TROUBLE = "Something went wrong on our side. Try again in a moment.
 
 interface RequestOptions {
   method?: "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
+  /** Sent as JSON; a FormData (file uploads) goes as multipart, with the boundary the browser sets. */
   body?: unknown;
+}
+
+function requestBody(body: unknown): RequestInit {
+  if (body === undefined) return {};
+  if (body instanceof FormData) return { body };
+  return { headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) };
 }
 
 export async function apiFetch<T>(path: string, { method = "GET", body }: RequestOptions = {}): Promise<T> {
   let response: Response;
   try {
-    response = await fetch(`${apiBaseUrl()}${path}`, {
-      method,
-      credentials: "include",
-      ...(body === undefined ? {} : { headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) }),
-    });
+    response = await fetch(`${apiBaseUrl()}${path}`, { method, credentials: "include", ...requestBody(body) });
   } catch {
     throw new ApiError(0, UNREACHABLE);
   }

@@ -15,8 +15,11 @@ import {
   type ApiMcpServerAdded,
   type ApiMcpServerInput,
   type ApiMcpToolChoice,
+  type ApiFile,
   type ApiMemory,
   type ApiMemoryStatus,
+  type ApiStorage,
+  type ApiStorageInput,
   type ApiMe,
   type ApiMember,
   type ApiMessage,
@@ -272,6 +275,27 @@ export const modelApi = {
   /** Every connected provider's models, live (cached ~10 minutes on the API unless `refresh`), as your runs reach them: your own key first. */
   models: (orgId: string, refresh = false) =>
     apiFetch<ApiModelList>(`/api/v1/orgs/${orgId}/models${refresh ? "?refresh=true" : ""}`),
+};
+
+/** Bots' files and where the organization keeps them (ADR 0017). Any member reads, uploads and deletes files. */
+export const fileApi = {
+  storage: (orgId: string) => apiFetch<ApiStorage>(`/api/v1/orgs/${orgId}/storage`),
+  /** Owners and admins. Checked with a live write, read and delete first (it can take a few seconds); a 400 says why it didn't work. */
+  chooseStorage: (orgId: string, input: ApiStorageInput) =>
+    apiFetch<ApiStorage>(`/api/v1/orgs/${orgId}/storage`, { method: "PUT", body: input }),
+  /** A bot's files by path; without `botId`, the shared ones. */
+  list: (orgId: string, botId?: string) =>
+    apiFetch<ApiFile[]>(`/api/v1/orgs/${orgId}/files${botId ? `?botId=${encodeURIComponent(botId)}` : ""}`),
+  /** Into the bot's folder (the shared one without `botId`), at the file's name. Saving the same path again replaces it. */
+  upload: (orgId: string, file: File, botId?: string) => {
+    const form = new FormData();
+    form.append("file", file);
+    if (botId) form.append("botId", botId);
+    return apiFetch<ApiFile>(`/api/v1/orgs/${orgId}/files`, { method: "POST", body: form });
+  },
+  remove: (orgId: string, fileId: string) => apiFetch<void>(`/api/v1/orgs/${orgId}/files/${fileId}`, { method: "DELETE" }),
+  /** The file's bytes, for a link or an <img>: the session cookie goes with it (same site). */
+  contentUrl: (orgId: string, fileId: string) => `${apiBaseUrl()}/api/v1/orgs/${orgId}/files/${fileId}/content`,
 };
 
 /** What a bot remembers. Members see the bot's shared memories and their own DM ones. */

@@ -327,6 +327,41 @@ export const RUN_EVENT_KINDS = [
   "task_updated", "run_waiting_handoff", "thread_updated",
 ] as const satisfies readonly ApiRunEvent["kind"][];
 
+/* ---------- Files and storage (ADR 0017) ---------- */
+
+export interface ApiS3Storage {
+  endpoint: string;
+  region: string;
+  bucket: string;
+  prefix: string;
+  accessKeyHint: string;
+}
+
+/** GET/PUT /orgs/{id}/storage. */
+export interface ApiStorage {
+  provider: "local" | "s3";
+  s3: ApiS3Storage | null;
+  localAvailable: boolean;
+  checkedAt: string | null;
+}
+
+/** What PUT /storage takes. `secretAccessKey` left out keeps the saved one (storage that is already S3). */
+export type ApiStorageInput =
+  | { provider: "local" }
+  | { provider: "s3"; s3: { endpoint?: string; region: string; bucket: string; prefix?: string; accessKeyId: string; secretAccessKey?: string } };
+
+export interface ApiFile {
+  id: string;
+  botId: string | null;
+  path: string;
+  folder: string;
+  contentType: string;
+  sizeBytes: number;
+  available: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
 /* ---------- Memory ---------- */
 
 export interface ApiMemory {

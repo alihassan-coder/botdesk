@@ -35,8 +35,13 @@ export const apiTemplates = [
 
 export interface FakeApi {
   routes: Record<string, Route>;
-  /** Every request made, in order, with its JSON body. */
+  /** Every request made, in order, with its JSON body (a multipart one as an object of its fields). */
   sent: { key: string; body: unknown }[];
+}
+
+function sentBody(body: RequestInit["body"]): unknown {
+  if (!body) return undefined;
+  return body instanceof FormData ? Object.fromEntries(body) : JSON.parse(String(body));
 }
 
 export function withFakeApi(): FakeApi {
@@ -55,7 +60,7 @@ export function withFakeApi(): FakeApi {
       "fetch",
       vi.fn(async (url: string, init?: RequestInit) => {
         const key = `${init?.method ?? "GET"} ${url.replace("http://api.test", "")}`;
-        api.sent.push({ key, body: init?.body ? JSON.parse(String(init.body)) : undefined });
+        api.sent.push({ key, body: sentBody(init?.body) });
         const route = api.routes[key] ?? { status: 404, body: { detail: "Not found" } };
         return route.body === undefined ? new Response(null, { status: route.status }) : Response.json(route.body, { status: route.status });
       }),

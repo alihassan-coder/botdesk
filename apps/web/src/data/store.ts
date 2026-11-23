@@ -12,7 +12,8 @@
  *   keys, your own keys (My keys) and live model lists; the org's security ceiling; new
  *   organizations; what each bot remembers (Memory), loaded per bot; and Usage &
  *   budgets: daily spend, each bot's spend this month and the org's budget; and Routines:
- *   listed with the org, created, edited, switched on and off, run now and removed. Apps
+ *   listed with the org, created, edited, switched on and off, run now and removed; and
+ *   bots' Files: where the org keeps them (Settings → Computers) and each bot's list. Apps
  *   aren't all on the API yet, so some stay mock.
  * - Not set (tests, e2e, demos): everything is the in-memory mock, with fake bot replies.
  * Guest mode ("Explore the demo") uses the mock in either case, so people can look
@@ -27,17 +28,17 @@ import { previewFromArgs } from "@/lib/args-form";
 import { strictestLevel } from "@/lib/security-ceiling";
 import { rememberOAuthReturn } from "@/lib/connections";
 import { browser } from "@/lib/navigate";
-import { approvalApi, authApi, botApi, connectionApi, inviteApi, mcpApi, memoryApi, modelApi, orgApi, pluginApi, routineApi, runApi, templateApi, threadApi, usageApi } from "./api/botdesk";
+import { approvalApi, authApi, botApi, connectionApi, fileApi, inviteApi, mcpApi, memoryApi, modelApi, orgApi, pluginApi, routineApi, runApi, templateApi, threadApi, usageApi } from "./api/botdesk";
 import { ApiError, apiBaseUrl } from "./api/client";
-import { toAccountConnection, toApiBot, toApproval, toBot, toInvitation, toMcpServer, toMemory, toMemoryStatus, toMessage, toModel, toModelProvider, toOrg, toRoutine, toTemplate, toThread, toUsage, toUser } from "./api/map";
+import { toAccountConnection, toApiBot, toApproval, toBot, toBotFile, toFileStorage, toInvitation, toMcpServer, toMemory, toMemoryStatus, toMessage, toModel, toModelProvider, toOrg, toRoutine, toTemplate, toThread, toUsage, toUser } from "./api/map";
 import { applyRunEvent, typingId, upsertApproval, withActiveRuns, withPreview, withWaitingApprovals, type ActiveRun } from "./api/run-events";
 import type { ApiMe, ApiMessage, ApiRunEvent, ApiThread, ApiThreadRuns } from "./api/types";
 import { isTaskOpen, taskPreview, withTaskChangeIn, type TaskChange } from "@/lib/tasks";
 import * as chiefDemo from "./mock/chief-demo";
 import * as mock from "./mock/fixtures";
 import type {
-  AccountConnection, AccountConnectionList, Approval, ApprovalStatus, Bot, BotToolChange, BotTools, ConnectionOwner, Invitation, McpServerInput, McpServerList, McpToolChoice, MemoryItem, MemoryList, MemoryStatus, Membership, Message, Model, ModelListProblem, ModelProvider, Org,
-  Participant, PluginList, Routine, SecurityLevel, ServerConnectorList, TemplateList, Thread, UsageSummary, User,
+  AccountConnection, AccountConnectionList, Approval, ApprovalStatus, Bot, BotFile, BotFileList, BotToolChange, BotTools, ConnectionOwner, Invitation, McpServerInput, McpServerList, McpToolChoice, MemoryItem, MemoryList, MemoryStatus, Membership, Message, Model, ModelListProblem, ModelProvider, Org,
+  Participant, PluginList, Routine, SecurityLevel, ServerConnectorList, StorageLoad, TemplateList, Thread, UsageSummary, User,
 } from "./types";
 
 /** What you fill in to create a bot; the rest (id, handle, status…) is filled in for you. */
@@ -153,6 +154,10 @@ interface State {
   spentByBot: Record<string, number>;
   /** The marketplace. On the API it loads once you're signed in (the same for every organization). */
   templates: TemplateList;
+  /** Settings → Computers: where the org keeps bots' files. */
+  storage: StorageLoad;
+  /** Each bot's files as last loaded, by bot id. The demo starts with Inbox Manager's. */
+  fileLists: Record<string, BotFileList>;
 }
 
 /** No usage yet (API mode, before the report arrives). Defined here: the seeds below run at import. */
@@ -199,6 +204,8 @@ function seed(): State {
     usageLoading: false,
     spentByBot: {},
     templates: { status: "ready", items: mock.templates },
+    storage: { status: "ready", current: mock.storage },
+    fileLists: demoFileLists(),
   };
 }
 
@@ -235,6 +242,8 @@ function apiSeed(): State {
     usage: EMPTY_USAGE,
     usageLoading: true,
     templates: { status: "loading", items: [] },
+    storage: { status: "loading" },
+    fileLists: {},
   };
 }
 
@@ -394,6 +403,8 @@ function enterOrg(org: Membership) {
     spentByBot: {},
     // The same for every org, but the demo's never stay (the API's are fetched again, a small list).
     templates: { status: "loading", items: [] },
+    storage: { status: "loading" },
+    fileLists: {},
   }));
   void loadOrgPeople(org);
   void loadBotsAndChats(org);
@@ -1611,6 +1622,200 @@ const usageActions = {
   },
 };
 
+/* ---------- Files and storage (ADR 0017) ----------
+ * Where the org keeps bots' files (Settings → Computers) and each bot's files (its Computer tab).
+ * On the API an S3 secret goes in once and never comes back: the store only holds the access key's
+ * last 4 characters. MOCK: storage starts as Local and an S3 bucket "works" unless its secret starts
+ * with "bad"; uploads and deletes happen in memory, and files open from blob: URLs.
+ */
+
+/** What you fill in to choose storage. For S3, an empty secret keeps the saved one (storage that is already S3). */
+export type StorageInput =
+  | { provider: "local" }
+  | { provider: "s3"; s3: { endpoint: string; region: string; bucket: string; prefix: string; accessKeyId: string; secretAccessKey: string } };
+
+/** The API's FILE_MAX_MB, for the demo's uploads. */
+const FILE_MAX_MB = 25;
+
+/** The latest list request per bot, so an older one answering late can't undo an upload or a delete. */
+const fileLoads = new Map<string, number>();
+
+/** MOCK: the demo's files, one list per bot. (Hoisted: the demo's seed uses it.) */
+function demoFileLists(): Record<string, BotFileList> {
+  const lists: Record<string, BotFileList> = {};
+  for (const file of mock.files) {
+    const botId = file.botId ?? "";
+    lists[botId] = { status: "ready", items: [...(lists[botId]?.items ?? []), file] };
+  }
+  return lists;
+}
+
+/** MOCK: a link the browser can open for a demo file. None where blob: URLs don't exist (tests). */
+const canMakeDemoUrls = () => typeof URL.createObjectURL === "function";
+const demoFileUrl = (blob: Blob) => (canMakeDemoUrls() ? URL.createObjectURL(blob) : "");
+function forgetDemoUrl(file?: BotFile) {
+  if (file?.url.startsWith("blob:")) URL.revokeObjectURL(file.url);
+}
+
+function setFileList(botId: string, list: BotFileList) {
+  set((st) => ({ ...st, fileLists: { ...st.fileLists, [botId]: list } }));
+}
+
+/** Changes the items of a bot's list, if it has one. */
+function updateFileList(botId: string, change: (items: BotFile[]) => BotFile[]) {
+  set((st) => {
+    const list = st.fileLists[botId];
+    return list ? { ...st, fileLists: { ...st.fileLists, [botId]: { ...list, items: change(list.items) } } } : st;
+  });
+}
+
+/** After an upload or delete: a list sent for before it is ignored, and one still loading is asked for again. */
+function supersedeFileLoads(botId: string) {
+  if (isDemoMode()) return;
+  fileLoads.set(botId, (fileLoads.get(botId) ?? 0) + 1);
+  if (state.fileLists[botId]?.status === "loading") void fileActions.loadFiles(botId);
+}
+
+/** A saved file in its list: in place of the one at its path (saving a path again replaces it), in path order. */
+function withFile(items: BotFile[], saved: BotFile): BotFile[] {
+  const others = items.filter((f) => f.id !== saved.id && f.path !== saved.path);
+  return [...others, saved].sort((a, b) => a.path.localeCompare(b.path));
+}
+
+/** MOCK: the bot's folder gets the file, at its name, with the API's size limit. */
+function saveMockFile(botId: string, file: File): { ok: true; file: BotFile } | { ok: false; error: string } {
+  if (file.size > FILE_MAX_MB * 1024 * 1024) return { ok: false, error: `That file is too big: files can be up to ${FILE_MAX_MB} MB.` };
+  const replaced = state.fileLists[botId]?.items.find((f) => f.path === file.name);
+  forgetDemoUrl(replaced);
+  const at = now();
+  const handle = state.bots.find((b) => b.id === botId)?.handle ?? "bot";
+  return {
+    ok: true,
+    file: {
+      id: replaced?.id ?? `file_${id()}`, botId, path: file.name, folder: `botdesk/${handle}`, contentType: file.type || "application/octet-stream",
+      sizeBytes: file.size, available: true, createdAt: replaced?.createdAt ?? at, updatedAt: at, url: demoFileUrl(file),
+    },
+  };
+}
+
+/** MOCK: "checks" the bucket like the API would, then switches to it (or back to Local). */
+function saveMockStorage(input: StorageInput): ActionResult {
+  const current = state.storage.current;
+  if (input.provider === "local") {
+    if (current && !current.localAvailable) return { ok: false, error: "This server doesn't keep files itself." };
+    set((st) => ({ ...st, storage: { status: "ready", current: { provider: "local", localAvailable: current?.localAvailable ?? true } } }));
+    return { ok: true };
+  }
+  const { endpoint, region, bucket, prefix, accessKeyId, secretAccessKey } = input.s3;
+  if (!region.trim() || bucket.trim().length < 3 || accessKeyId.trim().length < 4) return { ok: false, error: "Fill in the bucket's details." };
+  if (!secretAccessKey.trim() && current?.provider !== "s3") return { ok: false, error: "Add the secret access key." };
+  if (secretAccessKey.trim().startsWith("bad")) {
+    return { ok: false, error: "Couldn't write to the bucket: the access key or secret is wrong (403 Forbidden)." };
+  }
+  const s3 = {
+    endpoint: endpoint.trim().replace(/\/+$/, ""), region: region.trim(), bucket: bucket.trim(),
+    prefix: prefix.trim().replace(/^\/+|\/+$/g, ""), accessKeyHint: accessKeyId.trim().slice(-4),
+  };
+  set((st) => ({ ...st, storage: { status: "ready", current: { provider: "s3", s3, localAvailable: current?.localAvailable ?? true, checkedAt: now() } } }));
+  return { ok: true };
+}
+
+const fileActions = {
+  /** Where the org keeps files. The demo's is in its seed. */
+  async loadStorage(): Promise<void> {
+    if (isDemoMode()) return;
+    const orgId = state.org.id;
+    const loaded = await fileApi.storage(orgId).catch(() => null);
+    set((st) => {
+      if (st.org.id !== orgId) return st;
+      return { ...st, storage: loaded ? { status: "ready", current: toFileStorage(loaded) } : { ...st.storage, status: "error" } };
+    });
+  },
+
+  /** Choose Local or an S3-compatible bucket (owners and admins). The API checks it live first, which can take a few seconds. */
+  async saveStorage(input: StorageInput): Promise<ActionResult> {
+    if (isDemoMode()) return saveMockStorage(input);
+    const orgId = state.org.id;
+    const body = input.provider === "local" ? input : {
+      provider: input.provider,
+      s3: {
+        endpoint: input.s3.endpoint.trim(), region: input.s3.region.trim(), bucket: input.s3.bucket.trim(),
+        prefix: input.s3.prefix.trim(), accessKeyId: input.s3.accessKeyId.trim(),
+        ...(input.s3.secretAccessKey.trim() ? { secretAccessKey: input.s3.secretAccessKey.trim() } : {}),
+      },
+    };
+    try {
+      const saved = toFileStorage(await fileApi.chooseStorage(orgId, body));
+      // Files saved before stay where they were, so whether each can be opened changed: lists load again.
+      set((st) => (st.org.id === orgId ? { ...st, storage: { status: "ready", current: saved }, fileLists: {} } : st));
+      return { ok: true };
+    } catch (error) {
+      return failure(error);
+    }
+  },
+
+  /** A bot's files, by path. */
+  async loadFiles(botId: string): Promise<void> {
+    if (isDemoMode()) {
+      if (!state.fileLists[botId]) setFileList(botId, { status: "ready", items: [] });
+      if (!canMakeDemoUrls()) return;
+      // The demo's own files get their links the first time they're shown (blob: URLs exist only in the browser).
+      return updateFileList(botId, (items) => items.map((f) => {
+        const text = mock.fileContents[f.id];
+        return f.url || !f.available || text === undefined ? f : { ...f, url: demoFileUrl(new Blob([text], { type: f.contentType })) };
+      }));
+    }
+    const orgId = state.org.id;
+    const request = (fileLoads.get(botId) ?? 0) + 1;
+    fileLoads.set(botId, request);
+    const current = () => fileLoads.get(botId) === request && state.org.id === orgId;
+    setFileList(botId, { status: "loading", items: state.fileLists[botId]?.items ?? [] });
+    try {
+      const items = (await fileApi.list(orgId, botId)).map((f) => toBotFile(f, fileApi.contentUrl(orgId, f.id)));
+      if (current()) setFileList(botId, { status: "ready", items });
+    } catch (error) {
+      if (current()) setFileList(botId, { status: "error", items: [], error: failure(error).error });
+    }
+  },
+
+  /** Give a bot a file, at its name (the same name again replaces it). Any member. */
+  async uploadFile(botId: string, file: File): Promise<ActionResult> {
+    let saved: BotFile;
+    if (isDemoMode()) {
+      const result = saveMockFile(botId, file);
+      if (!result.ok) return result;
+      saved = result.file;
+    } else {
+      const orgId = state.org.id;
+      try {
+        const uploaded = await fileApi.upload(orgId, file, botId);
+        saved = toBotFile(uploaded, fileApi.contentUrl(orgId, uploaded.id));
+      } catch (error) {
+        return failure(error);
+      }
+      if (state.org.id !== orgId) return { ok: true };
+    }
+    updateFileList(botId, (items) => withFile(items, saved));
+    supersedeFileLoads(botId);
+    return { ok: true };
+  },
+
+  /** Delete a file from the bot's folder and its storage (one in storage the org no longer uses only leaves the list). */
+  async deleteFile(botId: string, fileId: string): Promise<ActionResult> {
+    if (isDemoMode()) forgetDemoUrl(state.fileLists[botId]?.items.find((f) => f.id === fileId));
+    else {
+      try {
+        await fileApi.remove(state.org.id, fileId);
+      } catch (error) {
+        return failure(error);
+      }
+    }
+    updateFileList(botId, (items) => items.filter((f) => f.id !== fileId));
+    supersedeFileLoads(botId);
+    return { ok: true };
+  },
+};
+
 /* ---------- Routines ----------
  * On the API a routine runs on its schedule in its creator's DM with the bot; the API says it was
  * created there ("Created a routine" card). MOCK: saved here, and the bot confirms in its chat.
@@ -1726,6 +1931,7 @@ export const actions = {
   ...approvalActions,
   ...modelActions,
   ...usageActions,
+  ...fileActions,
 
   /**
    * Sends your message. Bots reply in a moment (ADR 0009): in a DM its bot, or the other bots you
@@ -2680,6 +2886,11 @@ export const useMemoryList = (botId?: string) =>
 
 /** Whether bots can remember here (null while the API is asked). */
 export const useMemoryStatus = () => useStore(useCallback((s: State) => s.memoryStatus, []));
+/** Where the org keeps bots' files (Settings → Computers). */
+export const useFileStorage = () => useStore(useCallback((s: State) => s.storage, []));
+/** A bot's files as last loaded; undefined until `actions.loadFiles` has started. */
+export const useFileList = (botId?: string) =>
+  useStore(useCallback((s: State) => (botId ? s.fileLists[botId] : undefined), [botId]));
 
 /* Whole-collection hooks for the app pages (marketplace, settings, approvals…). */
 export const useBots = () => useStore(useCallback((s: State) => s.bots, []));

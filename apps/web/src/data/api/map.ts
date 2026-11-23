@@ -1,7 +1,7 @@
-import type { AccountConnection, Approval, ArgsSchema, Bot, HandoffPart, Invitation, McpServer, MemoryItem, MemoryStatus, Message, MessagePart, Model, ModelProvider, Org, Routine, Template, Thread, UsageSummary, User } from "../types";
+import type { AccountConnection, Approval, ArgsSchema, Bot, BotFile, FileStorage, HandoffPart, Invitation, McpServer, MemoryItem, MemoryStatus, Message, MessagePart, Model, ModelProvider, Org, Routine, Template, Thread, UsageSummary, User } from "../types";
 import { describeCron } from "@/lib/schedule";
 import type { TaskChange } from "@/lib/tasks";
-import type { ApiApproval, ApiTask, ApiBot, ApiConnection, ApiBotInput, ApiInvitation, ApiMcpServer, ApiMemory, ApiMemoryStatus, ApiMessage, ApiModel, ApiModelProvider, ApiOrg, ApiRole, ApiRoutine, ApiTemplate, ApiThread, ApiUsage, ApiUser } from "./types";
+import type { ApiApproval, ApiTask, ApiBot, ApiConnection, ApiBotInput, ApiFile, ApiInvitation, ApiMcpServer, ApiMemory, ApiMemoryStatus, ApiMessage, ApiModel, ApiModelProvider, ApiOrg, ApiRole, ApiRoutine, ApiStorage, ApiTemplate, ApiThread, ApiUsage, ApiUser } from "./types";
 
 /**
  * Turns API answers into the web app's own types, so screens never see API shapes.
@@ -140,6 +140,17 @@ export function toModel({ id, provider, name, contextWindow, pricing }: ApiModel
     ...(contextWindow ? { contextWindow } : {}),
     ...(pricing ? { pricing: { inputPerMTok: pricing.inputPerMtok, outputPerMTok: pricing.outputPerMtok } } : {}),
   };
+}
+
+/* ---------- Files and storage ---------- */
+
+export function toFileStorage({ provider, s3, localAvailable, checkedAt }: ApiStorage): FileStorage {
+  return { provider, localAvailable, ...(s3 ? { s3 } : {}), ...(checkedAt ? { checkedAt: asUtc(checkedAt) } : {}) };
+}
+
+/** `url` is where its bytes are (`fileApi.contentUrl`), passed in so this stays free of addresses. */
+export function toBotFile({ botId, createdAt, updatedAt, ...file }: ApiFile, url: string): BotFile {
+  return { ...file, ...(botId ? { botId } : {}), createdAt: asUtc(createdAt), updatedAt: asUtc(updatedAt), url };
 }
 
 /* ---------- Memory ---------- */

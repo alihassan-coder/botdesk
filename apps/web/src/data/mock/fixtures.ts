@@ -7,9 +7,11 @@ import type {
   Approval,
   ArgsSchema,
   Bot,
+  BotFile,
   BotToolPlugin,
   Connection,
   Connector,
+  FileStorage,
   MemoryItem,
   Message,
   Model,
@@ -332,6 +334,24 @@ export const modelProviders: ModelProvider[] = [
   { id: "openrouter", kind: "openrouter", name: "OpenRouter", hint: "Hundreds of models behind one key, with prices.", connected: true, source: "org", keyHint: "77b0", status: "ok", lastVerifiedAt: ago(120) },
   { id: "groq", kind: "groq", name: "Groq", hint: "Fast open models, and it has a free tier. Get a key at console.groq.com.", connected: false },
   { id: "custom-gpu-box", kind: "custom", name: "GPU box (vLLM)", hint: "Any OpenAI-compatible server: Ollama, LM Studio, vLLM.", connected: true, source: "org", status: "ok", baseUrl: "http://gpu-box:8000/v1", lastVerifiedAt: ago(60) },
+];
+
+/** The demo keeps files on the BotDesk server (Local). */
+export const storage: FileStorage = { provider: "local", localAvailable: true };
+
+/** What the demo's files say, by file id, so they open in the browser (as blob: URLs). */
+export const fileContents: Record<string, string> = {
+  file_1: "Hi Sara,\n\nThanks for the notes on the pricing page. I've moved the FAQ above the plans and fixed the typo in the footer.\n\nBest, Ali\n",
+  file_3: "# Inbox this week\n\n- 142 emails in, 118 archived as noise\n- 19 labelled Customer, 5 replies drafted\n- 2 replies waiting for your OK\n",
+};
+
+const textSize = (id: string) => new TextEncoder().encode(fileContents[id]).length;
+
+/** Inbox Manager's files, by path: two it saved, and one left in storage the team stopped using. */
+export const files: BotFile[] = [
+  { id: "file_1", botId: "b_inbox", path: "drafts/reply-to-sara.txt", folder: "botdesk/inbox", contentType: "text/plain", sizeBytes: textSize("file_1"), available: true, createdAt: ago(60 * 26), updatedAt: ago(60 * 26), url: "" },
+  { id: "file_2", botId: "b_inbox", path: "exports/october-senders.csv", folder: "botdesk/inbox", contentType: "text/csv", sizeBytes: 18_204, available: false, createdAt: ago(60 * 24 * 20), updatedAt: ago(60 * 24 * 20), url: "" },
+  { id: "file_3", botId: "b_inbox", path: "reports/inbox-this-week.md", folder: "botdesk/inbox", contentType: "text/markdown", sizeBytes: textSize("file_3"), available: true, createdAt: ago(60 * 24 * 3), updatedAt: ago(25), url: "" },
 ];
 
 export const memories: MemoryItem[] = [

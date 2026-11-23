@@ -1,0 +1,52 @@
+import { File as FileIcon, FileArchive, FileAudio, FileImage, FileSpreadsheet, FileText, FileVideo } from "lucide-react";
+import { TimeAgo } from "@/components/time-ago";
+import type { Bot, BotFile } from "@/data/types";
+import { formatBytes } from "@/lib/format";
+import { cn } from "@/lib/utils";
+import { DeleteFileButton } from "./delete-file-button";
+
+/**
+ * One file in a bot's folder: its path (opens in a new tab), size and when it last changed.
+ * One saved to storage the organization no longer uses is dimmed and can't be opened.
+ */
+export function FileRow({ bot, file }: { bot: Bot; file: BotFile }) {
+  const slash = file.path.lastIndexOf("/") + 1;
+  const name = (
+    <>
+      {slash > 0 && <span className="text-muted-foreground">{file.path.slice(0, slash)}</span>}
+      {file.path.slice(slash)}
+    </>
+  );
+
+  return (
+    <li className={cn("flex items-center gap-3 rounded-xl border py-2 pr-1.5 pl-3", !file.available && "bg-muted/40")}>
+      <FileTypeIcon type={file.contentType} className={cn("size-4 shrink-0 text-muted-foreground", !file.available && "opacity-60")} />
+      <div className={cn("min-w-0 flex-1", !file.available && "opacity-60")}>
+        {file.available && file.url ? (
+          <a href={file.url} target="_blank" rel="noreferrer" title={file.path}
+            className="block truncate rounded-sm text-sm font-medium hover:underline focus-visible:ring-3 focus-visible:ring-ring/50 focus-visible:outline-none">
+            {name}
+          </a>
+        ) : (
+          <p className="truncate text-sm font-medium" title={file.path}>{name}</p>
+        )}
+        <p className="text-xs text-muted-foreground">
+          {file.available ? <>{formatBytes(file.sizeBytes)} · <TimeAgo iso={file.updatedAt} /></> : "In storage you no longer use"}
+        </p>
+      </div>
+      <DeleteFileButton bot={bot} file={file} />
+    </li>
+  );
+}
+
+/** A file's icon from its type: image, video, audio, spreadsheet, text, archive, or a plain file. */
+function FileTypeIcon({ type, className }: { type: string; className: string }) {
+  const props = { className, "aria-hidden": true } as const;
+  if (type.startsWith("image/")) return <FileImage {...props} />;
+  if (type.startsWith("video/")) return <FileVideo {...props} />;
+  if (type.startsWith("audio/")) return <FileAudio {...props} />;
+  if (type === "text/csv" || type.includes("spreadsheet") || type.includes("excel")) return <FileSpreadsheet {...props} />;
+  if (type.startsWith("text/") || type === "application/json" || type === "application/pdf") return <FileText {...props} />;
+  if (/zip|compressed|tar|gzip/.test(type)) return <FileArchive {...props} />;
+  return <FileIcon {...props} />;
+}

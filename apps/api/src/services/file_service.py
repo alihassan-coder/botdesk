@@ -7,19 +7,26 @@ hold a-z, 0-9 and "-", so `_shared` can't be a bot's). Both people (uploads) and
 """
 
 import hashlib
+import logging
 import mimetypes
 import re
 import uuid
+from collections.abc import Sequence
 
 from sqlalchemy import func, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.core.config import Settings
-from src.core.errors import BadRequest, NotFound
+from src.core.errors import AppError, BadRequest, NotFound
 from src.models import Bot, File
 from src.schemas.file import FileOut
+from src.services import storage_service
+from src.services.credential_vault import CredentialVault
 from src.services.storage_service import LOCAL, ROOT, OrgStorage
 from src.storage import StorageError
+
+logger = logging.getLogger(__name__)
 
 SHARED = "_shared"
 MAX_PATH = 300
@@ -35,6 +42,8 @@ BAD_PATH = (
 )
 NOT_FOUND = "File not found."
 ELSEWHERE = "This file is in storage the organization no longer uses, so it can't be opened."
+SAVED_MEANWHILE = "Someone saved a file at this path at the same moment. Try again."
+MAX_CONTENT_TYPE = 120
 
 _TEXT_TYPES = {
     "application/json",
@@ -65,10 +74,16 @@ def folder_of(bot: Bot | None) -> str:
 
 
 def content_type_of(path: str, given: str | None = None) -> str:
-    if given and given != "application/octet-stream":
+    """The type people's browsers said, if it's a plain `type/subtype`; else guessed from the name."""
+    given = (given or "").split(";", 1)[0].strip().lower()
+    plain = len(given) <= MAX_CONTENT_TYPE and _TYPE.fullmatch(given)
+    if given and given != "application/octet-stream" and plain:
         return given
     guessed, _ = mimetypes.guess_type(path)
     return guessed or "application/octet-stream"
+
+
+_TYPE = re.compile(r"[a-z0-9][a-z0-9.+_-]*/[a-z0-9][a-z0-9.+_-]*")
 
 
 def is_text(content_type: str) -> bool:
@@ -128,11 +143,12 @@ async def save(
     _check_size(len(data), settings)
     bot_id = bot.id if bot else None
     file = await find_by_path(db, org_id, bot_id, path)
+    replacing = file is not None and file.storage == storage.name
     if storage.name == LOCAL:
-        await _check_quota(db, org_id, len(data) - (file.size_bytes if file else 0), settings)
+        await _check_quota(db, org_id, len(data) - (file.size_bytes if file and replacing else 0), settings)
 
     # Replacing a file keeps its place, unless it was in storage the organization left.
-    key = file.storage_key if file and file.storage == storage.name else f"{folder_of(bot)}/{path}"
+    key = file.storage_key if file and replacing else await _free_key(db, org_id, storage, bot, path)
     kind = content_type_of(path, content_type)
     try:
         await storage.files.put(key, data, content_type=kind)
@@ -146,8 +162,45 @@ async def save(
     file.content_type, file.size_bytes = kind, len(data)
     file.sha256 = hashlib.sha256(data).hexdigest()
     file.run_id, file.user_id = run_id, user_id
-    await db.flush()
+    try:
+        await db.flush()
+    except IntegrityError:  # the same path saved by someone else between our read and this write
+        raise BadRequest(SAVED_MEANWHILE) from None
     return file
+
+
+async def _free_key(db: AsyncSession, org_id: uuid.UUID, storage: OrgStorage, bot: Bot | None, path: str) -> str:
+    """`botdesk/<handle>/<path>`, unless another file already lives there: a handle can belong to
+    another bot later (renamed or removed bots free theirs), and its files keep their keys. Then
+    the bot's folder gets its id: `botdesk/<handle>-<first 8 of its id>/<path>`."""
+    key = f"{folder_of(bot)}/{path}"
+    taken = await db.scalar(
+        select(File.id).where(File.org_id == org_id, File.storage == storage.name, File.storage_key == key).limit(1)
+    )
+    if taken is None or bot is None:
+        return key
+    return f"{ROOT}/{bot.handle}-{str(bot.id)[:8]}/{path}"
+
+
+async def remove_bytes(
+    db: AsyncSession, files: Sequence[File], org_id: uuid.UUID, *, settings: Settings, vault: CredentialVault
+) -> None:
+    """After their rows are gone (a bot removed): delete the files from the organization's storage
+    where it still holds them. Best effort: a failure is logged, never raised."""
+    if not files:
+        return
+    try:
+        row = await storage_service.find(db, org_id)
+        storage = await storage_service.open_storage(row, org_id, settings, vault)
+    except AppError:
+        return
+    for file in files:
+        if file.storage != storage.name:
+            continue
+        try:
+            await storage.files.delete(file.storage_key)
+        except StorageError:
+            logger.warning("Couldn't delete %s from storage %s", file.storage_key, storage.name)
 
 
 async def read(storage: OrgStorage | None, file: File) -> bytes:

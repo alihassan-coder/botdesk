@@ -24,7 +24,9 @@ HOME = """<!doctype html><title>Acme</title>
 <a href="/pricing.html">Pricing</a>
 <form action="/search.html" method="get"><input type="search" name="q" aria-label="Search"></form>
 <form action="/order" method="post"><input name="qty" aria-label="Quantity"><button>Buy now</button></form>
-<input type="password" aria-label="Password">"""
+<input type="password" aria-label="Password">
+<form action="/subscribe" method="get"><input name="email" aria-label="Newsletter">
+<button formmethod="post">Subscribe</button></form>"""
 PRICING = "<!doctype html><title>Pricing</title><p>Free forever.</p>"
 SEARCH = "<!doctype html><title>Search</title><p>Results</p>"
 
@@ -90,6 +92,8 @@ async def test_a_bot_reads_a_page_and_follows_links_and_searches(tools: BrowserT
         '[3] text box "Quantity"',
         '[4] button "Buy now"',
         '[5] password field "Password"',
+        '[6] text box "Newsletter"',
+        '[7] button "Subscribe"',
     ]
 
     pricing = await tools.follow(ctx, ref=1)
@@ -107,6 +111,9 @@ async def test_reading_tools_refuse_what_would_change_something(tools: BrowserTo
         await tools.follow(ctx, ref=4)
     with pytest.raises(NotDone, match="not a search box"):
         await tools.search(ctx, ref=3, text="2")
+    # A GET form whose button posts: Enter would post, so it isn't a search.
+    with pytest.raises(NotDone, match="not a search box"):
+        await tools.search(ctx, ref=6, text="ali@acme.dev")
 
 
 async def test_clicks_must_match_what_people_approved_and_passwords_are_never_typed(

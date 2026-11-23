@@ -164,7 +164,7 @@ def _s3(location: S3Location, access_key_id: str, secret_access_key: str, settin
         location,
         access_key_id=access_key_id,
         secret_access_key=secret_access_key,
-        allow_http=settings.allow_private_storage_urls,
+        allow_private=settings.allow_private_storage_urls,
     )
 
 

@@ -125,3 +125,42 @@ async def test_s3_storage_needs_its_fields(client: httpx.AsyncClient) -> None:
     org, _ = await _org_with_bot(client)
     response = await client.put(f"{org}/storage", json={"provider": "s3", "s3": {"bucket": "files"}})
     assert response.status_code == 422
+
+
+async def test_a_new_bot_with_an_old_bots_handle_never_overwrites_its_files(client: httpx.AsyncClient) -> None:
+    org, first = await _org_with_bot(client)
+    mine = (await _upload(client, org, bot_id=first["id"], name="notes.txt", data=b"first bot's")).json()
+    await client.patch(f"{org}/bots/{first['id']}", json={"name": "Mail Desk"})  # frees @inbox-manager
+    second = (await client.post(f"{org}/bots", json={"name": "Inbox Manager"})).json()
+    assert second["handle"] == "inbox-manager"
+
+    theirs = (await _upload(client, org, bot_id=second["id"], name="notes.txt", data=b"second bot's")).json()
+    assert theirs["folder"] == f"botdesk/inbox-manager-{second['id'][:8]}"
+    assert (await client.get(f"{org}/files/{mine['id']}/content")).content == b"first bot's"
+    assert (await client.get(f"{org}/files/{theirs['id']}/content")).content == b"second bot's"
+
+
+async def test_removing_a_bot_removes_its_files_from_storage(client: httpx.AsyncClient) -> None:
+    org, bot = await _org_with_bot(client)
+    await _upload(client, org, bot_id=bot["id"], name="old.txt", data=b"x")
+    folder = Path(TEST_SETTINGS.files_dir) / org.rsplit("/", 1)[1] / "botdesk" / "inbox-manager"
+    assert (folder / "old.txt").exists()
+    assert (await client.delete(f"{org}/bots/{bot['id']}")).status_code == 204
+    assert not (folder / "old.txt").exists()
+
+
+async def test_a_file_and_a_folder_with_the_same_name_is_refused_not_a_crash(client: httpx.AsyncClient) -> None:
+    org, bot = await _org_with_bot(client)
+    assert (await _upload(client, org, bot_id=bot["id"], name="reports", data=b"x")).status_code == 201
+    clash = await _upload(client, org, bot_id=bot["id"], name="x.csv", data=b"x", path="reports/march.csv")
+    assert clash.status_code == 400
+    assert "same name" in clash.json()["detail"]
+
+
+async def test_odd_content_types_are_replaced_by_a_guess_from_the_name(client: httpx.AsyncClient) -> None:
+    org, bot = await _org_with_bot(client)
+    odd = {"file": ("page.html", b"<b>x</b>", "text/html; " + "x" * 200)}
+    saved = (await client.post(f"{org}/files", data={"botId": bot["id"]}, files=odd)).json()
+    assert saved["contentType"] == "text/html"
+    opened = await client.get(f"{org}/files/{saved['id']}/content")
+    assert opened.headers["content-disposition"].startswith("attachment")  # HTML is never shown from the API

@@ -22,8 +22,8 @@ from src.services.credential_vault import CredentialVault
 
 NO_BROWSER = "This server has no browser for bots. An owner or admin can choose one in Settings → Computers."
 SIGN_IN_NEEDED = (
-    "That's a password field. Bots never type passwords: ask a person to sign in to this site for the bot "
-    "(taking over the bot's browser is coming soon), then carry on."
+    "That's a password field. Bots never type passwords: ask a person to sign in to this site for you "
+    "(they open your Computer tab and take over your browser), then carry on."
 )
 
 
@@ -118,6 +118,11 @@ def _labelled(ref: int, words: str) -> Callable[[Element], None]:
     """The approval card shows `words`; refuse when the element is something else."""
 
     def check(element: Element) -> None:
+        if not element.name:
+            raise NotDone(
+                f"[{ref}] is a {element.kind} with no label on the page, so people couldn't tell what they'd "
+                "approve. Use another element, or ask a person to do it by taking over your browser."
+            )
         if not element.matches(words):
             raise NotDone(
                 f'[{ref}] is the {element.kind} "{element.name}", not {words}. '

@@ -1,7 +1,8 @@
 """Where bots keep their files (ADR 0017 §3): one small interface, one adapter per kind of storage.
 
 - `LocalStorage`: a folder on the BotDesk server.
-- `S3Storage`: any S3-compatible service (AWS S3, Cloudflare R2, Backblaze B2, Tigris, MinIO…).
+- `S3Storage`: any S3-compatible service (AWS S3, Cloudflare R2, Backblaze B2, Tigris, MinIO…),
+  signed with SigV4 and sent through the guarded HTTP client.
 
 Adapters know nothing about bots, organizations or the database; `services/file_service.py` does.
 """

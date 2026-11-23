@@ -2,7 +2,7 @@ import uuid
 
 from fastapi import APIRouter, BackgroundTasks, status
 
-from src.api.deps import AppSettings, Db, OrgAccess, Runs
+from src.api.deps import AppSettings, Db, OrgAccess, Runs, Vault
 from src.controllers import bot_controller
 from src.schemas.bot import BotIn, BotOut, BotUpdate
 from src.schemas.bot_tool import BotToolsIn, BotToolsOut, BotTriggerIn
@@ -56,9 +56,11 @@ async def update_bot(
 
 
 @router.delete("/{bot_id}", status_code=status.HTTP_204_NO_CONTENT)
-async def delete_bot(bot_id: uuid.UUID, access: OrgAccess, db: Db, runs: Runs) -> None:
-    """Remove a bot. Owners and admins only."""
-    await bot_controller.delete_bot(db, access, runs, bot_id)
+async def delete_bot(
+    bot_id: uuid.UUID, access: OrgAccess, db: Db, runs: Runs, settings: AppSettings, vault: Vault
+) -> None:
+    """Remove a bot, and its files from the organization's storage. Owners and admins only."""
+    await bot_controller.delete_bot(db, access, runs, bot_id, settings=settings, vault=vault)
 
 
 @router.get("/{bot_id}/tools")

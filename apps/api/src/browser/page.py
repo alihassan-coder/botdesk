@@ -23,6 +23,9 @@ _DESCRIBE = """
 const describe = (el, ref) => {
   const tag = el.tagName.toLowerCase();
   const form = el.form || el.closest('form');
+  // How Enter would send the form: its default button's own method wins over the form's.
+  const submitter = form && form.querySelector(
+    'button:not([type]), button[type=submit], input[type=submit], input[type=image]');
   const name = (el.getAttribute('aria-label') || (el.labels && el.labels[0] && el.labels[0].innerText)
     || el.getAttribute('placeholder') || el.innerText || (tag === 'input' ? el.value : '')
     || el.getAttribute('title') || el.getAttribute('alt') || el.getAttribute('name') || '')
@@ -32,7 +35,9 @@ const describe = (el, ref) => {
     type: (el.getAttribute('type') || '').toLowerCase(),
     role: (el.getAttribute('role') || '').toLowerCase(),
     href: tag === 'a' ? el.href : '',
-    formMethod: form ? (form.getAttribute('method') || 'get').toLowerCase() : '',
+    formMethod: form
+      ? ((submitter && submitter.getAttribute('formmethod')) || form.getAttribute('method') || 'get').toLowerCase()
+      : '',
   };
 };
 """
@@ -116,10 +121,11 @@ class Element:
 
     @property
     def is_search_box(self) -> bool:
-        """A box whose Enter only searches: type=search, a searchbox, or a text box in a GET form."""
-        if self.role == "searchbox" or (self.tag == "input" and self.type == "search"):
-            return True
-        return self.tag == "input" and self.type in ("", "text") and self.form_method == "get"
+        """A box whose Enter only searches: a text or search box in a form that sends with GET (its
+        default button's method included). A box outside a form is left to `browser.type`: what
+        its page does on Enter is up to the page's scripts."""
+        box = self.role == "searchbox" or (self.tag == "input" and self.type in ("", "text", "search"))
+        return box and self.form_method == "get"
 
     @property
     def is_password(self) -> bool:
@@ -131,10 +137,11 @@ class Element:
         return f"[{self.ref}] {self.kind}{label}{where}"
 
     def matches(self, what: str) -> bool:
-        """Whether `what` (the bot's words for it, shown on the approval card) fits this element:
-        one contains the other, ignoring case and spacing. An element with no name fits anything."""
-        mine, theirs = _plain(self.name), _plain(what)
-        return not mine or mine in theirs or theirs in mine
+        """Whether `what` (the bot's words for it, shown on the approval card) names this element:
+        it holds the element's whole label, ignoring case and spacing ('the "Send now" button').
+        An element with no label matches nothing: people couldn't tell what they approve."""
+        mine = _plain(self.name)
+        return bool(mine) and mine in _plain(what)
 
 
 _TEXT_INPUTS = ("", "text", "email", "tel", "url", "number", "search", "date", "time")

@@ -7,6 +7,8 @@ from pathlib import Path
 
 from src.storage.base import StorageError, check_key, round_trip
 
+CLASH = "A file and a folder can't have the same name: {key} clashes with one that's already there."
+
 
 class LocalStorage:
     def __init__(self, root: Path) -> None:
@@ -24,7 +26,14 @@ class LocalStorage:
 
     async def put(self, key: str, data: bytes, *, content_type: str) -> None:
         path = self._path(key)
-        await asyncio.to_thread(_write, path, data)
+        try:
+            await asyncio.to_thread(_write, path, data)
+        except (FileExistsError, NotADirectoryError, IsADirectoryError, PermissionError) as error:
+            if isinstance(error, PermissionError) and not path.is_dir():
+                raise StorageError(f"BotDesk couldn't save that file on the server ({error.strerror}).") from None
+            raise StorageError(CLASH.format(key=key)) from None
+        except OSError as error:
+            raise StorageError(f"BotDesk couldn't save that file on the server ({error.strerror}).") from None
 
     async def get(self, key: str) -> bytes:
         path = self._path(key)
@@ -32,9 +41,14 @@ class LocalStorage:
             return await asyncio.to_thread(path.read_bytes)
         except FileNotFoundError:
             raise StorageError("That file isn't there any more.") from None
+        except OSError as error:
+            raise StorageError(f"BotDesk couldn't read that file on the server ({error.strerror}).") from None
 
     async def delete(self, key: str) -> None:
-        await asyncio.to_thread(self._path(key).unlink, missing_ok=True)
+        try:
+            await asyncio.to_thread(self._path(key).unlink, missing_ok=True)
+        except OSError as error:
+            raise StorageError(f"BotDesk couldn't delete that file on the server ({error.strerror}).") from None
 
     async def check(self) -> None:
         try:

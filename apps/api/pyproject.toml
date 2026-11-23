@@ -24,7 +24,6 @@ dependencies = [
     "langgraph-checkpoint-postgres>=3.2.0",
     "mcp>=2.3.0",
     "mem0ai>=2.2.1",
-    "obstore>=0.12.1",
     "playwright>=1.65.2",
     "procrastinate>=3.11.0,<3.12",  # its schema is a migration: upgrade on purpose (ADR 0013)
     "psycopg-pool>=3.3.3",

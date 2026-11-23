@@ -18,12 +18,14 @@ from src.schemas.bot_tool import BotToolsIn, BotToolsOut, BotTriggerIn
 from src.services import (
     binding_service,
     bot_service,
+    file_service,
     mcp_server_service,
     provider_service,
     task_service,
     trigger_service,
 )
 from src.services.connection_service import Actor
+from src.services.credential_vault import CredentialVault
 from src.services.mcp_server_service import McpRuntime
 
 
@@ -74,11 +76,20 @@ async def update_bot(
     return BotOut.model_validate(bot)
 
 
-async def delete_bot(db: AsyncSession, access: Access, runs: RunManager, bot_id: uuid.UUID) -> None:
+async def delete_bot(
+    db: AsyncSession,
+    access: Access,
+    runs: RunManager,
+    bot_id: uuid.UUID,
+    *,
+    settings: Settings,
+    vault: CredentialVault,
+) -> None:
     """Nothing may wait for, or keep working for, a bot that's gone: its handoffs end first (a task
     handed to it fails and its parent carries on; one handed by it is cancelled), each parent in a
     short transaction of its own. Then the runs that go with it (its own, and all in its DMs) and
-    the children of those tasks are stopped, and only then is it deleted."""
+    the children of those tasks are stopped, and only then is it deleted. Its files' bytes are
+    removed from the organization's storage last, best effort (their rows go with the bot)."""
     access.require_admin()
     await bot_service.get_bot(db, access.org.id, bot_id)  # 404 for another organization's bot
     aftermath = task_service.Aftermath()
@@ -94,8 +105,10 @@ async def delete_bot(db: AsyncSession, access: Access, runs: RunManager, bot_id:
         runs.bus.announce(parent.thread_id)
     for run_id in dict.fromkeys([*aftermath.stop, *going]):
         await runs.stop(run_id)  # announces each run's chat (a task's child works in its parent's)
+    files = await file_service.list_files(db, access.org.id, bot_id)
     await bot_service.delete_bot(db, await bot_service.get_bot(db, access.org.id, bot_id))
     await db.commit()
+    await file_service.remove_bytes(db, files, access.org.id, settings=settings, vault=vault)
 
 
 # Tools (bindings, slice 5.2). Any member may switch a bot's plugins on and off, like editing it;

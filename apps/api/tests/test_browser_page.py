@@ -14,9 +14,10 @@ def element(**fields: str) -> Element:
 def test_links_and_search_boxes_only_read_everything_else_is_a_button() -> None:
     assert element(tag="a", href="https://acme.dev/pricing").is_link
     assert not element(tag="a", href="javascript:buy()").is_link
-    assert element(tag="input", type="search").is_search_box
+    assert element(tag="input", type="search", form_method="get").is_search_box
     assert element(tag="input", type="text", form_method="get").is_search_box
     assert not element(tag="input", type="text", form_method="post").is_search_box
+    assert not element(tag="input", type="search").is_search_box  # no form: Enter does what the page likes
     assert element(tag="input", type="password").kind == "password field"
     assert element(tag="button", name="Send").kind == "button"
     assert element(tag="div", role="button").kind == "button"
@@ -25,9 +26,10 @@ def test_links_and_search_boxes_only_read_everything_else_is_a_button() -> None:
 def test_the_words_on_an_approval_card_must_fit_the_element() -> None:
     send = element(name="Send now")
     assert send.matches('the "Send now" button')
-    assert send.matches("send")
+    assert send.matches("send  NOW")
+    assert not send.matches("send")  # part of a label could hide the rest ("Delete account" as "e")
     assert not send.matches("the Cancel button")
-    assert element(name="").matches("the icon button")  # nothing to compare with
+    assert not element(name="").matches("the icon button")  # nothing to check it against
 
 
 def test_a_page_is_shown_a_part_at_a_time_with_its_elements_first() -> None:

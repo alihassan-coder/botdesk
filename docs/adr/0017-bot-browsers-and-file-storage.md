@@ -134,3 +134,10 @@ Each step is usable on its own and ends with tests and a browser check.
 - **Files** (step 1) shipped without "files attached in chat"; that comes with the chat composer work. The shared folder is `botdesk/_shared` (handles only hold a-z, 0-9 and "-", so it can't clash with a bot's folder). Storage settings live in `computer_providers` (one row per organization and kind; none means Local).
 - **Local browser** (step 2): instead of one `browser.click` whose risk depends on the element, each risk has its own tool, so the policy decides before anything runs: `follow` (links) and `search` (search boxes) are `read` and refuse anything else; `click`, `type` and `choose` are `write-external` and name the element in words (`what`, `field`) that must match its label, which is what the approval card shows. `BrowserProvider` as an interface arrives with the first cloud provider (step 4); today there is `LocalBrowsers`.
 - The Docker image has no browser yet; that and cloud providers are the next decision.
+
+## Update 2026-11-23: after the review
+
+- S3-compatible storage no longer uses obstore: it followed redirects, so a public endpoint could send BotDesk's requests to the server's own network. `src/storage/s3.py` now signs with SigV4 (checked against AWS's published example) and uses the guarded HTTP client (pinned public addresses, no redirects), which also closes DNS rebinding for storage.
+- A bot's folder is `botdesk/<handle>/` unless another file already holds the key (a reused handle): then `botdesk/<handle>-<id8>/`. Removing a bot deletes its files from storage.
+- The approval words for `click`, `type` and `choose` must contain the element's whole label; unlabelled elements are refused. `search` requires that Enter sends with GET, including the default button's `formmethod`.
+- Still open: the Local browser's address check resolves names once, so DNS rebinding can get past it (Chromium resolves again); the local quota check isn't atomic under concurrent saves.

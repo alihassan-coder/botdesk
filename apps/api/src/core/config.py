@@ -75,6 +75,17 @@ class Settings(BaseSettings):
     # S3-compatible storage on a private address (MinIO on your own network): refused by default.
     allow_private_storage_urls: bool = False
 
+    # Bots' browsers (ADR 0017). Local: Chromium on this server, one per bot, its sign-ins kept in
+    # BROWSER_PROFILES_DIR/<organization id>/<bot id>/. LOCAL_BROWSER_CHANNEL="" uses Playwright's
+    # Chromium (`uv run playwright install chromium`); "chrome" or "msedge" use the installed browser.
+    local_browser: bool = True
+    local_browser_channel: str = ""
+    browser_profiles_dir: str = "data/browser-profiles"
+    browser_idle_minutes: int = 10
+    browser_max_sessions: int = 3
+    # Pages on private addresses (the server's own network): refused by default.
+    allow_private_browser_urls: bool = False
+
     # Run limits (agents-and-plugins.md §4.2) and how many runs one bot may have going at once.
     run_max_steps: int = 25
     run_max_seconds: int = 900

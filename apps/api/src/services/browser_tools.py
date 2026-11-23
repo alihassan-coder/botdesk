@@ -1,0 +1,127 @@
+"""The Browser plugin's `BrowserAccess` (ADR 0017 §4): each tool checks the element is what the tool
+says (a link for `follow`, a search box for `search`, the label people approved for `click`),
+then acts in the bot's browser and returns the page as it is now.
+
+Refusals raise `NotDone` (through `BrowserUnavailable`): nothing happened, and the bot may try
+again differently. Screenshots go to the bot's files.
+"""
+
+from collections.abc import Callable
+from datetime import UTC, datetime
+
+from botdesk_plugin_sdk import NotDone, ToolContext, ToolResult
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+
+from src.browser.local import BotKey, LocalBrowsers
+from src.browser.page import Element
+from src.core.config import Settings
+from src.core.errors import AppError
+from src.models import Bot
+from src.services import file_service, storage_service
+from src.services.credential_vault import CredentialVault
+
+NO_BROWSER = "This server has no browser for bots. An owner or admin can choose one in Settings → Computers."
+SIGN_IN_NEEDED = (
+    "That's a password field. Bots never type passwords: ask a person to sign in to this site for the bot "
+    "(taking over the bot's browser is coming soon), then carry on."
+)
+
+
+class BrowserTools:
+    def __init__(
+        self,
+        browsers: LocalBrowsers | None,
+        sessionmaker: async_sessionmaker[AsyncSession],
+        settings: Settings,
+        vault: CredentialVault,
+    ) -> None:
+        self._browsers = browsers
+        self._sessionmaker = sessionmaker
+        self._settings = settings
+        self._vault = vault
+
+    async def open(self, ctx: ToolContext, *, url: str) -> ToolResult:
+        return (await self._local().open(_key(ctx), url.strip())).result()
+
+    async def read(self, ctx: ToolContext, *, start: int) -> ToolResult:
+        return (await self._local().view(_key(ctx))).result(start=start)
+
+    async def follow(self, ctx: ToolContext, *, ref: int) -> ToolResult:
+        def link_only(element: Element) -> None:
+            if not element.is_link:
+                raise NotDone(f"[{ref}] is a {element.kind}, not a link. Use browser.click for it.")
+
+        return (await self._local().act(_key(ctx), ref, link_only, "click")).result()
+
+    async def search(self, ctx: ToolContext, *, ref: int, text: str) -> ToolResult:
+        def search_box_only(element: Element) -> None:
+            if not element.is_search_box:
+                raise NotDone(f"[{ref}] is a {element.kind}, not a search box. Use browser.type for it.")
+
+        return (await self._local().act(_key(ctx), ref, search_box_only, "submit", text)).result()
+
+    async def click(self, ctx: ToolContext, *, ref: int, what: str) -> ToolResult:
+        return (await self._local().act(_key(ctx), ref, _labelled(ref, what), "click")).result()
+
+    async def type(self, ctx: ToolContext, *, ref: int, text: str, field: str, submit: bool) -> ToolResult:
+        def field_not_password(element: Element) -> None:
+            if element.is_password:
+                raise NotDone(SIGN_IN_NEEDED)
+            _labelled(ref, field)(element)
+
+        action = "submit" if submit else "fill"
+        return (await self._local().act(_key(ctx), ref, field_not_password, action, text)).result()
+
+    async def choose(self, ctx: ToolContext, *, ref: int, option: str, field: str) -> ToolResult:
+        return (await self._local().act(_key(ctx), ref, _labelled(ref, field), "select", option)).result()
+
+    async def back(self, ctx: ToolContext) -> ToolResult:
+        return (await self._local().back(_key(ctx))).result()
+
+    async def screenshot(self, ctx: ToolContext, *, path: str) -> ToolResult:
+        picture = await self._local().screenshot(_key(ctx))
+        path = path.strip() or f"screenshots/{datetime.now(UTC):%Y-%m-%d-%H%M%S}.png"
+        async with self._sessionmaker() as db:
+            bot = await db.get(Bot, ctx.bot_id)
+            if bot is None or bot.org_id != ctx.org_id:
+                raise NotDone("This bot isn't there any more.")
+            try:
+                row = await storage_service.find(db, ctx.org_id)
+                storage = await storage_service.open_storage(row, ctx.org_id, self._settings, self._vault)
+                file = await file_service.save(
+                    db,
+                    storage,
+                    org_id=ctx.org_id,
+                    bot=bot,
+                    path=path,
+                    data=picture,
+                    content_type="image/png",
+                    settings=self._settings,
+                    run_id=ctx.run_id,
+                )
+            except AppError as error:
+                raise NotDone(error.message) from None
+            await db.commit()
+            return {"saved": file.storage_key, "path": file.path, "size": file.size_bytes}
+
+    def _local(self) -> LocalBrowsers:
+        if self._browsers is None or not self._settings.local_browser:
+            raise NotDone(NO_BROWSER)
+        return self._browsers
+
+
+def _key(ctx: ToolContext) -> BotKey:
+    return (ctx.org_id, ctx.bot_id)
+
+
+def _labelled(ref: int, words: str) -> Callable[[Element], None]:
+    """The approval card shows `words`; refuse when the element is something else."""
+
+    def check(element: Element) -> None:
+        if not element.matches(words):
+            raise NotDone(
+                f'[{ref}] is the {element.kind} "{element.name}", not {words}. '
+                "Read the page again and use the right number."
+            )
+
+    return check

@@ -45,6 +45,7 @@ from psycopg.rows import DictRow, dict_row
 from psycopg_pool import AsyncConnectionPool
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from src.browser.local import LocalBrowsers, local_browser_settings
 from src.core.config import Settings
 from src.core.database import POOL_MAX_LIFETIME_SECONDS, IdleCheck, postgres_connect_args
 from src.core.secrets import SecretBox
@@ -61,6 +62,7 @@ from src.runtime.reporter import RunReporter
 from src.runtime.tool_access import ToolAccessProvider
 from src.runtime.tool_pipeline import NeedsAttention
 from src.services import approval_service, run_event_service, run_service, task_service, tool_execution_service
+from src.services.browser_tools import BrowserTools
 from src.services.credential_vault import CredentialVault
 from src.services.file_tools import FileTools
 from src.services.mcp_server_service import McpRuntime
@@ -126,7 +128,12 @@ class RunManager:
         vault = CredentialVault.from_settings(settings)
         # The Files tools keep files through the same service as people's uploads (ADR 0017).
         files_access = FileTools(sessionmaker, settings, vault)
-        self.registry = registry or build_registry(settings.plugin_ids, files_access=files_access)
+        # Bots' Local browsers start on first use, on a thread of their own (ADR 0017).
+        self.browsers = LocalBrowsers(local_browser_settings(settings)) if settings.local_browser else None
+        browser_access = BrowserTools(self.browsers, sessionmaker, settings, vault)
+        self.registry = registry or build_registry(
+            settings.plugin_ids, files_access=files_access, browser_access=browser_access
+        )
         # What tools may reach: their plugin's hosts, with its connection's credential (ADR 0010).
         # Tests set `tool_access.transport` to answer tools' requests without a network.
         # OAuth tokens are refreshed just before a tool uses them (services/oauth_flow.py).
@@ -310,6 +317,8 @@ class RunManager:
             task.cancel()
         await asyncio.gather(*self._background, return_exceptions=True)
         await asyncio.gather(*self._unstoppable, return_exceptions=True)
+        if self.browsers is not None:
+            await self.browsers.close()
 
     # The life of one run
 

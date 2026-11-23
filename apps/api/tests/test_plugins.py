@@ -102,14 +102,14 @@ def fake_plugins(monkeypatch: pytest.MonkeyPatch) -> None:
 
 def test_the_demo_plugin_is_found_through_its_entry_point() -> None:
     assert "demo" in loader.installed_plugins()
-    assert [plugin.id for plugin in build_registry(["demo"]).plugins()] == ["team", "files", "demo"]
+    assert [plugin.id for plugin in build_registry(["demo"]).plugins()] == ["team", "files", "browser", "demo"]
 
 
 @pytest.mark.usefixtures("fake_plugins")
 def test_only_allowlisted_plugins_are_imported() -> None:
     # `missing-module` is installed but not allowlisted: never imported, so no error.
     registry = build_registry(["good", "static", "good"])
-    assert [plugin.id for plugin in registry.plugins()] == ["team", "files", "good", "static"]
+    assert [plugin.id for plugin in registry.plugins()] == ["team", "files", "browser", "good", "static"]
     assert registry.get("good__ping") is not None
     assert registry.get("good.ping") is registry.get("good__ping")  # a full name is looked up as it is
 
@@ -117,14 +117,14 @@ def test_only_allowlisted_plugins_are_imported() -> None:
 @pytest.mark.usefixtures("fake_plugins")
 def test_an_empty_allowlist_loads_only_the_core_plugins() -> None:
     registry = build_registry([])
-    assert [plugin.id for plugin in registry.plugins()] == ["team", "files"]
+    assert [plugin.id for plugin in registry.plugins()] == ["team", "files", "browser"]
     handoff = registry.get("team__handoff")
     assert handoff is not None and handoff.name == "team.handoff"
     assert (handoff.spec.title, handoff.spec.risk, handoff.spec.idempotent) == ("Hand off", "write-internal", True)
     assert handoff.spec.untrusted_output is False
 
 
-@pytest.mark.parametrize("core", ["team", "files"])
+@pytest.mark.parametrize("core", ["team", "files", "browser"])
 def test_naming_a_core_plugin_in_plugins_stops_startup(core: str) -> None:
     with pytest.raises(ValueError, match=f"The plugin id '{core}' is reserved"):
         build_registry(["demo", core])
@@ -146,7 +146,7 @@ def test_broken_plugins_are_skipped_with_a_clear_log_line(caplog: pytest.LogCapt
     with caplog.at_level(logging.ERROR, logger=loader.__name__):
         registry = build_registry(["good", *broken])
 
-    assert [plugin.id for plugin in registry.plugins()] == ["team", "files", "good"]
+    assert [plugin.id for plugin in registry.plugins()] == ["team", "files", "browser", "good"]
     log = caplog.text
     assert "Plugin 'raises' skipped: loading tests.test_plugins:raises failed: RuntimeError: no API key" in log
     assert "Plugin 'sync-handler' skipped: tool 'ping': handler must be an async function" in log

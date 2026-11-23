@@ -86,11 +86,16 @@ async def test_any_member_switches_plugins_and_only_the_plugins_sent_change(team
     await team.sign_in("sara@acme.dev")  # a member, not Scout's creator
     off = await team.bind(None, enabled=False)
     # The core plugins are listed first, on by default (ADR 0014, 0017); only demo was sent.
-    assert [(p["pluginId"], p["enabled"]) for p in off["plugins"]] == [("team", True), ("files", True), ("demo", False)]
+    assert [(p["pluginId"], p["enabled"]) for p in off["plugins"]] == [
+        ("team", True),
+        ("files", True),
+        ("browser", True),
+        ("demo", False),
+    ]
     assert (await _tools(team))["demo"]["enabled"] is False
     response = await team.client.put(_tools_url(team), json={"plugins": []})
-    assert response.status_code == 200 and response.json()["plugins"][2]["enabled"] is False
-    assert (await team.bind(None))["plugins"][2]["enabled"] is True
+    assert response.status_code == 200 and response.json()["plugins"][3]["enabled"] is False
+    assert (await team.bind(None))["plugins"][3]["enabled"] is True
 
 
 async def test_bad_bindings_are_refused(team: Team) -> None:

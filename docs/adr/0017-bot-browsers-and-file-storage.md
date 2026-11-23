@@ -128,3 +128,9 @@ Each step is usable on its own and ends with tests and a browser check.
 4. **Many approvals while a bot browses** after reading a page. Keep ADR 0004 as is (recommended for v1), or add "Allow on this site for this run" to the approval card: a person lets the run click and type on one site until it ends (never `spend`, `destructive` or `credential`)? The second changes ADR 0004 §5.
 5. **Keep the bot's own screenshots 7 days** (recommended)?
 6. **Build order** as §7, files first (recommended)?
+
+## Update 2026-11-23: steps 1 and 2 as built
+
+- **Files** (step 1) shipped without "files attached in chat"; that comes with the chat composer work. The shared folder is `botdesk/_shared` (handles only hold a-z, 0-9 and "-", so it can't clash with a bot's folder). Storage settings live in `computer_providers` (one row per organization and kind; none means Local).
+- **Local browser** (step 2): instead of one `browser.click` whose risk depends on the element, each risk has its own tool, so the policy decides before anything runs: `follow` (links) and `search` (search boxes) are `read` and refuse anything else; `click`, `type` and `choose` are `write-external` and name the element in words (`what`, `field`) that must match its label, which is what the approval card shows. `BrowserProvider` as an interface arrives with the first cloud provider (step 4); today there is `LocalBrowsers`.
+- The Docker image has no browser yet; that and cloud providers are the next decision.

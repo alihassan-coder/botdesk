@@ -626,6 +626,15 @@ Bots keep files ([ADR 0017](../adr/0017-bot-browsers-and-file-storage.md)). Each
 | `GET /api/v1/orgs/{id}/files/{fileId}/content` | The bytes. Images, video, audio and plain text are shown inline; everything else downloads. Always `nosniff` and a `sandbox` CSP |
 | `DELETE /api/v1/orgs/{id}/files/{fileId}` | Removes it from the list and from storage. 204 |
 
+### Browser
+
+Bots open web pages with the core **Browser** plugin (ADR 0017 step 2; on for every bot). Today the browser is **Local**: Chromium on the API's server through Playwright (`src/browser/`), one per bot, with a profile folder per bot (`BROWSER_PROFILES_DIR/<org>/<bot>/`) so sign-ins last. It starts on first use on a thread of its own (Playwright needs a proactor loop on Windows; the API keeps its selector loop for psycopg), closes after `BROWSER_IDLE_MINUTES`, and at most `BROWSER_MAX_SESSIONS` are open at once.
+
+- **What the bot sees:** the address, title, visible text (6,000 characters at a time) and a numbered list of what it can use: `[1] link "Pricing" → https://…`, `[2] search box "Search"`, `[4] button "Buy now"`.
+- **Tools and risk:** `open`, `read`, `follow` (links only), `search` (search boxes only) and `back` are `read`; `click`, `type` and `choose` are `write-external`, so at *Ask before acting* a person approves each, and the card shows the element's own words (the tool refuses when they don't match the element). Typing into a password field is refused: a person signs in instead. `screenshot` saves a PNG to the bot's files (`write-internal`). Pages are outside text, so reading one taints the run.
+- **Addresses:** only http(s); every request a page makes (and its WebSockets) is checked against the same public-address rule as model servers, unless `ALLOW_PRIVATE_BROWSER_URLS`. Service workers are blocked so nothing skips the check.
+- **Installing the browser:** `LOCAL_BROWSER_CHANNEL=chrome` (or `msedge`) uses the browser already installed; empty uses Playwright's Chromium (`uv run playwright install chromium` in `apps/api`, about 150 MB). The Docker image has no browser yet, so there the tools say it isn't installed.
+
 ## Memory
 
 Bots remember with mem0 on pgvector, in the same Postgres database ([agents-and-plugins.md §9](../architecture/agents-and-plugins.md#9-memory)). It's on when `MEMORY_ENABLED=true`, the database is Postgres and `OPENAI_API_KEY` is set (mem0 uses OpenAI to pick what's worth keeping and to embed it); otherwise `NoMemory` remembers nothing and says why.

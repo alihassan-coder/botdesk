@@ -11,7 +11,12 @@ The words BotDesk uses for its domain. Use these exact terms in code, UI copy, d
 | **Session** | A signed-in member on one device. Signing out ends it. |
 | **Bot** | An AI teammate: a name, `@handle`, role, instructions, model, tools, memory, security level, budget, and usually its own computer. |
 | **Chief** | The chief-of-staff bot. It splits work, hands the parts to specialist bots, and combines their results into one answer. It is an ordinary bot with the handoff tool and instructions to delegate, not a special type. |
-| **Computer** | A bot's persistent cloud sandbox (desktop + browser). Default: one per bot. A member can watch it live or **take over**. |
+| **Computer** | A bot's persistent cloud sandbox (a whole desktop). Not built yet; until then a bot has a **Browser** and **Files** ([ADR 0017](docs/adr/0017-bot-browsers-and-file-storage.md)). |
+| **Browser** | A bot's own web browser, run by the organization's **browser provider** (today: Local, on the BotDesk server). The bot opens pages, reads them, and clicks and types through the normal policy. One per bot. |
+| **Browser profile** | What a bot's browser remembers between sessions, above all its sign-ins. Bot-owned: anyone who can talk to the bot uses what it is signed in to. "Forget sign-ins" clears it. |
+| **Take over** | A member watching a bot's browser live and using it themselves, for example to sign in. Bots never type passwords. |
+| **Files** | A bot's own folder (`botdesk/<its handle>/`) in the organization's file storage, plus `botdesk/_shared/` that every bot of the organization can read. _Avoid_: documents, uploads. |
+| **Storage provider** | Where an organization's files are kept: Local (a folder on the BotDesk server) or its own S3-compatible bucket, chosen in Settings → Computers. |
 | **Thread** | A conversation. `dm` = one member + one bot. `group` = several members and bots. |
 | **Mention** | `@handle` inside a message. Mentioning a bot in the chat starts a run for it, whether a member or another bot wrote the message; mentioning a member notifies them. |
 | **Lead** | The one bot in a group that answers a member's message that mentions no bot. Optional. |

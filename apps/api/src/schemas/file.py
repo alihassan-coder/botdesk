@@ -8,7 +8,7 @@ from pydantic import Field, field_validator
 
 from src.schemas.common import ApiModel
 
-StorageProviderId = Literal["local", "s3"]
+StorageProviderId = Literal["local", "s3", "cloudinary"]
 
 
 class S3In(ApiModel):
@@ -33,9 +33,24 @@ class S3In(ApiModel):
         return value.strip().strip("/")
 
 
+class CloudinaryIn(ApiModel):
+    """A Cloudinary product environment. `apiSecret` may be left out when changing other fields of
+    storage that is already Cloudinary: the saved one is kept."""
+
+    cloud_name: str = Field(min_length=1, max_length=100, pattern=r"^[A-Za-z0-9_-]+$")
+    api_key: str = Field(min_length=4, max_length=100)
+    api_secret: str | None = Field(default=None, min_length=4, max_length=200)
+
+    @field_validator("api_key")
+    @classmethod
+    def _strip_key(cls, value: str) -> str:
+        return value.strip()
+
+
 class StorageIn(ApiModel):
     provider: StorageProviderId
     s3: S3In | None = None
+    cloudinary: CloudinaryIn | None = None
 
 
 class S3Out(ApiModel):
@@ -46,9 +61,15 @@ class S3Out(ApiModel):
     access_key_hint: str  # the access key's last 4 characters
 
 
+class CloudinaryOut(ApiModel):
+    cloud_name: str
+    api_key_hint: str  # the API key's last 4 characters
+
+
 class StorageOut(ApiModel):
     provider: StorageProviderId
     s3: S3Out | None
+    cloudinary: CloudinaryOut | None = None
     # Whether this server lets organizations keep files on its own disk (LOCAL_FILES).
     local_available: bool
     checked_at: datetime | None

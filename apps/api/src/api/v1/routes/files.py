@@ -4,7 +4,7 @@ from urllib.parse import quote
 
 from fastapi import APIRouter, Form, Query, Response, UploadFile, status
 
-from src.api.deps import AppSettings, Db, OrgAccess, Vault
+from src.api.deps import AppSettings, Db, OrgAccess, Outbound, Vault
 from src.controllers import file_controller
 from src.schemas.file import FileOut, StorageIn, StorageOut
 
@@ -31,10 +31,13 @@ async def get_storage(access: OrgAccess, db: Db, settings: AppSettings) -> Stora
 
 
 @router.put("/storage")
-async def choose_storage(body: StorageIn, access: OrgAccess, db: Db, settings: AppSettings, vault: Vault) -> StorageOut:
-    """Choose the organization's storage (owners and admins). It is checked with a live write, then
-    `botdesk/` gets a folder per bot and `_shared`. Files saved before stay where they were."""
-    return await file_controller.choose_storage(db, access, body, settings=settings, vault=vault)
+async def choose_storage(
+    body: StorageIn, access: OrgAccess, db: Db, settings: AppSettings, vault: Vault, outbound: Outbound
+) -> StorageOut:
+    """Choose the organization's storage (owners and admins): Local, an S3-compatible bucket, or
+    Cloudinary. It is checked with a live write, then `botdesk/` gets a folder per bot and
+    `_shared`. Files saved before stay where they were."""
+    return await file_controller.choose_storage(db, access, body, settings=settings, vault=vault, transport=outbound)
 
 
 @router.get("/files")

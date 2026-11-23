@@ -1,5 +1,6 @@
 import uuid
 
+import httpx
 from fastapi import UploadFile
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -18,13 +19,26 @@ async def get_storage(db: AsyncSession, access: Access, settings: Settings) -> S
 
 
 async def choose_storage(
-    db: AsyncSession, access: Access, body: StorageIn, *, settings: Settings, vault: CredentialVault
+    db: AsyncSession,
+    access: Access,
+    body: StorageIn,
+    *,
+    settings: Settings,
+    vault: CredentialVault,
+    transport: httpx.AsyncBaseTransport | None = None,
 ) -> StorageOut:
     """Owners and admins. Checked with a live write before anything changes."""
     access.require_admin()
     bots = await bot_service.list_bots(db, access.org.id)
     row = await storage_service.choose(
-        db, org_id=access.org.id, user_id=access.user.id, body=body, settings=settings, vault=vault, bots=bots
+        db,
+        org_id=access.org.id,
+        user_id=access.user.id,
+        body=body,
+        settings=settings,
+        vault=vault,
+        bots=bots,
+        transport=transport,
     )
     await db.commit()
     return storage_service.view_of(row, settings)

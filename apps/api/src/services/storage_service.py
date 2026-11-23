@@ -19,13 +19,15 @@ from src.core.database import utcnow
 from src.core.errors import BadRequest, Unavailable
 from src.core.url_guard import PRIVATE_NETWORK, UnsafeUrl, check_base_url
 from src.models import Bot, ComputerProvider
-from src.schemas.file import S3In, S3Out, StorageIn, StorageOut
+from src.schemas.file import CloudinaryOut, S3In, S3Out, StorageIn, StorageOut
 from src.services.credential_vault import CredentialVault
 from src.storage import FileStorage, LocalStorage, S3Location, S3Storage, StorageError
+from src.storage.cloudinary import CloudinaryStorage
 
 STORAGE = "storage"
 LOCAL = "local"
 S3 = "s3"
+CLOUDINARY = "cloudinary"
 ROOT = "botdesk"
 
 LOCAL_OFF = "This server doesn't keep files itself. An owner or admin can choose storage in Settings → Computers."
@@ -35,6 +37,7 @@ PRIVATE_STORAGE = (
 )
 HTTPS_ONLY = "Use an address that starts with https://."
 NEEDS_S3 = "Fill in the bucket's details."
+NEEDS_CLOUDINARY = "Fill in the Cloudinary details."
 NEEDS_SECRET = "Add the secret access key."  # noqa: S105 - a message, not a password
 
 ROOT_README = (
@@ -60,6 +63,15 @@ async def find(db: AsyncSession, org_id: uuid.UUID) -> ComputerProvider | None:
 def view_of(row: ComputerProvider | None, settings: Settings) -> StorageOut:
     if row is None or row.provider == LOCAL:
         return StorageOut(provider="local", s3=None, local_available=settings.local_files, checked_at=None)
+    if row.provider == CLOUDINARY:
+        cloudinary = CloudinaryOut(cloud_name=row.config["cloud_name"], api_key_hint=row.secret_hint)
+        return StorageOut(
+            provider="cloudinary",
+            s3=None,
+            cloudinary=cloudinary,
+            local_available=settings.local_files,
+            checked_at=row.checked_at,
+        )
     location = _location(row)
     s3 = S3Out(
         endpoint=location.endpoint,
@@ -72,13 +84,23 @@ def view_of(row: ComputerProvider | None, settings: Settings) -> StorageOut:
 
 
 async def open_storage(
-    row: ComputerProvider | None, org_id: uuid.UUID, settings: Settings, vault: CredentialVault
+    row: ComputerProvider | None,
+    org_id: uuid.UUID,
+    settings: Settings,
+    vault: CredentialVault,
+    transport: httpx.AsyncBaseTransport | None = None,
 ) -> OrgStorage:
-    """The organization's storage, ready to use. `Unavailable` when it's Local and Local is off."""
+    """The organization's storage, ready to use. `Unavailable` when it's Local and Local is off.
+    `transport` replaces Cloudinary's network in tests."""
     if row is None or row.provider == LOCAL:
         if not settings.local_files:
             raise Unavailable(LOCAL_OFF)
         return OrgStorage(LocalStorage(Path(settings.files_dir) / str(org_id)), LOCAL)
+    if row.provider == CLOUDINARY:
+        keys = json.loads(vault.unseal(row.encrypted_secret))
+        cloud = row.config["cloud_name"]
+        files = CloudinaryStorage(cloud, keys["api_key"], keys["api_secret"], transport=transport)
+        return OrgStorage(files, f"{CLOUDINARY}:{cloud}")
     location = _location(row)
     await _check_endpoint(location.endpoint, settings)  # again: where a name points can change
     keys = json.loads(vault.unseal(row.encrypted_secret))
@@ -94,6 +116,7 @@ async def choose(
     settings: Settings,
     vault: CredentialVault,
     bots: list[Bot],
+    transport: httpx.AsyncBaseTransport | None = None,
 ) -> ComputerProvider | None:
     """Switch the organization to this storage once a live write, read and delete works, and lay
     out its folders (`botdesk/`, one per bot, `_shared`). The caller commits. Returns the row, or
@@ -106,9 +129,11 @@ async def choose(
             await db.delete(existing)
         return None
 
+    if body.provider == CLOUDINARY:
+        return await _choose_cloudinary(db, existing, org_id, user_id, body, vault, bots, transport)
     if body.s3 is None:
         raise BadRequest(NEEDS_S3)
-    secret = body.s3.secret_access_key or _saved_secret(existing, vault)
+    secret = body.s3.secret_access_key or _saved_secret(existing, S3, "secret_access_key", vault)
     location = S3Location(
         bucket=body.s3.bucket, region=body.s3.region, endpoint=body.s3.endpoint.rstrip("/"), prefix=body.s3.prefix
     )
@@ -139,10 +164,37 @@ async def _prepare(storage: FileStorage, bots: list[Bot]) -> None:
         raise BadRequest(str(error)) from None
 
 
-def _saved_secret(existing: ComputerProvider | None, vault: CredentialVault) -> str:
-    if existing is None or existing.provider != S3:
+async def _choose_cloudinary(
+    db: AsyncSession,
+    existing: ComputerProvider | None,
+    org_id: uuid.UUID,
+    user_id: uuid.UUID,
+    body: StorageIn,
+    vault: CredentialVault,
+    bots: list[Bot],
+    transport: httpx.AsyncBaseTransport | None,
+) -> ComputerProvider:
+    if body.cloudinary is None:
+        raise BadRequest(NEEDS_CLOUDINARY)
+    given = body.cloudinary
+    secret = given.api_secret or _saved_secret(existing, CLOUDINARY, "api_secret", vault)
+    await _prepare(CloudinaryStorage(given.cloud_name, given.api_key, secret, transport=transport), bots)
+
+    row = existing or ComputerProvider(org_id=org_id, kind=STORAGE, created_by=user_id)
+    row.provider = CLOUDINARY
+    row.config = {"cloud_name": given.cloud_name}
+    row.encrypted_secret = vault.seal(json.dumps({"api_key": given.api_key, "api_secret": secret}))
+    row.secret_hint = given.api_key[-4:]
+    row.checked_at = utcnow()
+    db.add(row)
+    return row
+
+
+def _saved_secret(existing: ComputerProvider | None, provider: str, field: str, vault: CredentialVault) -> str:
+    """The secret saved for this provider, when the form left it out to keep it."""
+    if existing is None or existing.provider != provider:
         raise BadRequest(NEEDS_SECRET)
-    secret: str = json.loads(vault.unseal(existing.encrypted_secret))["secret_access_key"]
+    secret: str = json.loads(vault.unseal(existing.encrypted_secret))[field]
     return secret
 
 

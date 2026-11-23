@@ -128,5 +128,5 @@ When you finish something, tick it here in the same pull request.
 - [x] Unread counts in the chat list (per person, marked read when you look at the chat)
 - [x] Manage a group: rename it, add and remove people and bots (its creator, owners and admins)
 - [x] Marketplace templates from the API: one catalogue (`apps/api/src/templates/catalogue.json`, Chief included), hired by the API with the template's instructions, plugins and the stricter of its level and the org's default
-- [ ] Bot computers (live screen, take over) and routine recording
+- [ ] Bot computers (live screen, take over) and routine recording. First a browser and files with your own provider or Local ([ADR 0017](adr/0017-bot-browsers-and-file-storage.md), proposed), the full computer later
 - [ ] Desktop app, then mobile

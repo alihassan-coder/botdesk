@@ -1,7 +1,5 @@
 import { useEffect } from "react";
 import Link from "next/link";
-import { Globe } from "lucide-react";
-import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
 import { Switch } from "@/components/ui/switch";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -13,6 +11,7 @@ import type { Bot, SecurityLevel } from "@/data/types";
 import { BotAvatar } from "@/features/bots/bot-avatar";
 import { BotTools } from "@/features/bots/bot-tools";
 import { EditBotDialog } from "@/features/bots/edit-bot-dialog";
+import { BotBrowser } from "@/features/browser/bot-browser";
 import { BotFiles } from "@/features/files/bot-files";
 import { BotMemories } from "@/features/memory/bot-memories";
 import { RemoveBotButton } from "@/features/bots/remove-bot-button";
@@ -67,7 +66,7 @@ function Profile({ bot }: { bot: Bot }) {
         <dt className="text-muted-foreground">Security level</dt>
         <dd><BotLevel level={bot.securityLevel} /></dd>
         <dt className="text-muted-foreground">Computer</dt>
-        <dd className="flex flex-wrap items-center gap-2">Files <Badge variant="secondary">Browser coming soon</Badge></dd>
+        <dd>Files and a browser</dd>
       </dl>
       <BudgetThisMonth bot={bot} />
     </div>
@@ -120,20 +119,12 @@ function Routines({ botId }: { botId: string }) {
   );
 }
 
-/** What the bot has besides apps (ADR 0017): its Files now; a browser is next. */
+/** What the bot has besides apps (ADR 0017): its Files and its Browser. */
 function Computer({ bot }: { bot: Bot }) {
   return (
-    <div className="flex flex-col gap-5">
+    <div className="flex flex-col gap-6">
       <BotFiles bot={bot} />
-      <div className="flex items-start gap-3 rounded-xl border border-dashed p-3">
-        <Globe className="mt-0.5 size-4 shrink-0 text-muted-foreground" aria-hidden />
-        <div className="min-w-0 flex-1">
-          <p className="flex flex-wrap items-center gap-2 text-sm font-medium">Browser <Badge variant="secondary">Coming soon</Badge></p>
-          <p className="text-xs text-pretty text-muted-foreground">
-            For websites with no integration. You&apos;ll watch {bot.name} work and take over to sign in.
-          </p>
-        </div>
-      </div>
+      <BotBrowser bot={bot} />
     </div>
   );
 }

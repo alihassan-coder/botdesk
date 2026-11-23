@@ -13,7 +13,8 @@
  *   organizations; what each bot remembers (Memory), loaded per bot; and Usage &
  *   budgets: daily spend, each bot's spend this month and the org's budget; and Routines:
  *   listed with the org, created, edited, switched on and off, run now and removed; and
- *   bots' Files: where the org keeps them (Settings → Computers) and each bot's list. Apps
+ *   bots' Files: where the org keeps them (Settings → Computers) and each bot's list; and
+ *   each bot's Browser: watching it and taking over. Apps
  *   aren't all on the API yet, so some stay mock.
  * - Not set (tests, e2e, demos): everything is the in-memory mock, with fake bot replies.
  * Guest mode ("Explore the demo") uses the mock in either case, so people can look
@@ -28,16 +29,16 @@ import { previewFromArgs } from "@/lib/args-form";
 import { strictestLevel } from "@/lib/security-ceiling";
 import { rememberOAuthReturn } from "@/lib/connections";
 import { browser } from "@/lib/navigate";
-import { approvalApi, authApi, botApi, connectionApi, fileApi, inviteApi, mcpApi, memoryApi, modelApi, orgApi, pluginApi, routineApi, runApi, templateApi, threadApi, usageApi } from "./api/botdesk";
+import { approvalApi, authApi, botApi, browserApi, connectionApi, fileApi, inviteApi, mcpApi, memoryApi, modelApi, orgApi, pluginApi, routineApi, runApi, templateApi, threadApi, usageApi } from "./api/botdesk";
 import { ApiError, apiBaseUrl } from "./api/client";
-import { toAccountConnection, toApiBot, toApproval, toBot, toBotFile, toFileStorage, toInvitation, toMcpServer, toMemory, toMemoryStatus, toMessage, toModel, toModelProvider, toOrg, toRoutine, toTemplate, toThread, toUsage, toUser } from "./api/map";
+import { toAccountConnection, toApiBot, toApproval, toBot, toBotBrowser, toBotFile, toFileStorage, toInvitation, toMcpServer, toMemory, toMemoryStatus, toMessage, toModel, toModelProvider, toOrg, toRoutine, toTemplate, toThread, toUsage, toUser } from "./api/map";
 import { applyRunEvent, typingId, upsertApproval, withActiveRuns, withPreview, withWaitingApprovals, type ActiveRun } from "./api/run-events";
 import type { ApiMe, ApiMessage, ApiRunEvent, ApiThread, ApiThreadRuns } from "./api/types";
 import { isTaskOpen, taskPreview, withTaskChangeIn, type TaskChange } from "@/lib/tasks";
 import * as chiefDemo from "./mock/chief-demo";
 import * as mock from "./mock/fixtures";
 import type {
-  AccountConnection, AccountConnectionList, Approval, ApprovalStatus, Bot, BotFile, BotFileList, BotToolChange, BotTools, ConnectionOwner, Invitation, McpServerInput, McpServerList, McpToolChoice, MemoryItem, MemoryList, MemoryStatus, Membership, Message, Model, ModelListProblem, ModelProvider, Org,
+  AccountConnection, AccountConnectionList, Approval, ApprovalStatus, Bot, BotBrowser, BotFile, BotFileList, BrowserInput, BrowserLoad, BotToolChange, BotTools, ConnectionOwner, Invitation, McpServerInput, McpServerList, McpToolChoice, MemoryItem, MemoryList, MemoryStatus, Membership, Message, Model, ModelListProblem, ModelProvider, Org,
   Participant, PluginList, Routine, SecurityLevel, ServerConnectorList, StorageLoad, TemplateList, Thread, UsageSummary, User,
 } from "./types";
 
@@ -158,6 +159,8 @@ interface State {
   storage: StorageLoad;
   /** Each bot's files as last loaded, by bot id. The demo starts with Inbox Manager's. */
   fileLists: Record<string, BotFileList>;
+  /** Each bot's browser as last seen, by bot id (the bot details' Computer tab). */
+  browsers: Record<string, BrowserLoad>;
 }
 
 /** No usage yet (API mode, before the report arrives). Defined here: the seeds below run at import. */
@@ -206,6 +209,7 @@ function seed(): State {
     templates: { status: "ready", items: mock.templates },
     storage: { status: "ready", current: mock.storage },
     fileLists: demoFileLists(),
+    browsers: {},
   };
 }
 
@@ -244,6 +248,7 @@ function apiSeed(): State {
     templates: { status: "loading", items: [] },
     storage: { status: "loading" },
     fileLists: {},
+    browsers: {},
   };
 }
 
@@ -405,6 +410,7 @@ function enterOrg(org: Membership) {
     templates: { status: "loading", items: [] },
     storage: { status: "loading" },
     fileLists: {},
+    browsers: {},
   }));
   void loadOrgPeople(org);
   void loadBotsAndChats(org);
@@ -1816,6 +1822,71 @@ const fileActions = {
   },
 };
 
+/* ---------- A bot's browser (ADR 0017 §5) ----------
+ * Watching a bot's browser and taking over (to sign in somewhere). It runs where the API runs, so
+ * the demo has none to show. What a person types goes straight to the page and is never kept here.
+ */
+
+/** MOCK: the demo can't show a browser. */
+const DEMO_BROWSER: BotBrowser = { available: false, open: false, width: 1280, height: 800, screenUrl: "" };
+
+function sameBrowser(a: BotBrowser | undefined, b: BotBrowser) {
+  return a !== undefined && (Object.keys(b) as (keyof BotBrowser)[]).every((k) => a[k] === b[k]) && Object.keys(a).length === Object.keys(b).length;
+}
+
+/** The browser as just seen. Polled every few seconds, so an unchanged one changes nothing (and re-renders nothing). */
+function putBrowser(orgId: string, botId: string, seen: BotBrowser) {
+  set((st) => {
+    const load = st.browsers[botId];
+    if (st.org.id !== orgId || (load?.status === "ready" && sameBrowser(load.current, seen))) return st;
+    return { ...st, browsers: { ...st.browsers, [botId]: { status: "ready", current: seen } } };
+  });
+}
+
+const browserActions = {
+  /** Whether the bot's browser can be watched here, whether it's open, and on which page. */
+  async loadBrowser(botId: string): Promise<void> {
+    if (isDemoMode()) return putBrowser(state.org.id, botId, DEMO_BROWSER);
+    const orgId = state.org.id;
+    if (!state.browsers[botId]) set((st) => ({ ...st, browsers: { ...st.browsers, [botId]: { status: "loading" } } }));
+    try {
+      putBrowser(orgId, botId, toBotBrowser(await browserApi.state(orgId, botId), browserApi.screenUrl(orgId, botId)));
+    } catch (error) {
+      set((st) => {
+        if (st.org.id !== orgId) return st;
+        return { ...st, browsers: { ...st.browsers, [botId]: { ...st.browsers[botId], status: "error", error: failure(error).error } } };
+      });
+    }
+  },
+
+  /** Take over: a click, text, a key, a scroll, or an address to open (which starts the browser). `ok: false` says why the API refused. */
+  async sendBrowserInput(botId: string, input: BrowserInput): Promise<ActionResult> {
+    if (isDemoMode()) return { ok: false, error: "Not available in the demo." };
+    const orgId = state.org.id;
+    try {
+      putBrowser(orgId, botId, toBotBrowser(await browserApi.input(orgId, botId, input), browserApi.screenUrl(orgId, botId)));
+      return { ok: true };
+    } catch (error) {
+      return failure(error);
+    }
+  },
+
+  /** Close the bot's browser and forget every site it's signed in to. */
+  async forgetSignIns(botId: string): Promise<ActionResult> {
+    const orgId = state.org.id;
+    if (!isDemoMode()) {
+      try {
+        await browserApi.forget(orgId, botId);
+      } catch (error) {
+        return failure(error);
+      }
+    }
+    const before = state.browsers[botId]?.current;
+    if (before) putBrowser(orgId, botId, { available: before.available, open: false, width: before.width, height: before.height, screenUrl: "" });
+    return { ok: true };
+  },
+};
+
 /* ---------- Routines ----------
  * On the API a routine runs on its schedule in its creator's DM with the bot; the API says it was
  * created there ("Created a routine" card). MOCK: saved here, and the bot confirms in its chat.
@@ -1932,6 +2003,7 @@ export const actions = {
   ...modelActions,
   ...usageActions,
   ...fileActions,
+  ...browserActions,
 
   /**
    * Sends your message. Bots reply in a moment (ADR 0009): in a DM its bot, or the other bots you
@@ -2888,6 +2960,9 @@ export const useMemoryList = (botId?: string) =>
 export const useMemoryStatus = () => useStore(useCallback((s: State) => s.memoryStatus, []));
 /** Where the org keeps bots' files (Settings → Computers). */
 export const useFileStorage = () => useStore(useCallback((s: State) => s.storage, []));
+/** A bot's browser as last seen; undefined until `actions.loadBrowser` has started. */
+export const useBotBrowser = (botId?: string) =>
+  useStore(useCallback((s: State) => (botId ? s.browsers[botId] : undefined), [botId]));
 /** A bot's files as last loaded; undefined until `actions.loadFiles` has started. */
 export const useFileList = (botId?: string) =>
   useStore(useCallback((s: State) => (botId ? s.fileLists[botId] : undefined), [botId]));

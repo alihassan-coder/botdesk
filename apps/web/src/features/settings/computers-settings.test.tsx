@@ -8,11 +8,11 @@ import { ComputersSettings } from "./computers-settings";
 const storage = () => within(screen.getByRole("region", { name: "Storage" }));
 
 describe("ComputersSettings in the demo", () => {
-  it("shows where files go now, the folder layout, and the browser as coming soon", () => {
+  it("shows where files go now, the folder layout, and where browsers run", () => {
     renderUI(<ComputersSettings />);
     expect(storage().getByText("On this BotDesk server.")).toBeInTheDocument();
     expect(storage().getByText(/Each bot gets a folder named after it inside/)).toHaveTextContent("botdesk/, plus _shared for files every bot can read.");
-    expect(within(screen.getByRole("region", { name: "Browser" })).getByText("Coming soon")).toBeInTheDocument();
+    expect(within(screen.getByRole("region", { name: "Browser" })).getByText(/Each bot has its own browser on this BotDesk server/)).toBeInTheDocument();
   });
 
   it("owners and admins switch to an S3-compatible bucket, with what's missing said first", async () => {

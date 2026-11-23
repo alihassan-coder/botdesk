@@ -3,12 +3,11 @@
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
-import { FolderOpen, Globe } from "lucide-react";
+import { FolderOpen } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Field, FieldDescription, FieldError, FieldGroup, FieldLabel, FieldTitle } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
-import { Badge } from "@/components/ui/badge";
 import { actions, useCurrentUser, useOrg, useTemplates, type NewBotInput } from "@/data/store";
 import type { SecurityLevel, Template } from "@/data/types";
 import { strictestLevel } from "@/lib/security-level";
@@ -111,15 +110,12 @@ export function CreateBotScreen() {
                 <FieldLabel htmlFor="bot-model">Model</FieldLabel>
                 <ModelPicker id="bot-model" value={bot.modelId} onChange={(v) => update("modelId", v)} />
               </Field>
-              {/* Every bot gets Files (ADR 0017); the browser isn't built yet, so there's nothing to choose. */}
+              {/* Every bot gets Files and a Browser (ADR 0017), so there's nothing to choose. */}
               <Field>
                 <FieldTitle>Computer</FieldTitle>
-                <ul className="flex flex-col gap-1.5 text-sm">
-                  <li className="flex items-center gap-2"><FolderOpen className="size-4 text-muted-foreground" aria-hidden /> Gets its own folder for files</li>
-                  <li className="flex flex-wrap items-center gap-2 text-muted-foreground">
-                    <Globe className="size-4" aria-hidden /> A browser for websites with no integration <Badge variant="secondary">Coming soon</Badge>
-                  </li>
-                </ul>
+                <p className="flex items-center gap-2 text-sm">
+                  <FolderOpen className="size-4 text-muted-foreground" aria-hidden /> Gets its own folder for files and a browser
+                </p>
               </Field>
             </Section>
 

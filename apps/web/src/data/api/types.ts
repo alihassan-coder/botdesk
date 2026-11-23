@@ -362,6 +362,16 @@ export interface ApiFile {
   updatedAt: string;
 }
 
+/** GET /orgs/{id}/bots/{botId}/browser, and what POST …/browser/input answers. */
+export interface ApiBrowser {
+  available: boolean;
+  open: boolean;
+  url: string | null;
+  title: string | null;
+  width: number;
+  height: number;
+}
+
 /* ---------- Memory ---------- */
 
 export interface ApiMemory {

@@ -1,7 +1,7 @@
-import type { AccountConnection, Approval, ArgsSchema, Bot, BotFile, FileStorage, HandoffPart, Invitation, McpServer, MemoryItem, MemoryStatus, Message, MessagePart, Model, ModelProvider, Org, Routine, Template, Thread, UsageSummary, User } from "../types";
+import type { AccountConnection, Approval, ArgsSchema, Bot, BotBrowser, BotFile, FileStorage, HandoffPart, Invitation, McpServer, MemoryItem, MemoryStatus, Message, MessagePart, Model, ModelProvider, Org, Routine, Template, Thread, UsageSummary, User } from "../types";
 import { describeCron } from "@/lib/schedule";
 import type { TaskChange } from "@/lib/tasks";
-import type { ApiApproval, ApiTask, ApiBot, ApiConnection, ApiBotInput, ApiFile, ApiInvitation, ApiMcpServer, ApiMemory, ApiMemoryStatus, ApiMessage, ApiModel, ApiModelProvider, ApiOrg, ApiRole, ApiRoutine, ApiStorage, ApiTemplate, ApiThread, ApiUsage, ApiUser } from "./types";
+import type { ApiApproval, ApiTask, ApiBot, ApiBrowser, ApiConnection, ApiBotInput, ApiFile, ApiInvitation, ApiMcpServer, ApiMemory, ApiMemoryStatus, ApiMessage, ApiModel, ApiModelProvider, ApiOrg, ApiRole, ApiRoutine, ApiStorage, ApiTemplate, ApiThread, ApiUsage, ApiUser } from "./types";
 
 /**
  * Turns API answers into the web app's own types, so screens never see API shapes.
@@ -151,6 +151,14 @@ export function toFileStorage({ provider, s3, localAvailable, checkedAt }: ApiSt
 /** `url` is where its bytes are (`fileApi.contentUrl`), passed in so this stays free of addresses. */
 export function toBotFile({ botId, createdAt, updatedAt, ...file }: ApiFile, url: string): BotFile {
   return { ...file, ...(botId ? { botId } : {}), createdAt: asUtc(createdAt), updatedAt: asUtc(updatedAt), url };
+}
+
+/** `screenUrl` is where its picture is (`browserApi.screenUrl`); it's left empty while the browser is closed. */
+export function toBotBrowser({ available, open, url, title, width, height }: ApiBrowser, screenUrl: string): BotBrowser {
+  return {
+    available, open, width, height, screenUrl: available && open ? screenUrl : "",
+    ...(url ? { url } : {}), ...(title ? { title } : {}),
+  };
 }
 
 /* ---------- Memory ---------- */

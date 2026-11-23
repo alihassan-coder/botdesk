@@ -674,6 +674,40 @@ export interface BotFileList {
   error?: string;
 }
 
+/** A bot's web browser (ADR 0017), as people see it: whether it can be watched here, and what's on it. */
+export interface BotBrowser {
+  /** False when this server can't show it (no browser, or the bots run in a separate worker), and in the demo. */
+  available: boolean;
+  open: boolean;
+  url?: string;
+  title?: string;
+  /** The page's size in pixels (1280×800): clicks are sent in these. */
+  width: number;
+  height: number;
+  /** A picture of the screen now (JPEG); add a changing query to get a fresh one. Empty when it isn't open. */
+  screenUrl: string;
+}
+
+/** A bot's browser as last loaded. */
+export interface BrowserLoad {
+  status: "loading" | "ready" | "error";
+  current?: BotBrowser;
+  error?: string;
+}
+
+/** The keys a person may press in a bot's browser (the API's own list). */
+export type BrowserKey =
+  | "Enter" | "Tab" | "Shift+Tab" | "Backspace" | "Delete" | "Escape" | "Space"
+  | "ArrowUp" | "ArrowDown" | "ArrowLeft" | "ArrowRight" | "Home" | "End" | "PageUp" | "PageDown";
+
+/** One thing a person does in a bot's browser while taking over. Clicks are in page pixels. */
+export type BrowserInput =
+  | { kind: "click"; x: number; y: number }
+  | { kind: "type"; text: string }
+  | { kind: "key"; key: BrowserKey }
+  | { kind: "scroll"; dy: number }
+  | { kind: "open"; url: string };
+
 /** One UTC day of spend. Token counts come from the API; the demo has dollars only. */
 export interface UsageDay {
   date: ISODate;

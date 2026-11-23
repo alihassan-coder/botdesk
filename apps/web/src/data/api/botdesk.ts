@@ -1,3 +1,4 @@
+import type { BrowserInput } from "../types";
 import { apiBaseUrl, apiFetch } from "./client";
 import {
   RUN_EVENT_KINDS,
@@ -7,6 +8,7 @@ import {
   type ApiBot,
   type ApiBotInput,
   type ApiBotTools,
+  type ApiBrowser,
   type ApiConnection,
   type ApiConnectionOwner,
   type ApiConnector,
@@ -296,6 +298,18 @@ export const fileApi = {
   remove: (orgId: string, fileId: string) => apiFetch<void>(`/api/v1/orgs/${orgId}/files/${fileId}`, { method: "DELETE" }),
   /** The file's bytes, for a link or an <img>: the session cookie goes with it (same site). */
   contentUrl: (orgId: string, fileId: string) => `${apiBaseUrl()}/api/v1/orgs/${orgId}/files/${fileId}/content`,
+};
+
+/** A bot's browser (ADR 0017 §5): watch it and take over, for example to sign in. Any member. */
+export const browserApi = {
+  state: (orgId: string, botId: string) => apiFetch<ApiBrowser>(`/api/v1/orgs/${orgId}/bots/${botId}/browser`),
+  /** The screen now (JPEG), for an <img>: the session cookie goes with it. 400 when the browser isn't open. */
+  screenUrl: (orgId: string, botId: string) => `${apiBaseUrl()}/api/v1/orgs/${orgId}/bots/${botId}/browser/screen`,
+  /** A click (page pixels), text, a key, a scroll, or an address to open (which starts it). Answers the state; 400 says why it can't. */
+  input: (orgId: string, botId: string, input: BrowserInput) =>
+    apiFetch<ApiBrowser>(`/api/v1/orgs/${orgId}/bots/${botId}/browser/input`, { method: "POST", body: input }),
+  /** Close it and forget every sign-in (its profile is deleted). */
+  forget: (orgId: string, botId: string) => apiFetch<void>(`/api/v1/orgs/${orgId}/bots/${botId}/browser`, { method: "DELETE" }),
 };
 
 /** What a bot remembers. Members see the bot's shared memories and their own DM ones. */

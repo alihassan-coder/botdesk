@@ -45,7 +45,7 @@ from psycopg.rows import DictRow, dict_row
 from psycopg_pool import AsyncConnectionPool
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from src.browser.local import LocalBrowsers, local_browser_settings
+from src.browser.browsers import Browsers, local_browser_settings
 from src.core.config import Settings
 from src.core.database import POOL_MAX_LIFETIME_SECONDS, IdleCheck, postgres_connect_args
 from src.core.secrets import SecretBox
@@ -128,8 +128,8 @@ class RunManager:
         vault = CredentialVault.from_settings(settings)
         # The Files tools keep files through the same service as people's uploads (ADR 0017).
         files_access = FileTools(sessionmaker, settings, vault)
-        # Bots' Local browsers start on first use, on a thread of their own (ADR 0017).
-        self.browsers = LocalBrowsers(local_browser_settings(settings)) if settings.local_browser else None
+        # Bots' browsers (Local or a cloud provider's) start on first use, on a thread of their own (ADR 0017).
+        self.browsers: Browsers | None = Browsers(local_browser_settings(settings))
         browser_access = BrowserTools(self.browsers, sessionmaker, settings, vault)
         self.registry = registry or build_registry(
             settings.plugin_ids, files_access=files_access, browser_access=browser_access

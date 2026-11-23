@@ -12,15 +12,15 @@ from datetime import UTC, datetime
 from botdesk_plugin_sdk import NotDone, ToolContext, ToolResult
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from src.browser.local import BotKey, LocalBrowsers
+from src.browser.browsers import BotKey, Browsers
 from src.browser.page import Element
 from src.core.config import Settings
 from src.core.errors import AppError
 from src.models import Bot
-from src.services import file_service, storage_service
+from src.services import browser_service, file_service, storage_service
 from src.services.credential_vault import CredentialVault
 
-NO_BROWSER = "This server has no browser for bots. An owner or admin can choose one in Settings → Computers."
+NO_BROWSER = "There's no browser for bots here yet. An owner or admin can choose one in Settings → Computers."
 SIGN_IN_NEEDED = (
     "That's a password field. Bots never type passwords: ask a person to sign in to this site for you "
     "(they open your Computer tab and take over your browser), then carry on."
@@ -30,7 +30,7 @@ SIGN_IN_NEEDED = (
 class BrowserTools:
     def __init__(
         self,
-        browsers: LocalBrowsers | None,
+        browsers: Browsers | None,
         sessionmaker: async_sessionmaker[AsyncSession],
         settings: Settings,
         vault: CredentialVault,
@@ -41,7 +41,18 @@ class BrowserTools:
         self._vault = vault
 
     async def open(self, ctx: ToolContext, *, url: str) -> ToolResult:
-        return (await self._local().open(_key(ctx), url.strip())).result()
+        async with self._sessionmaker() as db:
+            launch = await browser_service.launch_for(db, ctx.org_id, ctx.bot_id, self._settings, self._vault)
+        if launch is None:
+            raise NotDone(NO_BROWSER)
+        view = await self._local().open(_key(ctx), url.strip(), launch)
+        if launch.cloud is not None:  # a provider may have just made the bot's profile there
+            made = await self._local().profile_of(_key(ctx))
+            if made and made != launch.profile:
+                async with self._sessionmaker() as db:
+                    await browser_service.remember_profile(db, ctx.org_id, ctx.bot_id, launch.provider, made)
+                    await db.commit()
+        return view.result()
 
     async def read(self, ctx: ToolContext, *, start: int) -> ToolResult:
         return (await self._local().view(_key(ctx))).result(start=start)
@@ -104,8 +115,8 @@ class BrowserTools:
             await db.commit()
             return {"saved": file.storage_key, "path": file.path, "size": file.size_bytes}
 
-    def _local(self) -> LocalBrowsers:
-        if self._browsers is None or not self._settings.local_browser:
+    def _local(self) -> Browsers:
+        if self._browsers is None:
             raise NotDone(NO_BROWSER)
         return self._browsers
 

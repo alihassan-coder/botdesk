@@ -131,7 +131,8 @@ When you finish something, tick it here in the same pull request.
 - [x] Bots' files: Local or your own S3-compatible bucket, `botdesk/<bot>/` folders, Settings → Computers, the Files tools ([ADR 0017](adr/0017-bot-browsers-and-file-storage.md) step 1)
 - [x] Bots' Local browser: open, read, follow, search; click, type and choose with approval; screenshots into Files (ADR 0017 step 2)
 - [x] Take over a bot's browser to sign in (API; ADR 0017 step 3)
-- [ ] Take over in the web app (live view in the Computer tab)
-- [ ] Cloud browser providers (Steel, Browserbase, Kernel) and a browser in the Docker image (ADR 0017 step 4); Cloudinary storage (step 5); files attached in chat
+- [x] Take over in the web app (live view in the Computer tab)
+- [x] Cloud browser providers: Steel, Browserbase, Kernel (API; ADR 0017 step 4)
+- [ ] Browser provider card in Settings → Computers; a browser in the Docker image; Cloudinary storage (step 5); files attached in chat
 - [ ] The full bot computer (a whole desktop) and routine recording
 - [ ] Desktop app, then mobile

@@ -10,7 +10,7 @@ from pathlib import Path
 import httpx
 import pytest
 
-from src.browser.local import NOT_INSTALLED
+from src.browser.browsers import NOT_INSTALLED
 from tests.conftest import sign_up
 
 SIGN_IN = """<!doctype html><title>Sign in</title>

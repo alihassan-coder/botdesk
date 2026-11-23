@@ -628,7 +628,7 @@ Bots keep files ([ADR 0017](../adr/0017-bot-browsers-and-file-storage.md)). Each
 
 ### Browser
 
-Bots open web pages with the core **Browser** plugin (ADR 0017 step 2; on for every bot). Today the browser is **Local**: Chromium on the API's server through Playwright (`src/browser/`), one per bot, with a profile folder per bot (`BROWSER_PROFILES_DIR/<org>/<bot>/`) so sign-ins last. It starts on first use on a thread of its own (Playwright needs a proactor loop on Windows; the API keeps its selector loop for psycopg), closes after `BROWSER_IDLE_MINUTES`, and at most `BROWSER_MAX_SESSIONS` are open at once.
+Bots open web pages with the core **Browser** plugin (ADR 0017; on for every bot). Where the browser runs is the organization's **browser provider** (Settings → Computers): **Local**, Chromium on the API's server through Playwright (`src/browser/`), one per bot, with a profile folder per bot (`BROWSER_PROFILES_DIR/<org>/<bot>/`) so sign-ins last; or a cloud provider with the organization's key, **Steel**, **Browserbase** or **Kernel** (`src/browser/cloud.py`), reached over CDP with the same code, each bot with its own profile there (`browser_profiles`: a Steel profile, a Browserbase context, a Kernel profile). A cloud browser is released when it closes, so it stops using the organization's browser time. It starts on first use on a thread of its own (Playwright needs a proactor loop on Windows; the API keeps its selector loop for psycopg), closes after `BROWSER_IDLE_MINUTES`, and at most `BROWSER_MAX_SESSIONS` are open at once.
 
 - **What the bot sees:** the address, title, visible text (6,000 characters at a time) and a numbered list of what it can use: `[1] link "Pricing" → https://…`, `[2] search box "Search"`, `[4] button "Buy now"`.
 - **Tools and risk:** `open`, `read`, `follow` (links only), `search` (search boxes only) and `back` are `read`; `click`, `type` and `choose` are `write-external`, so at *Ask before acting* a person approves each, and the card's words must hold the element's whole label (an element with no label is refused). `search` only counts when Enter sends the form with GET, its default button's `formmethod` included. Typing into a password field is refused: a person signs in instead. `screenshot` saves a PNG to the bot's files (`write-internal`). Pages are outside text, so reading one taints the run.
@@ -638,10 +638,12 @@ Bots open web pages with the core **Browser** plugin (ADR 0017 step 2; on for ev
 
 | Method & path | What it does |
 |---|---|
+| `GET /api/v1/orgs/{id}/browser-provider` | `{provider: "local" \| "steel" \| "browserbase" \| "kernel", keyHint, projectId, localAvailable, checkedAt}` |
+| `PUT /api/v1/orgs/{id}/browser-provider` | Owners and admins. `{provider: "local"}` or `{provider, apiKey?, projectId?}` (Browserbase's project, optional). A cloud provider is checked by starting and stopping a browser there; leave `apiKey` out to keep the saved one. 400 with the reason |
 | `GET /api/v1/orgs/{id}/bots/{botId}/browser` | `{available, open, url, title, width, height}` |
 | `GET /api/v1/orgs/{id}/bots/{botId}/browser/screen` | The screen now, `image/jpeg` (400 when the browser isn't open) |
 | `POST /api/v1/orgs/{id}/bots/{botId}/browser/input` | One of `{kind: "click", x, y}`, `{kind: "type", text}`, `{kind: "key", key}` (Enter, Tab, Shift+Tab, Backspace, Delete, Escape, Space, arrows, Home, End, PageUp, PageDown), `{kind: "scroll", dy}`, `{kind: "open", url}` (starts the browser). Returns the state. 400 with the reason (a private address, not installed) |
-| `DELETE /api/v1/orgs/{id}/bots/{botId}/browser` | Close it and forget every sign-in. 204 |
+| `DELETE /api/v1/orgs/{id}/bots/{botId}/browser` | Close it and forget every sign-in (its Local profile folder, and its profiles at cloud providers). 204 |
 
 ## Memory
 

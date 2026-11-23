@@ -4,6 +4,7 @@ import uuid
 from dataclasses import dataclass
 from typing import Annotated
 
+import httpx
 from fastapi import Depends, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -75,6 +76,15 @@ def get_vault(request: Request) -> CredentialVault:
 
 
 Vault = Annotated[CredentialVault, Depends(get_vault)]
+
+
+def get_outbound(request: Request) -> httpx.AsyncBaseTransport | None:
+    """What replaces the network for calls to other services (tests' `httpx.MockTransport`), or None."""
+    outbound: httpx.AsyncBaseTransport | None = request.app.state.outbound
+    return outbound
+
+
+Outbound = Annotated[httpx.AsyncBaseTransport | None, Depends(get_outbound)]
 
 
 def get_oauth(request: Request) -> OAuth:

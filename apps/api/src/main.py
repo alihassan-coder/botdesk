@@ -93,6 +93,7 @@ def create_app(settings: Settings | None = None, *, outbound: httpx.AsyncBaseTra
         openapi_url=None if settings.is_production else "/api/openapi.json",
     )
     app.state.settings = settings
+    app.state.outbound = outbound
     app.state.secrets = secrets
     app.state.vault = CredentialVault.from_settings(settings)  # connections' credentials (ADR 0010)
     app.state.limiter = RateLimiter()

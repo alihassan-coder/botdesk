@@ -674,6 +674,27 @@ export interface BotFileList {
   error?: string;
 }
 
+/** Where the organization's bots' browsers run: on the BotDesk server (Local) or at a cloud provider. */
+export type BrowserProviderId = "local" | "steel" | "browserbase" | "kernel";
+
+/** The organization's browser provider (Settings → Computers). The key never reaches the browser, only its last 4 characters. */
+export interface BrowserProvider {
+  provider: BrowserProviderId;
+  keyHint?: string;
+  /** Browserbase's project; empty for the key's own. */
+  projectId: string;
+  /** Whether this server lets bots use a browser on its own machine (the operator can turn Local off). */
+  localAvailable: boolean;
+  /** When a cloud provider's key last passed its check. */
+  checkedAt?: ISODate;
+}
+
+/** The organization's browser provider as last loaded. */
+export interface BrowserProviderLoad {
+  status: "loading" | "ready" | "error";
+  current?: BrowserProvider;
+}
+
 /** A bot's web browser (ADR 0017), as people see it: whether it can be watched here, and what's on it. */
 export interface BotBrowser {
   /** False when this server can't show it (no browser, or the bots run in a separate worker), and in the demo. */

@@ -2,10 +2,11 @@ import { useState } from "react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { FieldDescription, FieldLegend, FieldSet } from "@/components/ui/field";
-import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
+import { RadioGroup } from "@/components/ui/radio-group";
 import { actions } from "@/data/store";
 import type { FileStorage, StorageProviderId } from "@/data/types";
 import { draftFrom, draftProblems, type S3Draft } from "@/lib/storage";
+import { ProviderOption } from "./provider-option";
 import { S3Fields } from "./s3-fields";
 
 /**
@@ -44,9 +45,9 @@ export function StorageForm({ current, onDone }: { current: FileStorage; onDone:
       <FieldSet>
         <FieldLegend variant="label">Keep files</FieldLegend>
         <RadioGroup value={provider} onValueChange={(value) => { setProvider(value as StorageProviderId); setError(""); }}>
-          <Option value="local" label="Local" disabled={!current.localAvailable} autoFocus={provider === "local"}
+          <ProviderOption group="storage" value="local" label="Local" disabled={!current.localAvailable} autoFocus={provider === "local"}
             hint={current.localAvailable ? "On this BotDesk server. Lost if the server's disk is wiped." : "Turned off on this server."} />
-          <Option value="s3" label="S3-compatible" autoFocus={provider === "s3"}
+          <ProviderOption group="storage" value="s3" label="S3-compatible" autoFocus={provider === "s3"}
             hint="Your own bucket: AWS S3, Cloudflare R2, Backblaze B2, Tigris, MinIO and others." />
         </RadioGroup>
         <FieldDescription>BotDesk is free; storage is billed by the provider you choose. Local is free.</FieldDescription>
@@ -74,17 +75,4 @@ function movesFiles(current: FileStorage, provider: StorageProviderId, draft: S3
   if (provider === "local" || !current.s3) return false;
   const { endpoint, bucket, prefix } = current.s3;
   return draft.endpoint.trim().replace(/\/+$/, "") !== endpoint || draft.bucket.trim() !== bucket || draft.prefix.trim().replace(/^\/+|\/+$/g, "") !== prefix;
-}
-
-function Option({ value, label, hint, disabled, autoFocus }: { value: StorageProviderId; label: string; hint: string; disabled?: boolean; autoFocus?: boolean }) {
-  const id = `storage-${value}`;
-  return (
-    <div className="flex items-start gap-2.5">
-      <RadioGroupItem id={id} value={value} disabled={disabled} autoFocus={autoFocus} className="mt-0.5" />
-      <label htmlFor={id} className="text-sm peer-disabled:opacity-50">
-        <span className="font-medium">{label}</span>
-        <span className="block text-xs text-muted-foreground">{hint}</span>
-      </label>
-    </div>
-  );
 }

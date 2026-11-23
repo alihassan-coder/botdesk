@@ -1,11 +1,9 @@
-import { useState } from "react";
-import { Eye, EyeOff } from "lucide-react";
 import { Field, FieldDescription, FieldError, FieldGroup, FieldLabel, FieldLegend, FieldSet } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
-import { InputGroup, InputGroupAddon, InputGroupButton, InputGroupInput } from "@/components/ui/input-group";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import type { S3Storage } from "@/data/types";
 import { STORAGE_PRESETS, type S3Draft, type S3Problems } from "@/lib/storage";
+import { SecretField } from "./secret-field";
 
 interface S3FieldsProps {
   draft: S3Draft;
@@ -52,7 +50,7 @@ export function S3Fields({ draft, onChange, problems, saved }: S3FieldsProps) {
       <div className="grid gap-x-4 gap-y-7 @lg:grid-cols-2">
         <TextField id="storage-key-id" label="Access key ID" {...field("accessKeyId")}
           hint={saved ? `Paste it again to save changes. The saved one ends in ${saved.accessKeyHint}.` : undefined} />
-        <SecretField {...field("secretAccessKey")} keepsSaved={saved !== undefined} />
+        <SecretField id="storage-secret" label="Secret access key" {...field("secretAccessKey")} keepsSaved={saved !== undefined} />
       </div>
     </FieldGroup>
   );
@@ -78,27 +76,6 @@ function TextField({ id, label, value, onChange, problem, hint, placeholder, inp
         aria-describedby={[hint && `${id}-hint`, problem && `${id}-error`].filter(Boolean).join(" ") || undefined} />
       {hint && <FieldDescription id={`${id}-hint`}>{hint}</FieldDescription>}
       {problem && <FieldError id={`${id}-error`}>{problem}</FieldError>}
-    </Field>
-  );
-}
-
-function SecretField({ value, onChange, problem, keepsSaved }: { value: string; onChange: (value: string) => void; problem?: string; keepsSaved: boolean }) {
-  const [shown, setShown] = useState(false);
-  return (
-    <Field data-invalid={problem !== undefined}>
-      <FieldLabel htmlFor="storage-secret">Secret access key</FieldLabel>
-      <InputGroup>
-        <InputGroupInput id="storage-secret" type={shown ? "text" : "password"} autoComplete="off" spellCheck={false} value={value}
-          onChange={(e) => onChange(e.target.value)} placeholder={keepsSaved ? "Leave blank to keep the saved one" : undefined}
-          aria-invalid={problem !== undefined} aria-describedby={problem ? "storage-secret-hint storage-secret-error" : "storage-secret-hint"} />
-        <InputGroupAddon align="inline-end">
-          <InputGroupButton size="icon-xs" aria-pressed={shown} aria-label="Show secret" onClick={() => setShown((s) => !s)}>
-            {shown ? <EyeOff /> : <Eye />}
-          </InputGroupButton>
-        </InputGroupAddon>
-      </InputGroup>
-      <FieldDescription id="storage-secret-hint">Encrypted on the server and never shown again.</FieldDescription>
-      {problem && <FieldError id="storage-secret-error">{problem}</FieldError>}
     </Field>
   );
 }

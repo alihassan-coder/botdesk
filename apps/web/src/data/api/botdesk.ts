@@ -9,6 +9,8 @@ import {
   type ApiBotInput,
   type ApiBotTools,
   type ApiBrowser,
+  type ApiBrowserProvider,
+  type ApiBrowserProviderInput,
   type ApiConnection,
   type ApiConnectionOwner,
   type ApiConnector,
@@ -300,8 +302,13 @@ export const fileApi = {
   contentUrl: (orgId: string, fileId: string) => `${apiBaseUrl()}/api/v1/orgs/${orgId}/files/${fileId}/content`,
 };
 
-/** A bot's browser (ADR 0017 §5): watch it and take over, for example to sign in. Any member. */
+/** Where the org's bots' browsers run (owners and admins choose), and a bot's browser (ADR 0017 §5): watch it and take over, for example to sign in. Any member. */
 export const browserApi = {
+  /** Where bots' browsers run: Local or a cloud provider. */
+  provider: (orgId: string) => apiFetch<ApiBrowserProvider>(`/api/v1/orgs/${orgId}/browser-provider`),
+  /** Owners and admins. A cloud provider is checked by starting and stopping a browser there (a few seconds); a 400 says why it didn't work. */
+  chooseProvider: (orgId: string, input: ApiBrowserProviderInput) =>
+    apiFetch<ApiBrowserProvider>(`/api/v1/orgs/${orgId}/browser-provider`, { method: "PUT", body: input }),
   state: (orgId: string, botId: string) => apiFetch<ApiBrowser>(`/api/v1/orgs/${orgId}/bots/${botId}/browser`),
   /** The screen now (JPEG), for an <img>: the session cookie goes with it. 400 when the browser isn't open. */
   screenUrl: (orgId: string, botId: string) => `${apiBaseUrl()}/api/v1/orgs/${orgId}/bots/${botId}/browser/screen`,

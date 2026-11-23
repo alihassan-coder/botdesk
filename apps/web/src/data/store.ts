@@ -31,14 +31,14 @@ import { rememberOAuthReturn } from "@/lib/connections";
 import { browser } from "@/lib/navigate";
 import { approvalApi, authApi, botApi, browserApi, connectionApi, fileApi, inviteApi, mcpApi, memoryApi, modelApi, orgApi, pluginApi, routineApi, runApi, templateApi, threadApi, usageApi } from "./api/botdesk";
 import { ApiError, apiBaseUrl } from "./api/client";
-import { toAccountConnection, toApiBot, toApproval, toBot, toBotBrowser, toBotFile, toFileStorage, toInvitation, toMcpServer, toMemory, toMemoryStatus, toMessage, toModel, toModelProvider, toOrg, toRoutine, toTemplate, toThread, toUsage, toUser } from "./api/map";
+import { toAccountConnection, toApiBot, toApproval, toBot, toBotBrowser, toBotFile, toBrowserProvider, toFileStorage, toInvitation, toMcpServer, toMemory, toMemoryStatus, toMessage, toModel, toModelProvider, toOrg, toRoutine, toTemplate, toThread, toUsage, toUser } from "./api/map";
 import { applyRunEvent, typingId, upsertApproval, withActiveRuns, withPreview, withWaitingApprovals, type ActiveRun } from "./api/run-events";
 import type { ApiMe, ApiMessage, ApiRunEvent, ApiThread, ApiThreadRuns } from "./api/types";
 import { isTaskOpen, taskPreview, withTaskChangeIn, type TaskChange } from "@/lib/tasks";
 import * as chiefDemo from "./mock/chief-demo";
 import * as mock from "./mock/fixtures";
 import type {
-  AccountConnection, AccountConnectionList, Approval, ApprovalStatus, Bot, BotBrowser, BotFile, BotFileList, BrowserInput, BrowserLoad, BotToolChange, BotTools, ConnectionOwner, Invitation, McpServerInput, McpServerList, McpToolChoice, MemoryItem, MemoryList, MemoryStatus, Membership, Message, Model, ModelListProblem, ModelProvider, Org,
+  AccountConnection, AccountConnectionList, Approval, ApprovalStatus, Bot, BotBrowser, BotFile, BotFileList, BrowserInput, BrowserLoad, BrowserProviderLoad, BotToolChange, BotTools, ConnectionOwner, Invitation, McpServerInput, McpServerList, McpToolChoice, MemoryItem, MemoryList, MemoryStatus, Membership, Message, Model, ModelListProblem, ModelProvider, Org,
   Participant, PluginList, Routine, SecurityLevel, ServerConnectorList, StorageLoad, TemplateList, Thread, UsageSummary, User,
 } from "./types";
 
@@ -161,6 +161,8 @@ interface State {
   fileLists: Record<string, BotFileList>;
   /** Each bot's browser as last seen, by bot id (the bot details' Computer tab). */
   browsers: Record<string, BrowserLoad>;
+  /** Settings → Computers: where the org's bots' browsers run. */
+  browserProvider: BrowserProviderLoad;
 }
 
 /** No usage yet (API mode, before the report arrives). Defined here: the seeds below run at import. */
@@ -210,6 +212,7 @@ function seed(): State {
     storage: { status: "ready", current: mock.storage },
     fileLists: demoFileLists(),
     browsers: {},
+    browserProvider: { status: "ready", current: { provider: "local", projectId: "", localAvailable: true } },
   };
 }
 
@@ -249,6 +252,7 @@ function apiSeed(): State {
     storage: { status: "loading" },
     fileLists: {},
     browsers: {},
+    browserProvider: { status: "loading" },
   };
 }
 
@@ -411,6 +415,7 @@ function enterOrg(org: Membership) {
     storage: { status: "loading" },
     fileLists: {},
     browsers: {},
+    browserProvider: { status: "loading" },
   }));
   void loadOrgPeople(org);
   void loadBotsAndChats(org);
@@ -1843,7 +1848,64 @@ function putBrowser(orgId: string, botId: string, seen: BotBrowser) {
   });
 }
 
+/** What you fill in to choose where browsers run. An empty `apiKey` keeps the saved one (the same provider). */
+export type BrowserProviderInput =
+  | { provider: "local" }
+  | { provider: "steel" | "browserbase" | "kernel"; apiKey: string; projectId: string };
+
+/** MOCK: "checks" the key like the API would (it starts a browser there), then switches. */
+function saveMockBrowserProvider(input: BrowserProviderInput): ActionResult {
+  const current = state.browserProvider.current;
+  const localAvailable = current?.localAvailable ?? true;
+  if (input.provider === "local") {
+    if (!localAvailable) return { ok: false, error: "This server doesn't run browsers itself. Choose a cloud browser provider." };
+    set((st) => ({ ...st, browserProvider: { status: "ready", current: { provider: "local", projectId: "", localAvailable } } }));
+    return { ok: true };
+  }
+  const key = input.apiKey.trim();
+  const keepsKey = !key && current?.provider === input.provider && current.keyHint !== undefined;
+  if (!key && !keepsKey) return { ok: false, error: "Add the provider's API key." };
+  if (key.startsWith("bad")) return { ok: false, error: "The provider refused the key: 401 Unauthorized." };
+  const keyHint = keepsKey ? current?.keyHint : key.slice(-4);
+  const projectId = input.provider === "browserbase" ? input.projectId.trim() : "";
+  set((st) => ({
+    ...st,
+    browserProvider: { status: "ready", current: { provider: input.provider, projectId, localAvailable, checkedAt: now(), ...(keyHint ? { keyHint } : {}) } },
+  }));
+  return { ok: true };
+}
+
 const browserActions = {
+  /** Where the org's bots' browsers run. The demo's is in its seed. */
+  async loadBrowserProvider(): Promise<void> {
+    if (isDemoMode()) return;
+    const orgId = state.org.id;
+    const loaded = await browserApi.provider(orgId).catch(() => null);
+    set((st) => {
+      if (st.org.id !== orgId) return st;
+      return { ...st, browserProvider: loaded ? { status: "ready", current: toBrowserProvider(loaded) } : { ...st.browserProvider, status: "error" } };
+    });
+  },
+
+  /** Choose Local or a cloud provider (owners and admins). The API starts and stops a browser there first, which can take a few seconds. */
+  async saveBrowserProvider(input: BrowserProviderInput): Promise<ActionResult> {
+    if (isDemoMode()) return saveMockBrowserProvider(input);
+    const orgId = state.org.id;
+    const body = input.provider === "local" ? input : {
+      provider: input.provider,
+      ...(input.apiKey.trim() ? { apiKey: input.apiKey.trim() } : {}),
+      ...(input.provider === "browserbase" ? { projectId: input.projectId.trim() } : {}),
+    };
+    try {
+      const saved = toBrowserProvider(await browserApi.chooseProvider(orgId, body));
+      // Bots' browsers now run elsewhere: what's known about each one is out of date.
+      set((st) => (st.org.id === orgId ? { ...st, browserProvider: { status: "ready", current: saved }, browsers: {} } : st));
+      return { ok: true };
+    } catch (error) {
+      return failure(error);
+    }
+  },
+
   /** Whether the bot's browser can be watched here, whether it's open, and on which page. */
   async loadBrowser(botId: string): Promise<void> {
     if (isDemoMode()) return putBrowser(state.org.id, botId, DEMO_BROWSER);
@@ -2960,6 +3022,8 @@ export const useMemoryList = (botId?: string) =>
 export const useMemoryStatus = () => useStore(useCallback((s: State) => s.memoryStatus, []));
 /** Where the org keeps bots' files (Settings → Computers). */
 export const useFileStorage = () => useStore(useCallback((s: State) => s.storage, []));
+/** Where the org's bots' browsers run (Settings → Computers). */
+export const useBrowserProvider = () => useStore(useCallback((s: State) => s.browserProvider, []));
 /** A bot's browser as last seen; undefined until `actions.loadBrowser` has started. */
 export const useBotBrowser = (botId?: string) =>
   useStore(useCallback((s: State) => (botId ? s.browsers[botId] : undefined), [botId]));

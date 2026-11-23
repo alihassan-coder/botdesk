@@ -362,6 +362,20 @@ export interface ApiFile {
   updatedAt: string;
 }
 
+/** GET/PUT /orgs/{id}/browser-provider. */
+export interface ApiBrowserProvider {
+  provider: "local" | "steel" | "browserbase" | "kernel";
+  keyHint: string | null;
+  projectId: string;
+  localAvailable: boolean;
+  checkedAt: string | null;
+}
+
+/** What PUT /browser-provider takes. `apiKey` left out keeps the saved one (the same provider). `projectId`: Browserbase only. */
+export type ApiBrowserProviderInput =
+  | { provider: "local" }
+  | { provider: "steel" | "browserbase" | "kernel"; apiKey?: string; projectId?: string };
+
 /** GET /orgs/{id}/bots/{botId}/browser, and what POST …/browser/input answers. */
 export interface ApiBrowser {
   available: boolean;

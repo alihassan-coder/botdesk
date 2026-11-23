@@ -178,7 +178,7 @@ class LocalBrowsers:
                 ready = threading.Event()
 
                 def run() -> None:
-                    loop = asyncio.ProactorEventLoop() if sys.platform == "win32" else asyncio.new_event_loop()
+                    loop = _new_loop()
                     asyncio.set_event_loop(loop)
                     self._loop = loop
                     ready.set()
@@ -295,6 +295,13 @@ def _explain(error: PlaywrightError) -> str:
     if "ERR_NAME_NOT_RESOLVED" in message:
         return "That website couldn't be found. Check the address."
     return f"The browser couldn't do that: {message}"
+
+
+def _new_loop() -> asyncio.AbstractEventLoop:
+    """A loop that can start subprocesses: on Windows only the proactor loop can."""
+    if sys.platform == "win32":
+        return asyncio.ProactorEventLoop()
+    return asyncio.new_event_loop()
 
 
 def _page(session: _Session) -> Page:

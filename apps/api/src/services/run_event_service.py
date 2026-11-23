@@ -84,6 +84,25 @@ def _lock_chats_before_adding_events(session: Session, _context: Any, _instances
     held.update(threads)
 
 
+async def lock_chat(db: AsyncSession, thread_id: uuid.UUID) -> None:
+    """Take the chat's event lock now, before changing rows a run in that chat may change too (a
+    group's participants or lead). A run takes this lock before its rows; a change that took its
+    rows first and this lock last (when its `thread_updated` event is flushed) could wait on the
+    run while the run waits on it: a deadlock. No-op on SQLite."""
+    if db.get_bind().dialect.name != "postgresql":
+        return
+    held: set[uuid.UUID] = db.sync_session.info.setdefault(LOCKED_THREADS, set())
+    if thread_id in held:
+        return
+    if any(thread_lock_key(t) > thread_lock_key(thread_id) for t in held):
+        raise RuntimeError("lock_chat after a chat whose lock sorts higher: commit in between (deadlock rule).")
+    await db.execute(
+        text(f"SELECT pg_advisory_xact_lock(:key), pg_notify('{RUN_EVENTS_CHANNEL}', :thread)"),
+        {"key": thread_lock_key(thread_id), "thread": str(thread_id)},
+    )
+    held.add(thread_id)
+
+
 @event.listens_for(Session, "after_transaction_end")
 def _forget_chat_locks(session: Session, transaction: SessionTransaction) -> None:
     """Advisory xact locks end with the transaction, and so does our record of them."""

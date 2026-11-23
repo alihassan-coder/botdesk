@@ -63,6 +63,8 @@ async def create_group(db: AsyncSession, access: Access, body: GroupIn) -> Threa
 
 async def set_lead(db: AsyncSession, access: Access, runs: RunManager, thread_id: uuid.UUID, body: LeadIn) -> ThreadOut:
     thread = await thread_service.get_thread(db, org_id=access.org.id, user_id=access.user.id, thread_id=thread_id)
+    # The chat's lock first, as a run in it takes it (no deadlock with a run still going).
+    await run_event_service.lock_chat(db, thread.id)
     await thread_service.set_lead(db, thread, user_id=access.user.id, role=access.role, bot_id=body.bot_id)
     return await _saved_change(db, access, runs, thread)
 
@@ -71,6 +73,8 @@ async def rename_group(
     db: AsyncSession, access: Access, runs: RunManager, thread_id: uuid.UUID, body: GroupPatchIn
 ) -> ThreadOut:
     thread = await thread_service.get_thread(db, org_id=access.org.id, user_id=access.user.id, thread_id=thread_id)
+    # The chat's lock first, as a run in it takes it (no deadlock with a run still going).
+    await run_event_service.lock_chat(db, thread.id)
     await thread_service.rename_group(db, thread, user_id=access.user.id, role=access.role, title=body.title)
     return await _saved_change(db, access, runs, thread)
 
@@ -79,6 +83,8 @@ async def add_participants(
     db: AsyncSession, access: Access, runs: RunManager, thread_id: uuid.UUID, body: ParticipantsIn
 ) -> ThreadOut:
     thread = await thread_service.get_thread(db, org_id=access.org.id, user_id=access.user.id, thread_id=thread_id)
+    # The chat's lock first, as a run in it takes it (no deadlock with a run still going).
+    await run_event_service.lock_chat(db, thread.id)
     await thread_service.add_participants(
         db, thread, user_id=access.user.id, role=access.role, user_ids=body.user_ids, bot_ids=body.bot_ids
     )
@@ -99,6 +105,8 @@ async def remove_participant(
     the Stop button. One queued even later never starts (`run_service.left_its_group`).
     You leaving a group last deletes it, every run in it stopped first, as `remove_member` does."""
     thread = await thread_service.get_thread(db, org_id=access.org.id, user_id=access.user.id, thread_id=thread_id)
+    # The chat's lock first, as a run in it takes it (no deadlock with a run still going).
+    await run_event_service.lock_chat(db, thread.id)
     emptied = await thread_service.remove_participant(
         db, thread, user_id=access.user.id, role=access.role, kind=kind, participant_id=participant_id
     )

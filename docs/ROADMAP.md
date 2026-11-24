@@ -134,6 +134,7 @@ When you finish something, tick it here in the same pull request.
 - [x] Take over in the web app (live view in the Computer tab)
 - [x] Cloud browser providers: Steel, Browserbase, Kernel (API; ADR 0017 step 4)
 - [x] Cloudinary storage (API; ADR 0017 step 5)
-- [ ] Browser provider card and Cloudinary in Settings → Computers; a browser in the Docker image; files attached in chat
+- [x] Browser provider card and Cloudinary in Settings → Computers
+- [ ] A browser in the Docker image (or Docker users pick a cloud browser); files attached in chat
 - [ ] The full bot computer (a whole desktop) and routine recording
 - [ ] Desktop app, then mobile

@@ -12,8 +12,9 @@ import { describeBucket } from "@/lib/storage";
 import { StorageForm } from "./storage-form";
 
 /**
- * Settings → Computers' Storage: where the organization's files are kept now, and (owners and
- * admins) Change, which opens the form below it. Members see the same, read-only.
+ * Settings → Computers' Storage: where the organization's files are kept now (Local, an
+ * S3-compatible bucket, or Cloudinary), and (owners and admins) Change, which opens the form
+ * below it. Members see the same, read-only.
  */
 export function StorageCard() {
   const load = useFileStorage();
@@ -48,7 +49,7 @@ export function StorageCard() {
     <div className="flex flex-col gap-3">
       <div className="flex items-start gap-3 rounded-2xl border p-4">
         <span className="grid size-9 shrink-0 place-items-center rounded-[10px] bg-muted text-muted-foreground">
-          {load.current.provider === "s3" ? <Cloud className="size-4.5" aria-hidden /> : <HardDrive className="size-4.5" aria-hidden />}
+          {load.current.provider === "local" ? <HardDrive className="size-4.5" aria-hidden /> : <Cloud className="size-4.5" aria-hidden />}
         </span>
         <Current storage={load.current} canManage={canManage} />
         {canManage && !changing && (
@@ -65,6 +66,17 @@ export function StorageCard() {
 }
 
 function Current({ storage, canManage }: { storage: FileStorage; canManage: boolean }) {
+  if (storage.provider === "cloudinary" && storage.cloudinary) {
+    return (
+      <div className="min-w-0 flex-1">
+        <p className="truncate font-medium">Cloudinary <span className="font-normal text-muted-foreground">· {storage.cloudinary.cloudName}</span></p>
+        <p className="text-xs text-muted-foreground">
+          Key {maskedKey(storage.cloudinary.apiKeyHint)}
+          {storage.checkedAt && <> · checked <TimeAgo iso={storage.checkedAt} /></>}
+        </p>
+      </div>
+    );
+  }
   if (storage.provider === "s3" && storage.s3) {
     return (
       <div className="min-w-0 flex-1">

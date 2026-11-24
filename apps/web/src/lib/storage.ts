@@ -86,3 +86,31 @@ export function draftProblems(draft: S3Draft, hasSavedSecret: boolean): S3Proble
   if (!hasSavedSecret && !draft.secretAccessKey.trim()) problems.secretAccessKey = "Paste the secret access key.";
   return problems;
 }
+
+/* ---------- Cloudinary ---------- */
+
+/** Cloudinary in one line, and its pricing page. */
+export const CLOUDINARY = {
+  hint: "Best for images and screenshots. Other files up to 10 MB each on its free plan.",
+  pricingUrl: "https://cloudinary.com/pricing",
+};
+
+/** The Cloudinary form as typed. The API key is never shown again, so it always has to be pasted. */
+export interface CloudinaryDraft {
+  cloudName: string;
+  apiKey: string;
+  apiSecret: string;
+}
+
+export type CloudinaryProblems = Partial<Record<keyof CloudinaryDraft, string>>;
+
+/** What's missing before the API is asked. `hasSavedSecret`: storage that is already Cloudinary keeps its secret when the field is left empty. */
+export function cloudinaryProblems(draft: CloudinaryDraft, hasSavedSecret: boolean): CloudinaryProblems {
+  const problems: CloudinaryProblems = {};
+  const name = draft.cloudName.trim();
+  if (!name) problems.cloudName = "Add your cloud name. It's on your Cloudinary dashboard.";
+  else if (!/^[A-Za-z0-9_-]{1,100}$/.test(name)) problems.cloudName = "A cloud name has only letters, numbers, - and _.";
+  if (draft.apiKey.trim().length < 4) problems.apiKey = "Paste the API key.";
+  if (!hasSavedSecret && !draft.apiSecret.trim()) problems.apiSecret = "Paste the API secret.";
+  return problems;
+}

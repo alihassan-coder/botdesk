@@ -37,7 +37,8 @@ describe("BotBrowser on the API", () => {
     api.routes[`POST ${base}/input`] = { status: 200, body: open };
     const { user } = await show(closed);
     expect(await screen.findByText(/Bots never type passwords\./)).toBeInTheDocument();
-    await user.type(screen.getByLabelText("Open a page"), "example.com/login");
+    await user.click(screen.getByLabelText("Open a page"));
+    await user.paste("example.com/login");
     await user.click(screen.getByRole("button", { name: "Open" }));
 
     expect(sentInputs()).toEqual([{ kind: "open", url: "https://example.com/login" }]);
@@ -49,7 +50,8 @@ describe("BotBrowser on the API", () => {
   it("shows the API's reason when a page can't be opened", async () => {
     api.routes[`POST ${base}/input`] = { status: 400, body: { detail: "That address is on a private network." } };
     const { user } = await show(closed);
-    await user.type(await screen.findByLabelText("Open a page"), "10.0.0.1");
+    await user.click(await screen.findByLabelText("Open a page"));
+    await user.paste("10.0.0.1");
     await user.click(screen.getByRole("button", { name: "Open" }));
     expect(await screen.findByRole("alert")).toHaveTextContent("That address is on a private network.");
   });

@@ -1640,10 +1640,11 @@ const usageActions = {
  * with "bad"; uploads and deletes happen in memory, and files open from blob: URLs.
  */
 
-/** What you fill in to choose storage. For S3, an empty secret keeps the saved one (storage that is already S3). */
+/** What you fill in to choose storage. An empty secret keeps the saved one (storage that is already S3, or already Cloudinary). */
 export type StorageInput =
   | { provider: "local" }
-  | { provider: "s3"; s3: { endpoint: string; region: string; bucket: string; prefix: string; accessKeyId: string; secretAccessKey: string } };
+  | { provider: "s3"; s3: { endpoint: string; region: string; bucket: string; prefix: string; accessKeyId: string; secretAccessKey: string } }
+  | { provider: "cloudinary"; cloudinary: { cloudName: string; apiKey: string; apiSecret: string } };
 
 /** The API's FILE_MAX_MB, for the demo's uploads. */
 const FILE_MAX_MB = 25;
@@ -1717,6 +1718,15 @@ function saveMockStorage(input: StorageInput): ActionResult {
     set((st) => ({ ...st, storage: { status: "ready", current: { provider: "local", localAvailable: current?.localAvailable ?? true } } }));
     return { ok: true };
   }
+  if (input.provider === "cloudinary") {
+    const { cloudName, apiKey, apiSecret } = input.cloudinary;
+    if (!/^[A-Za-z0-9_-]{1,100}$/.test(cloudName.trim()) || apiKey.trim().length < 4) return { ok: false, error: "Fill in the Cloudinary details." };
+    if (!apiSecret.trim() && current?.provider !== "cloudinary") return { ok: false, error: "Add the API secret." };
+    if (apiSecret.trim().startsWith("bad")) return { ok: false, error: `Cloudinary refused the keys for ${cloudName.trim()}. Check the API key and secret.` };
+    const cloudinary = { cloudName: cloudName.trim(), apiKeyHint: apiKey.trim().slice(-4) };
+    set((st) => ({ ...st, storage: { status: "ready", current: { provider: "cloudinary", cloudinary, localAvailable: current?.localAvailable ?? true, checkedAt: now() } } }));
+    return { ok: true };
+  }
   const { endpoint, region, bucket, prefix, accessKeyId, secretAccessKey } = input.s3;
   if (!region.trim() || bucket.trim().length < 3 || accessKeyId.trim().length < 4) return { ok: false, error: "Fill in the bucket's details." };
   if (!secretAccessKey.trim() && current?.provider !== "s3") return { ok: false, error: "Add the secret access key." };
@@ -1747,7 +1757,13 @@ const fileActions = {
   async saveStorage(input: StorageInput): Promise<ActionResult> {
     if (isDemoMode()) return saveMockStorage(input);
     const orgId = state.org.id;
-    const body = input.provider === "local" ? input : {
+    const body = input.provider === "local" ? input : input.provider === "cloudinary" ? {
+      provider: input.provider,
+      cloudinary: {
+        cloudName: input.cloudinary.cloudName.trim(), apiKey: input.cloudinary.apiKey.trim(),
+        ...(input.cloudinary.apiSecret.trim() ? { apiSecret: input.cloudinary.apiSecret.trim() } : {}),
+      },
+    } : {
       provider: input.provider,
       s3: {
         endpoint: input.s3.endpoint.trim(), region: input.s3.region.trim(), bucket: input.s3.bucket.trim(),

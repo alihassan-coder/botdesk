@@ -144,8 +144,11 @@ export function toModel({ id, provider, name, contextWindow, pricing }: ApiModel
 
 /* ---------- Files and storage ---------- */
 
-export function toFileStorage({ provider, s3, localAvailable, checkedAt }: ApiStorage): FileStorage {
-  return { provider, localAvailable, ...(s3 ? { s3 } : {}), ...(checkedAt ? { checkedAt: asUtc(checkedAt) } : {}) };
+export function toFileStorage({ provider, s3, cloudinary, localAvailable, checkedAt }: ApiStorage): FileStorage {
+  return {
+    provider, localAvailable,
+    ...(s3 ? { s3 } : {}), ...(cloudinary ? { cloudinary } : {}), ...(checkedAt ? { checkedAt: asUtc(checkedAt) } : {}),
+  };
 }
 
 /** `url` is where its bytes are (`fileApi.contentUrl`), passed in so this stays free of addresses. */

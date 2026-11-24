@@ -339,8 +339,10 @@ export interface ApiS3Storage {
 
 /** GET/PUT /orgs/{id}/storage. */
 export interface ApiStorage {
-  provider: "local" | "s3";
+  provider: "local" | "s3" | "cloudinary";
   s3: ApiS3Storage | null;
+  /** An API from before Cloudinary sends none. */
+  cloudinary?: { cloudName: string; apiKeyHint: string } | null;
   localAvailable: boolean;
   checkedAt: string | null;
 }
@@ -348,7 +350,8 @@ export interface ApiStorage {
 /** What PUT /storage takes. `secretAccessKey` left out keeps the saved one (storage that is already S3). */
 export type ApiStorageInput =
   | { provider: "local" }
-  | { provider: "s3"; s3: { endpoint?: string; region: string; bucket: string; prefix?: string; accessKeyId: string; secretAccessKey?: string } };
+  | { provider: "s3"; s3: { endpoint?: string; region: string; bucket: string; prefix?: string; accessKeyId: string; secretAccessKey?: string } }
+  | { provider: "cloudinary"; cloudinary: { cloudName: string; apiKey: string; apiSecret?: string } };
 
 export interface ApiFile {
   id: string;

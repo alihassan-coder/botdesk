@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { describeBucket, draftFrom, draftProblems, presetFor } from "./storage";
+import { cloudinaryProblems, describeBucket, draftFrom, draftProblems, presetFor } from "./storage";
 
 describe("presetFor", () => {
   it("knows the common services by their endpoint, and AWS by having none", () => {
@@ -33,5 +33,19 @@ describe("draftProblems", () => {
 
   it("keeps the saved secret when the field is left empty", () => {
     expect(draftProblems({ ...filled, secretAccessKey: "" }, true)).toEqual({});
+  });
+});
+
+describe("cloudinaryProblems", () => {
+  const filled = { cloudName: "acme", apiKey: "123456789012", apiSecret: "s3cret" };
+
+  it("asks for the cloud name, key and secret, and checks the name's characters", () => {
+    expect(Object.keys(cloudinaryProblems({ cloudName: "", apiKey: "", apiSecret: "" }, false)).sort()).toEqual(["apiKey", "apiSecret", "cloudName"]);
+    expect(cloudinaryProblems({ ...filled, cloudName: "acme labs" }, false).cloudName).toBe("A cloud name has only letters, numbers, - and _.");
+    expect(cloudinaryProblems(filled, false)).toEqual({});
+  });
+
+  it("keeps the saved secret when the field is left empty", () => {
+    expect(cloudinaryProblems({ ...filled, apiSecret: "" }, true)).toEqual({});
   });
 });

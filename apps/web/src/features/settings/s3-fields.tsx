@@ -1,9 +1,9 @@
-import { Field, FieldDescription, FieldError, FieldGroup, FieldLabel, FieldLegend, FieldSet } from "@/components/ui/field";
-import { Input } from "@/components/ui/input";
+import { FieldDescription, FieldGroup, FieldLegend, FieldSet } from "@/components/ui/field";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import type { S3Storage } from "@/data/types";
 import { STORAGE_PRESETS, type S3Draft, type S3Problems } from "@/lib/storage";
 import { SecretField } from "./secret-field";
+import { TextField } from "./text-field";
 
 interface S3FieldsProps {
   draft: S3Draft;
@@ -53,29 +53,5 @@ export function S3Fields({ draft, onChange, problems, saved }: S3FieldsProps) {
         <SecretField id="storage-secret" label="Secret access key" {...field("secretAccessKey")} keepsSaved={saved !== undefined} />
       </div>
     </FieldGroup>
-  );
-}
-
-interface TextFieldProps {
-  id: string;
-  label: string;
-  value: string;
-  onChange: (value: string) => void;
-  problem?: string;
-  hint?: string;
-  placeholder?: string;
-  inputMode?: "url";
-}
-
-function TextField({ id, label, value, onChange, problem, hint, placeholder, inputMode }: TextFieldProps) {
-  return (
-    <Field data-invalid={problem !== undefined}>
-      <FieldLabel htmlFor={id}>{label}</FieldLabel>
-      <Input id={id} value={value} onChange={(e) => onChange(e.target.value)} placeholder={placeholder} inputMode={inputMode}
-        autoComplete="off" autoCapitalize="none" spellCheck={false} aria-invalid={problem !== undefined}
-        aria-describedby={[hint && `${id}-hint`, problem && `${id}-error`].filter(Boolean).join(" ") || undefined} />
-      {hint && <FieldDescription id={`${id}-hint`}>{hint}</FieldDescription>}
-      {problem && <FieldError id={`${id}-error`}>{problem}</FieldError>}
-    </Field>
   );
 }

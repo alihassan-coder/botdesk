@@ -619,8 +619,8 @@ export interface MemoryList {
 
 /* ---------- Files and storage (ADR 0017) ---------- */
 
-/** Where the organization keeps bots' files: on the BotDesk server (Local) or its own S3-compatible bucket. */
-export type StorageProviderId = "local" | "s3";
+/** Where the organization keeps bots' files: on the BotDesk server (Local), its own S3-compatible bucket, or Cloudinary. */
+export type StorageProviderId = "local" | "s3" | "cloudinary";
 
 /** An S3-compatible bucket as the API shows it: never the keys, only the access key's last 4 characters. */
 export interface S3Storage {
@@ -633,10 +633,17 @@ export interface S3Storage {
   accessKeyHint: string;
 }
 
+/** A Cloudinary product environment as the API shows it: the API key's last 4 characters, never the secret. */
+export interface CloudinaryStorage {
+  cloudName: string;
+  apiKeyHint: string;
+}
+
 /** The organization's file storage (Settings → Computers). */
 export interface FileStorage {
   provider: StorageProviderId;
   s3?: S3Storage;
+  cloudinary?: CloudinaryStorage;
   /** Whether this server lets organizations keep files on its own disk (the operator can turn Local off). */
   localAvailable: boolean;
   /** When the S3 bucket last passed its check. */

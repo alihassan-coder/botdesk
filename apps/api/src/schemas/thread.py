@@ -2,7 +2,7 @@ import uuid
 from datetime import datetime
 from typing import Any
 
-from pydantic import Field
+from pydantic import Field, model_validator
 
 # ParticipantType is re-exported for the routes (a path parameter), which don't import models.
 from src.models.thread import AuthorType, MessageStatus, ThreadKind
@@ -83,5 +83,18 @@ class SentMessageOut(MessageOut):
     run_ids: list[uuid.UUID]
 
 
+MAX_ATTACHMENTS = 10
+
+
 class MessageIn(ApiModel):
-    text: str = Field(min_length=1, max_length=20_000)
+    """Text, files already uploaded to the bot's folder or the shared one (`attachments`, their
+    ids), or both. In a group, only shared files can be attached."""
+
+    text: str = Field(default="", max_length=20_000)
+    attachments: list[uuid.UUID] = Field(default_factory=list, max_length=MAX_ATTACHMENTS)
+
+    @model_validator(mode="after")
+    def _something_to_send(self) -> "MessageIn":
+        if not self.text.strip() and not self.attachments:
+            raise ValueError("Write a message or attach a file.")
+        return self

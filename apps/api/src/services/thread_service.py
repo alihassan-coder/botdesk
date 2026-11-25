@@ -14,7 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.core.database import utcnow
 from src.core.errors import BadRequest, Forbidden, NotFound
-from src.models import Bot, Membership, Message, Thread, ThreadParticipant
+from src.models import Bot, File, Membership, Message, Thread, ThreadParticipant
 from src.models.thread import ParticipantType
 from src.schemas.thread import AuthorOut, MessageOut, ParticipantOut, ThreadOut
 
@@ -26,6 +26,21 @@ NOT_IN_ORG = "Some of those people or bots aren't in this organization."
 
 def text_part(text: str) -> dict[str, str]:
     return {"type": "text", "text": text}
+
+
+FILE_PART = "file"
+
+
+def file_part(file: File) -> dict[str, Any]:
+    """An attached file as the message keeps it: enough to show it and for a bot to read it."""
+    return {
+        "type": FILE_PART,
+        "fileId": str(file.id),
+        "botId": str(file.bot_id) if file.bot_id else None,
+        "path": file.path,
+        "contentType": file.content_type,
+        "sizeBytes": file.size_bytes,
+    }
 
 
 def text_of(parts: list[dict[str, Any]]) -> str:
@@ -455,13 +470,16 @@ async def list_messages(
     return list(reversed(list(newest_first)))
 
 
-async def post_message(db: AsyncSession, *, thread: Thread, user_id: uuid.UUID, text: str) -> Message:
+async def post_message(
+    db: AsyncSession, *, thread: Thread, user_id: uuid.UUID, text: str, attachments: list[File] | None = None
+) -> Message:
+    parts = [text_part(text.strip())] if text.strip() else []
     message = Message(
         org_id=thread.org_id,
         thread_id=thread.id,
         author_type="user",
         author_id=user_id,
-        parts=[text_part(text.strip())],
+        parts=parts + [file_part(file) for file in attachments or []],
         status="complete",
         created_at=utcnow(),
     )

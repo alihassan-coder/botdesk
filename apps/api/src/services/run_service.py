@@ -43,7 +43,7 @@ from src.schemas.run import RunOut
 from src.services import approval_service
 from src.services.mention_routing import BotAuthor, ChatBots, Reply, route
 from src.services.run_event_service import add_event
-from src.services.thread_service import message_out, text_of, text_part
+from src.services.thread_service import FILE_PART, message_out, text_of, text_part
 from src.services.tool_execution_service import runs_with_a_started_call, settle_by_a_person, started_call
 
 HISTORY_LENGTH = 30  # messages the bot sees: the newest ones up to its trigger
@@ -298,8 +298,35 @@ def _line(line: Any, *, bot_id: uuid.UUID, handles: dict[str, str]) -> ChatLine:
         from_this_bot=line.author_type == "bot" and line.author_id == bot_id,
         author_type=line.author_type,
         author=_label(line.user_name, line.user_handle) or _label(line.bot_name, line.bot_handle),
-        text="\n".join(filter(None, [text_of(line.parts), *_handoff_lines(line.parts, handles)])),
+        text="\n".join(
+            filter(None, [text_of(line.parts), *_file_lines(line.parts, bot_id), *_handoff_lines(line.parts, handles)])
+        ),
     )
+
+
+def _file_lines(parts: list[dict[str, Any]], bot_id: uuid.UUID) -> list[str]:
+    """Attached files, as a run reads them: where each is and how to read it with the Files tools."""
+    lines = []
+    for part in parts:
+        if part.get("type") != FILE_PART:
+            continue
+        path, owner = str(part.get("path", "")).replace('"', "'"), part.get("botId")
+        about = f"{part.get('contentType', 'a file')}, {_size(part.get('sizeBytes'))}"
+        if owner is None:
+            lines.append(f'(attached file "{path}" ({about}) in the shared folder: files.read with shared=true)')
+        elif owner == str(bot_id):
+            lines.append(f'(attached file "{path}" ({about}) in your folder: files.read)')
+        else:
+            lines.append(f'(attached file "{path}" ({about}) in another bot\'s folder)')
+    return lines
+
+
+def _size(size: Any) -> str:
+    if not isinstance(size, int):
+        return "size unknown"
+    if size < 1024:
+        return f"{size} B"
+    return f"{size / 1024:.0f} KB" if size < 1024 * 1024 else f"{size / 1024 / 1024:.1f} MB"
 
 
 def _handoff_lines(parts: list[dict[str, Any]], handles: dict[str, str]) -> list[str]:

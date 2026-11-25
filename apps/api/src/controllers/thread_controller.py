@@ -24,7 +24,7 @@ from src.schemas.thread import (
     SentMessageOut,
     ThreadOut,
 )
-from src.services import run_event_service, run_service, thread_service
+from src.services import file_service, run_event_service, run_service, thread_service
 
 # How often an idle stream looks for new events anyway: Postgres notifications wake it at once,
 # but one sent while the listening connection reconnects is lost.
@@ -174,7 +174,10 @@ async def post_message(
     """Save the message, a queued run for each bot that should reply and the runs' jobs, in one
     transaction. A worker picks the jobs up; the reply streams in over the event stream."""
     thread = await thread_service.get_thread(db, org_id=access.org.id, user_id=access.user.id, thread_id=thread_id)
-    message = await thread_service.post_message(db, thread=thread, user_id=access.user.id, text=body.text)
+    attachments = await file_service.attachable(db, access.org.id, thread, body.attachments)
+    message = await thread_service.post_message(
+        db, thread=thread, user_id=access.user.id, text=body.text, attachments=attachments
+    )
     new_runs = await run_service.create_runs(db, thread=thread, message=message, settings=runs.settings, text=body.text)
     out = thread_service.message_out(message)
     run_event_service.add_event(

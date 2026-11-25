@@ -19,7 +19,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.core.config import Settings
 from src.core.errors import AppError, BadRequest, NotFound
-from src.models import Bot, File
+from src.models import Bot, File, Thread
 from src.schemas.file import FileOut
 from src.services import storage_service
 from src.services.credential_vault import CredentialVault
@@ -43,6 +43,8 @@ BAD_PATH = (
 NOT_FOUND = "File not found."
 ELSEWHERE = "This file is in storage the organization no longer uses, so it can't be opened."
 SAVED_MEANWHILE = "Someone saved a file at this path at the same moment. Try again."
+NOT_ATTACHABLE_DM = "Attach this bot's own files, or shared ones."
+NOT_ATTACHABLE_GROUP = "In a group, attach shared files: every bot here can read those."
 MAX_CONTENT_TYPE = 120
 
 
@@ -102,6 +104,21 @@ async def get_file(db: AsyncSession, org_id: uuid.UUID, file_id: uuid.UUID) -> F
     if file is None or file.org_id != org_id:
         raise NotFound(NOT_FOUND)
     return file
+
+
+async def attachable(db: AsyncSession, org_id: uuid.UUID, thread: Thread, ids: list[uuid.UUID]) -> list[File]:
+    """The files a message in this chat may carry, in the order given. In a bot's DM: its own
+    files and shared ones; in a group: shared ones only (a bot's own folder isn't the group's)."""
+    if not ids:
+        return []
+    found = {file.id: file for file in await db.scalars(select(File).where(File.org_id == org_id, File.id.in_(ids)))}
+    files = [found[file_id] for file_id in dict.fromkeys(ids) if file_id in found]
+    if len(files) != len(set(ids)):
+        raise NotFound(NOT_FOUND)
+    allowed = {None, thread.bot_id} if thread.kind == "dm" else {None}
+    if any(file.bot_id not in allowed for file in files):
+        raise BadRequest(NOT_ATTACHABLE_DM if thread.kind == "dm" else NOT_ATTACHABLE_GROUP)
+    return files
 
 
 async def find_by_path(db: AsyncSession, org_id: uuid.UUID, bot_id: uuid.UUID | None, path: str) -> File | None:

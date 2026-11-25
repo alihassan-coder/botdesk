@@ -1,4 +1,4 @@
-import type { AccountConnection, Approval, ArgsSchema, Bot, BotBrowser, BotFile, BrowserProvider, FileStorage, HandoffPart, Invitation, McpServer, MemoryItem, MemoryStatus, Message, MessagePart, Model, ModelProvider, Org, Routine, Template, Thread, UsageSummary, User } from "../types";
+import type { AccountConnection, Approval, ArgsSchema, Bot, BotBrowser, BotFile, BrowserProvider, FilePart, FileStorage, HandoffPart, Invitation, McpServer, MemoryItem, MemoryStatus, Message, MessagePart, Model, ModelProvider, Org, Routine, Template, Thread, UsageSummary, User } from "../types";
 import { describeCron } from "@/lib/schedule";
 import type { TaskChange } from "@/lib/tasks";
 import type { ApiApproval, ApiTask, ApiBot, ApiBrowser, ApiBrowserProvider, ApiConnection, ApiBotInput, ApiFile, ApiInvitation, ApiMcpServer, ApiMemory, ApiMemoryStatus, ApiMessage, ApiModel, ApiModelProvider, ApiOrg, ApiRole, ApiRoutine, ApiStorage, ApiTemplate, ApiThread, ApiUsage, ApiUser } from "./types";
@@ -73,10 +73,13 @@ export function toMessage({ id, threadId, author, parts, status, createdAt }: Ap
   };
 }
 
-/** Parts are served as stored. A handoff card's nulls ("no result yet") become missing fields. */
+/**
+ * Parts are served as stored. A handoff card's nulls ("no result yet") and a file's null `botId`
+ * (the shared folder) become missing fields.
+ */
 function toPart(part: Record<string, unknown>): MessagePart {
-  if (part.type !== "handoff") return part as unknown as MessagePart;
-  return Object.fromEntries(Object.entries(part).filter(([, value]) => value !== null)) as unknown as HandoffPart;
+  if (part.type !== "handoff" && part.type !== "file") return part as unknown as MessagePart;
+  return Object.fromEntries(Object.entries(part).filter(([, value]) => value !== null)) as unknown as HandoffPart | FilePart;
 }
 
 /** What a handoff card shows of a Task, from a `task_updated` event. */

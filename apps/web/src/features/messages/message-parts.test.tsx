@@ -18,7 +18,7 @@ const everyPart: Message = {
     { type: "approval", approvalId: "a_1" },
     { type: "question", question: "Archive cold emails?", options: ["Yes", "No"] },
     { type: "routine-created", routineId: "r_1", name: "Overnight outbound" },
-    { type: "file", name: "report.csv", mime: "text/csv", sizeBytes: 18_204 },
+    { type: "file", fileId: "f_report", path: "chat/report.csv", contentType: "text/csv", sizeBytes: 18_204 },
     { type: "handoff", taskId: "task_1", fromBotId: "b_chief", toBotId: "b_sales", task: "Draft openers", status: "working" },
     { type: "tool-call", toolExecutionId: "x1", tool: "demo.send_email", status: "succeeded" },
     { type: "tool-call", toolExecutionId: "x2", tool: "demo.read_inbox", status: "failed", error: "The inbox didn't answer." },
@@ -45,7 +45,8 @@ describe("MessageParts", () => {
     expect(screen.getByText("Send reply to Vicky (Globex)")).toBeInTheDocument(); // approval
     expect(screen.getByText("Archive cold emails?")).toBeInTheDocument(); // question
     expect(screen.getByText("Overnight outbound")).toBeInTheDocument(); // routine created
-    expect(screen.getByText("18 KB")).toBeInTheDocument(); // file
+    expect(screen.getByText("report.csv")).toBeInTheDocument(); // file
+    expect(screen.getByText("18 KB")).toBeInTheDocument();
     expect(screen.getByRole("article", { name: "Chief handed a task to Sales Outbound" })).toHaveTextContent("Draft openers"); // handoff
   });
 

@@ -153,9 +153,14 @@ export const threadApi = {
     const query = new URLSearchParams({ limit: String(limit), ...(before ? { before } : {}) });
     return apiFetch<ApiMessage[]>(`/api/v1/orgs/${orgId}/threads/${threadId}/messages?${query}`);
   },
-  /** Who replies: see ADR 0009 (a DM's bot and guests, a group's mentioned bots or lead). Replies arrive on the event stream. */
-  send: (orgId: string, threadId: string, text: string) =>
-    apiFetch<ApiSentMessage>(`/api/v1/orgs/${orgId}/threads/${threadId}/messages`, { method: "POST", body: { text } }),
+  /**
+   * Who replies: see ADR 0009 (a DM's bot and guests, a group's mentioned bots or lead). Replies arrive on the event stream.
+   * `attachments`: up to 10 uploaded files by id (a DM: the bot's own or shared ones; a group: shared ones); text may then be empty.
+   */
+  send: (orgId: string, threadId: string, text: string, attachments: string[] = []) =>
+    apiFetch<ApiSentMessage>(`/api/v1/orgs/${orgId}/threads/${threadId}/messages`, {
+      method: "POST", body: attachments.length > 0 ? { text, attachments } : { text },
+    }),
 
   /** The chat's runs that haven't finished (queued, running or paused), and where its event stream is. */
   activeRuns: (orgId: string, threadId: string) =>
@@ -290,11 +295,12 @@ export const fileApi = {
   /** A bot's files by path; without `botId`, the shared ones. */
   list: (orgId: string, botId?: string) =>
     apiFetch<ApiFile[]>(`/api/v1/orgs/${orgId}/files${botId ? `?botId=${encodeURIComponent(botId)}` : ""}`),
-  /** Into the bot's folder (the shared one without `botId`), at the file's name. Saving the same path again replaces it. */
-  upload: (orgId: string, file: File, botId?: string) => {
+  /** Into the bot's folder (the shared one without `botId`), at `path` or else the file's name. Saving the same path again replaces it. */
+  upload: (orgId: string, file: File, botId?: string, path?: string) => {
     const form = new FormData();
     form.append("file", file);
     if (botId) form.append("botId", botId);
+    if (path) form.append("path", path);
     return apiFetch<ApiFile>(`/api/v1/orgs/${orgId}/files`, { method: "POST", body: form });
   },
   remove: (orgId: string, fileId: string) => apiFetch<void>(`/api/v1/orgs/${orgId}/files/${fileId}`, { method: "DELETE" }),

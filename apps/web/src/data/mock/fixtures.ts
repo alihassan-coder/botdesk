@@ -246,7 +246,8 @@ export const messages: Message[] = [
   // Talent
   { id: "m40", threadId: "t_talent", author: { type: "bot", id: "b_talent" }, createdAt: ago(300), parts: [
     { type: "text", text: "3 intros written up in your voice, kept here as notes for you to review. I'm read-only, so I can't draft or send them in Gmail; promote me to “Ask before acting” if you want me to." },
-    { type: "file", name: "candidates-week-45.csv", mime: "text/csv", sizeBytes: 18_204 },
+    // `files` below has it too (its text is in `fileContents`, 190 bytes), so it opens in the demo.
+    { type: "file", fileId: "file_4", botId: "b_talent", path: "notes/candidates-week-45.csv", contentType: "text/csv", sizeBytes: 190 },
   ] },
   // Expense
   { id: "m50", threadId: "t_expense", author: { type: "bot", id: "b_expense" }, createdAt: ago(400), parts: [
@@ -343,15 +344,20 @@ export const storage: FileStorage = { provider: "local", localAvailable: true };
 export const fileContents: Record<string, string> = {
   file_1: "Hi Sara,\n\nThanks for the notes on the pricing page. I've moved the FAQ above the plans and fixed the typo in the footer.\n\nBest, Ali\n",
   file_3: "# Inbox this week\n\n- 142 emails in, 118 archived as noise\n- 19 labelled Customer, 5 replies drafted\n- 2 replies waiting for your OK\n",
+  file_4: "name,role,company,why\nMaya Chen,Staff engineer,Northwind,Led the payments rewrite\nTom Okafor,Design lead,Globex,Ships design systems\nLeila Haddad,Product manager,Initech,Grew onboarding 30%\n",
 };
 
 const textSize = (id: string) => new TextEncoder().encode(fileContents[id]).length;
 
-/** Inbox Manager's files, by path: two it saved, and one left in storage the team stopped using. */
+/**
+ * The demo's files, by path: Inbox Manager's (two it saved, and one left in storage the team stopped
+ * using) and the list Talent Scout shared in its chat.
+ */
 export const files: BotFile[] = [
   { id: "file_1", botId: "b_inbox", path: "drafts/reply-to-sara.txt", folder: "botdesk/inbox", contentType: "text/plain", sizeBytes: textSize("file_1"), available: true, createdAt: ago(60 * 26), updatedAt: ago(60 * 26), url: "" },
   { id: "file_2", botId: "b_inbox", path: "exports/october-senders.csv", folder: "botdesk/inbox", contentType: "text/csv", sizeBytes: 18_204, available: false, createdAt: ago(60 * 24 * 20), updatedAt: ago(60 * 24 * 20), url: "" },
   { id: "file_3", botId: "b_inbox", path: "reports/inbox-this-week.md", folder: "botdesk/inbox", contentType: "text/markdown", sizeBytes: textSize("file_3"), available: true, createdAt: ago(60 * 24 * 3), updatedAt: ago(25), url: "" },
+  { id: "file_4", botId: "b_talent", path: "notes/candidates-week-45.csv", folder: "botdesk/talent", contentType: "text/csv", sizeBytes: textSize("file_4"), available: true, createdAt: ago(300), updatedAt: ago(300), url: "" },
 ];
 
 export const memories: MemoryItem[] = [

@@ -21,7 +21,8 @@
  * around without an account; it never calls the API.
  * Screens can't tell the difference: they use the hooks and actions below either way.
  */
-import { useCallback, useRef, useSyncExternalStore } from "react";
+import { useCallback, useEffect, useRef, useSyncExternalStore } from "react";
+import { fileNameOf } from "@/lib/attachments";
 import { makeHandle } from "@/lib/handle";
 import { parseMentions } from "@/lib/mentions";
 import { HOP_LIMIT, chainStoppedText, routeMessage, type BotReply, type ChatBots } from "@/lib/mention-routing";
@@ -38,7 +39,7 @@ import { isTaskOpen, taskPreview, withTaskChangeIn, type TaskChange } from "@/li
 import * as chiefDemo from "./mock/chief-demo";
 import * as mock from "./mock/fixtures";
 import type {
-  AccountConnection, AccountConnectionList, Approval, ApprovalStatus, Bot, BotBrowser, BotFile, BotFileList, BrowserInput, BrowserLoad, BrowserProviderLoad, BotToolChange, BotTools, ConnectionOwner, Invitation, McpServerInput, McpServerList, McpToolChoice, MemoryItem, MemoryList, MemoryStatus, Membership, Message, Model, ModelListProblem, ModelProvider, Org,
+  AccountConnection, AccountConnectionList, Approval, ApprovalStatus, Bot, BotBrowser, BotFile, BotFileList, BrowserInput, BrowserLoad, BrowserProviderLoad, BotToolChange, BotTools, ConnectionOwner, FilePart, Invitation, McpServerInput, McpServerList, McpToolChoice, MemoryItem, MemoryList, MemoryStatus, Membership, Message, MessagePart, Model, ModelListProblem, ModelProvider, Org,
   Participant, PluginList, Routine, SecurityLevel, ServerConnectorList, StorageLoad, TemplateList, Thread, UsageSummary, User,
 } from "./types";
 
@@ -75,6 +76,9 @@ export interface ThreadLoad {
 
 /** What an action that can fail returns: screens show `error` as is. */
 export type ActionResult = { ok: true } | { ok: false; error: string };
+
+/** An upload: the file as saved (its id is what a chat message attaches), or why not. */
+export type UploadResult = { ok: true; file: BotFile } | { ok: false; error: string };
 
 /**
  * Deciding an approval: `conflict` when someone decided first or it expired (the card now shows
@@ -1233,16 +1237,16 @@ async function saveGroup(save: () => Promise<ApiThread>): Promise<ActionResult> 
  * Shows your message at once, then sends it. The API answers with the saved message and the
  * runs it started; the replies themselves arrive on the chat's event stream.
  */
-async function sendApiMessage(threadId: string, text: string, mentions: Participant[]) {
+async function sendApiMessage(threadId: string, text: string, mentions: Participant[], attachments: BotFile[]) {
   const orgId = state.org.id;
   const local: Message = {
     id: `local-${id()}`, threadId, author: { type: "user", id: state.currentUserId },
-    parts: [{ type: "text", text }], createdAt: now(), mentions,
+    parts: messageParts(text, attachments), createdAt: now(), mentions,
   };
   set((st) => ({ ...st, messages: [...st.messages, local], threads: withPreview(st.threads, local) }));
 
   try {
-    const sent = await threadApi.send(orgId, threadId, text);
+    const sent = await threadApi.send(orgId, threadId, text, attachments.map((f) => f.id));
     const saved = { ...toMessage(sent), mentions };
     set((st) => {
       if (st.org.id !== orgId) return st;
@@ -1259,6 +1263,16 @@ async function sendApiMessage(threadId: string, text: string, mentions: Particip
       messages: st.messages.map((m) => (m.id === local.id ? { ...m, status: "error" as const, error: `Not sent. ${reason}` } : m)),
     }));
   }
+}
+
+/** What you send: the text (if any), then each attached file, the way the API saves it. */
+function messageParts(text: string, attachments: BotFile[]): MessagePart[] {
+  return [
+    ...(text ? [{ type: "text" as const, text }] : []),
+    ...attachments.map((f): FilePart => ({
+      type: "file", fileId: f.id, ...(f.botId ? { botId: f.botId } : {}), path: f.path, contentType: f.contentType, sizeBytes: f.sizeBytes,
+    })),
+  ];
 }
 
 /* ---------- Approvals ----------
@@ -1694,17 +1708,17 @@ function withFile(items: BotFile[], saved: BotFile): BotFile[] {
   return [...others, saved].sort((a, b) => a.path.localeCompare(b.path));
 }
 
-/** MOCK: the bot's folder gets the file, at its name, with the API's size limit. */
-function saveMockFile(botId: string, file: File): { ok: true; file: BotFile } | { ok: false; error: string } {
+/** MOCK: the bot's folder (or the shared one) gets the file, at `path`, with the API's size limit. */
+function saveMockFile(botId: string | undefined, file: File, path: string): UploadResult {
   if (file.size > FILE_MAX_MB * 1024 * 1024) return { ok: false, error: `That file is too big: files can be up to ${FILE_MAX_MB} MB.` };
-  const replaced = state.fileLists[botId]?.items.find((f) => f.path === file.name);
+  const replaced = state.fileLists[botId ?? ""]?.items.find((f) => f.path === path);
   forgetDemoUrl(replaced);
   const at = now();
-  const handle = state.bots.find((b) => b.id === botId)?.handle ?? "bot";
+  const folder = botId ? `botdesk/${state.bots.find((b) => b.id === botId)?.handle ?? "bot"}` : "botdesk/_shared";
   return {
     ok: true,
     file: {
-      id: replaced?.id ?? `file_${id()}`, botId, path: file.name, folder: `botdesk/${handle}`, contentType: file.type || "application/octet-stream",
+      id: replaced?.id ?? `file_${id()}`, ...(botId ? { botId } : {}), path, folder, contentType: file.type || "application/octet-stream",
       sizeBytes: file.size, available: true, createdAt: replaced?.createdAt ?? at, updatedAt: at, url: demoFileUrl(file),
     },
   };
@@ -1805,26 +1819,32 @@ const fileActions = {
     }
   },
 
-  /** Give a bot a file, at its name (the same name again replaces it). Any member. */
-  async uploadFile(botId: string, file: File): Promise<ActionResult> {
+  /**
+   * Give a bot a file (no `botId`: the shared folder), at `path` or else its name (the same path again
+   * replaces it). Any member. Answers the saved file, so a chat message can attach it by id.
+   */
+  async uploadFile(botId: string | undefined, file: File, path = file.name): Promise<UploadResult> {
+    const folder = botId ?? "";
     let saved: BotFile;
     if (isDemoMode()) {
-      const result = saveMockFile(botId, file);
+      const result = saveMockFile(botId, file, path);
       if (!result.ok) return result;
       saved = result.file;
+      // The demo's lists are all there is, so one never opened yet starts here.
+      if (!state.fileLists[folder]) setFileList(folder, { status: "ready", items: [] });
     } else {
       const orgId = state.org.id;
       try {
-        const uploaded = await fileApi.upload(orgId, file, botId);
+        const uploaded = await fileApi.upload(orgId, file, botId, path);
         saved = toBotFile(uploaded, fileApi.contentUrl(orgId, uploaded.id));
       } catch (error) {
         return failure(error);
       }
-      if (state.org.id !== orgId) return { ok: true };
+      if (state.org.id !== orgId) return { ok: true, file: saved };
     }
-    updateFileList(botId, (items) => withFile(items, saved));
-    supersedeFileLoads(botId);
-    return { ok: true };
+    updateFileList(folder, (items) => withFile(items, saved));
+    supersedeFileLoads(folder);
+    return { ok: true, file: saved };
   },
 
   /** Delete a file from the bot's folder and its storage (one in storage the org no longer uses only leaves the list). */
@@ -2084,19 +2104,20 @@ export const actions = {
   ...browserActions,
 
   /**
-   * Sends your message. Bots reply in a moment (ADR 0009): in a DM its bot, or the other bots you
+   * Sends your message, with files you uploaded for it (`uploadFile`: in a DM to its bot, in a group
+   * to the shared folder). Bots reply in a moment (ADR 0009): in a DM its bot, or the other bots you
    * @mention as guests; in a group the bots you @mention, or else its lead.
    */
-  sendMessage(threadId: string, text: string) {
+  sendMessage(threadId: string, text: string, attachments: BotFile[] = []) {
     const s = state;
     const mentions = parseMentions(text, s.bots, s.users);
-    if (!isDemoMode()) return void sendApiMessage(threadId, text, mentions);
+    if (!isDemoMode()) return void sendApiMessage(threadId, text, mentions, attachments);
 
     const msg: Message = {
       id: id(),
       threadId,
       author: { type: "user", id: s.currentUserId },
-      parts: [{ type: "text", text }],
+      parts: messageParts(text, attachments),
       createdAt: now(),
       mentions,
     };
@@ -2112,7 +2133,8 @@ export const actions = {
     const thread = s.threads.find((t) => t.id === threadId);
     if (!thread) return;
     const routing = routeMessage(mockChatBots(s, thread), text, { orgBots: s.bots, hopLimit: HOP_LIMIT });
-    queueMockReplies(threadId, routing.replies, text);
+    // Files alone: the fake reply quotes their names instead of the (empty) text.
+    queueMockReplies(threadId, routing.replies, text || attachments.map((f) => fileNameOf(f.path)).join(", "));
   },
 
   /** Marks the question answered. On the API the answer is also sent as your message, so the bot gets it. */
@@ -3046,6 +3068,25 @@ export const useBotBrowser = (botId?: string) =>
 /** A bot's files as last loaded; undefined until `actions.loadFiles` has started. */
 export const useFileList = (botId?: string) =>
   useStore(useCallback((s: State) => (botId ? s.fileLists[botId] : undefined), [botId]));
+
+/**
+ * Where a file in a message opens: its bytes on the API (the session cookie goes with them). In the
+ * demo, the blob: URL it got in memory; the demo's own files get theirs the first time they're shown,
+ * as in the Files tab. "" when there's nothing to open (a file since deleted, or in tests).
+ */
+export function useFileUrl({ fileId, botId }: Pick<FilePart, "fileId" | "botId">): string {
+  const folder = botId ?? "";
+  const url = useStore(
+    useCallback(
+      (s: State) => (isDemo(s) ? (s.fileLists[folder]?.items.find((f) => f.id === fileId)?.url ?? "") : fileApi.contentUrl(s.org.id, fileId)),
+      [fileId, folder],
+    ),
+  );
+  useEffect(() => {
+    if (!url && isDemoMode()) void fileActions.loadFiles(folder);
+  }, [url, folder]);
+  return url;
+}
 
 /* Whole-collection hooks for the app pages (marketplace, settings, approvals…). */
 export const useBots = () => useStore(useCallback((s: State) => s.bots, []));

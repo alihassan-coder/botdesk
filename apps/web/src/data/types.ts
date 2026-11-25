@@ -177,10 +177,17 @@ export interface RoutineCreatedPart {
   name: string;
 }
 
+/**
+ * A file in a message: one a person attached (uploaded to Files first, then sent by id) or one a
+ * bot shared. It lives in a bot's folder, or the shared one without `botId`. `useFileUrl` says where it opens.
+ */
 export interface FilePart {
   type: "file";
-  name: string;
-  mime: string;
+  fileId: ID;
+  botId?: ID;
+  /** Inside the folder: "chat/report.pdf". */
+  path: string;
+  contentType: string;
   sizeBytes: number;
 }
 

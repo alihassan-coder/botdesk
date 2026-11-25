@@ -83,6 +83,18 @@ describe("API → web shapes", () => {
     expect(message.parts).toEqual([{ type: "approval", approvalId: "a1" }, line, { type: "text", text: "Sent." }]);
   });
 
+  it("an attached file in the shared folder has no botId (the API's null)", () => {
+    const file = { type: "file", fileId: "f1", botId: null, path: "chat/brief.pdf", contentType: "application/pdf", sizeBytes: 2048 };
+    const message = toMessage({
+      id: "m1", threadId: "t1", author: { type: "user", id: "u1" }, status: "complete", createdAt: "2026-11-12T08:00:00Z",
+      parts: [file, { ...file, fileId: "f2", botId: "b1" }],
+    });
+    expect(message.parts).toEqual([
+      { type: "file", fileId: "f1", path: "chat/brief.pdf", contentType: "application/pdf", sizeBytes: 2048 },
+      { type: "file", fileId: "f2", botId: "b1", path: "chat/brief.pdf", contentType: "application/pdf", sizeBytes: 2048 },
+    ]);
+  });
+
   it("times without a zone (SQLite) are read as UTC; ones with a zone are kept", () => {
     expect(asUtc("2026-11-12T11:36:54.520126")).toBe("2026-11-12T11:36:54.520126Z");
     expect(asUtc("2026-11-12T11:36:54Z")).toBe("2026-11-12T11:36:54Z");

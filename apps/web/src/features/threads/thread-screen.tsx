@@ -47,7 +47,8 @@ export function ThreadScreen({ threadId }: { threadId: string }) {
       <div className="flex min-w-0 flex-1 flex-col">
         <ThreadHeader thread={thread} onToggleDetails={toggleDetails} />
         <MessageList thread={thread} />
-        <Composer thread={thread} />
+        {/* A fresh composer per chat: files attached here were uploaded to this chat's bot (or shared). */}
+        <Composer key={thread.id} thread={thread} />
       </div>
 
       {paneOpen && <DetailsPane thread={thread} width={paneWidth} onResize={setPaneWidth} />}

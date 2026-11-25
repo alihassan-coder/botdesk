@@ -537,6 +537,10 @@ Slices 6.1-6.3 ([ADR 0011](../adr/0011-gmail-plugin.md), [plugin README](../../p
 - **What the run reads.** A trigger message's `trigger-event` part becomes the run's request (`run_service.trigger_prompt`): the event as JSON inside `<untrusted-content>` (with `<` escaped), and "read it with your tools (gmail.read_thread), then do what your instructions say". People see only the text line.
 - **Tests:** `plugins/gmail/tests/test_write_tools.py` and `test_trigger.py` (FakeHttp), `tests/test_gmail_tools.py` (policy per tool through the pipeline, an approved send), `tests/test_gmail_trigger.py` (routes, polling on SQLite), `tests/test_gmail_trigger_postgres.py` (two polls racing).
 
+### Brave Search
+
+`plugins/brave-search` lets bots search the web (`brave-search.search`, `read`, untrusted results) with the organization's own Brave Search API key, connected in Connect apps like any API-key app (`X-Subscription-Token`, only to `api.search.brave.com`). Add `brave-search` to `PLUGINS` to load it. Searching without a key isn't offered: search sites challenge automated browsers, and bots never try to get past a challenge.
+
 ### Bindings (a bot's Tools)
 
 Slice 5.2 ([contract](../architecture/connections-api-contract.md#bot-tools-bindings)). A **binding** lets a bot use one plugin, through one connection when the plugin needs an account. A bot has only the tools of its enabled bindings.

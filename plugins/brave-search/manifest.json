@@ -1,0 +1,62 @@
+{
+  "auth": {
+    "header": "X-Subscription-Token",
+    "prefix": "",
+    "type": "api_key"
+  },
+  "botSettingsSchema": null,
+  "description": "Search the web with your own Brave Search API key.",
+  "egress": [
+    "api.search.brave.com"
+  ],
+  "id": "brave-search",
+  "manifestVersion": 2,
+  "name": "Brave Search",
+  "runtime": "builtin",
+  "settingsSchema": null,
+  "tools": [
+    {
+      "description": "Search the web. You get titles, addresses and short summaries; open a page with browser.open to read it.",
+      "egress": "fixed",
+      "idempotent": true,
+      "inputSchema": {
+        "properties": {
+          "count": {
+            "default": 5,
+            "description": "How many results, 1 to 10.",
+            "maximum": 10,
+            "minimum": 1,
+            "title": "Count",
+            "type": "integer"
+          },
+          "freshness": {
+            "default": "",
+            "description": "Only recent pages: pd (past day), pw (week), pm (month), py (year). Empty: any time.",
+            "pattern": "^(|pd|pw|pm|py)$",
+            "title": "Freshness",
+            "type": "string"
+          },
+          "query": {
+            "description": "What to search the web for.",
+            "maxLength": 400,
+            "minLength": 1,
+            "title": "Query",
+            "type": "string"
+          }
+        },
+        "required": [
+          "query"
+        ],
+        "title": "SearchArgs",
+        "type": "object"
+      },
+      "name": "search",
+      "risk": "read",
+      "scopes": [],
+      "title": "Search the web",
+      "untrustedOutput": true
+    }
+  ],
+  "triggers": [],
+  "version": "0.1.0"
+}

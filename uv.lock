@@ -10,6 +10,7 @@ resolution-markers = [
 [manifest]
 members = [
     "botdesk-api",
+    "botdesk-plugin-brave-search",
     "botdesk-plugin-demo",
     "botdesk-plugin-gmail",
     "botdesk-plugin-sdk",
@@ -309,6 +310,37 @@ requires-dist = [
 [package.metadata.requires-dev]
 dev = [
     { name = "httpx", specifier = ">=0.28.1" },
+    { name = "mypy", specifier = ">=2.4.1" },
+    { name = "pytest", specifier = ">=9.2.0" },
+    { name = "pytest-asyncio", specifier = ">=1.4.1.post1" },
+    { name = "ruff", specifier = ">=0.17.4" },
+]
+
+[[package]]
+name = "botdesk-plugin-brave-search"
+version = "0.1.0"
+source = { editable = "plugins/brave-search" }
+dependencies = [
+    { name = "botdesk-plugin-sdk" },
+    { name = "pydantic" },
+]
+
+[package.dev-dependencies]
+dev = [
+    { name = "mypy" },
+    { name = "pytest" },
+    { name = "pytest-asyncio" },
+    { name = "ruff" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "botdesk-plugin-sdk", editable = "packages/plugin-sdk" },
+    { name = "pydantic", specifier = ">=2.11" },
+]
+
+[package.metadata.requires-dev]
+dev = [
     { name = "mypy", specifier = ">=2.4.1" },
     { name = "pytest", specifier = ">=9.2.0" },
     { name = "pytest-asyncio", specifier = ">=1.4.1.post1" },

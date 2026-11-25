@@ -102,9 +102,9 @@ def manifest(access: FileAccess | None = None) -> PluginManifest:
                 name="read",
                 title="Read a file",
                 description=(
-                    "Read a file from your folder or the shared folder. Text files (txt, md, csv, json, html…) come "
-                    f"back as text, {READ_CHARS:,} characters at a time; for images, videos and other files you get "
-                    "their type and size."
+                    "Read a file from your folder or the shared folder. Text files (txt, md, csv, json, html…) and "
+                    f"PDFs come back as text, {READ_CHARS:,} characters at a time; for images, videos and other "
+                    "files you get their type and size."
                 ),
                 args_model=ReadArgs,
                 risk="read",

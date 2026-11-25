@@ -100,3 +100,43 @@ async def test_deleting_and_missing_files(inbox_manager: BotAtWork) -> None:
 async def test_bots_follow_the_same_path_rules_as_people(inbox_manager: BotAtWork) -> None:
     with pytest.raises(ToolFailed, match="usable file path"):
         await inbox_manager.call("save", path="../other-bot/x.txt", text="x")
+
+
+def _pdf(*pages: str) -> bytes:
+    """A small real PDF with one line of text per page."""
+    objects = ["<< /Type /Catalog /Pages 2 0 R >>"]
+    kids = " ".join(f"{3 + 2 * n} 0 R" for n in range(len(pages)))
+    objects.append(f"<< /Type /Pages /Kids [{kids}] /Count {len(pages)} >>")
+    font = 3 + 2 * len(pages)
+    for n, text in enumerate(pages):
+        stream = f"BT /F1 18 Tf 72 720 Td ({text}) Tj ET"
+        objects.append(
+            f"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents {4 + 2 * n} 0 R "
+            f"/Resources << /Font << /F1 {font} 0 R >> >> >>"
+        )
+        objects.append(f"<< /Length {len(stream)} >>\nstream\n{stream}\nendstream")
+    objects.append("<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>")
+    out, offsets = b"%PDF-1.4\n", []
+    for number, body in enumerate(objects, start=1):
+        offsets.append(len(out))
+        out += f"{number} 0 obj\n{body}\nendobj\n".encode()
+    xref = len(out)
+    out += f"xref\n0 {len(objects) + 1}\n0000000000 65535 f \n".encode()
+    out += "".join(f"{offset:010d} 00000 n \n" for offset in offsets).encode()
+    out += f"trailer\n<< /Size {len(objects) + 1} /Root 1 0 R >>\nstartxref\n{xref}\n%%EOF\n".encode()
+    return out
+
+
+async def test_a_bot_reads_a_pdf_as_text_page_by_page(inbox_manager: BotAtWork) -> None:
+    upload = {"file": ("report.pdf", _pdf("Revenue grew 12 percent", "Costs fell"), "application/pdf")}
+    await inbox_manager.client.post(f"{inbox_manager.org}/files", data={"botId": inbox_manager.bot["id"]}, files=upload)
+    read = await inbox_manager.call("read", path="report.pdf")
+    assert read["text"] == "--- Page 1 ---\nRevenue grew 12 percent\n\n--- Page 2 ---\nCosts fell"
+
+
+async def test_a_damaged_pdf_says_so(inbox_manager: BotAtWork) -> None:
+    upload = {"file": ("broken.pdf", b"%PDF-1.4 not really", "application/pdf")}
+    await inbox_manager.client.post(f"{inbox_manager.org}/files", data={"botId": inbox_manager.bot["id"]}, files=upload)
+    read = await inbox_manager.call("read", path="broken.pdf")
+    assert read["text"] == ""
+    assert "couldn't be read" in read["note"] or "no text" in read["note"]

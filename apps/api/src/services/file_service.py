@@ -45,17 +45,6 @@ ELSEWHERE = "This file is in storage the organization no longer uses, so it can'
 SAVED_MEANWHILE = "Someone saved a file at this path at the same moment. Try again."
 MAX_CONTENT_TYPE = 120
 
-_TEXT_TYPES = {
-    "application/json",
-    "application/xml",
-    "application/javascript",
-    "application/x-yaml",
-    "application/yaml",
-    "application/toml",
-    "application/sql",
-    "image/svg+xml",
-}
-
 
 def clean_path(path: str) -> str:
     """`reports/march.csv`, or `BadRequest`. The same rules for people and bots."""
@@ -84,10 +73,6 @@ def content_type_of(path: str, given: str | None = None) -> str:
 
 
 _TYPE = re.compile(r"[a-z0-9][a-z0-9.+_-]*/[a-z0-9][a-z0-9.+_-]*")
-
-
-def is_text(content_type: str) -> bool:
-    return content_type.startswith("text/") or content_type.split(";")[0] in _TEXT_TYPES
 
 
 def view_of(file: File, storage: OrgStorage | None) -> FileOut:

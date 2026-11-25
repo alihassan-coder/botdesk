@@ -14,7 +14,7 @@ from src.core.config import Settings
 from src.core.errors import AppError
 from src.models import Bot, File
 from src.plugins.files import READ_CHARS
-from src.services import file_service, storage_service
+from src.services import document_text, file_service, storage_service
 from src.services.credential_vault import CredentialVault
 from src.services.storage_service import OrgStorage
 
@@ -52,13 +52,19 @@ class FileTools:
             file = await self._find(db, ctx.org_id, bot, path, shared)
             storage = await self._storage(db, ctx.org_id)
         entry = _entry(file)
-        if not file_service.is_text(file.content_type):
-            return {**entry, "note": "This isn't a text file, so its content can't be shown as text."}
+        if not document_text.is_readable(file.content_type):
+            return {**entry, "note": "This isn't a text file or a PDF, so its content can't be shown as text."}
         data = await _call(file_service.read(storage, file))
-        text = data.decode("utf-8", errors="replace")
+        document = await document_text.text_of(data, file.content_type)
+        text = document.text if document else ""
         part = text[start : start + READ_CHARS]
         more = start + READ_CHARS < len(text)
-        return {**entry, "text": part, **({"next_start": start + READ_CHARS} if more else {})}
+        return {
+            **entry,
+            "text": part,
+            **({"next_start": start + READ_CHARS} if more else {}),
+            **({"note": document.note} if document and document.note else {}),
+        }
 
     async def save(self, ctx: ToolContext, *, path: str, text: str, shared: bool) -> ToolResult:
         async with self._sessionmaker() as db:

@@ -85,7 +85,7 @@ async def test_another_organizations_file_cant_be_attached(client: httpx.AsyncCl
 
 def test_a_run_reads_where_each_attached_file_is() -> None:
     me, other = uuid.uuid4(), uuid.uuid4()
-    parts = [
+    parts: list[dict[str, Any]] = [
         {"type": "text", "text": "Look"},
         {"type": "file", "botId": str(me), "path": "q3.csv", "contentType": "text/csv", "sizeBytes": 2048},
         {"type": "file", "botId": None, "path": "brief.pdf", "contentType": "application/pdf", "sizeBytes": 3_500_000},

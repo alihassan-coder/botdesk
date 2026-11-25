@@ -829,10 +829,17 @@ function followChat(orgId: string, threadId: string, after?: number): () => void
   };
 }
 
+/** Tools that add or remove a bot's files: when one finishes, the Files lists on screen catch up. */
+const FILE_CHANGING_TOOLS = new Set(["files.save", "files.delete", "browser.download", "browser.screenshot"]);
+
 function onRunEvent(orgId: string, event: ApiRunEvent) {
   const unread = event.kind === "message_saved" && isNewFromSomeoneElse(event.threadId, event.data.message);
   set((st) => (st.org.id === orgId ? withRunStatus({ ...st, ...applyRunEvent(st, event) }) : st));
   if (unread) countUnread(event.threadId);
+  if (event.kind === "tool_finished" && event.data.status === "succeeded" && FILE_CHANGING_TOOLS.has(event.data.tool)) {
+    // Only the lists already loaded (the Files tabs people opened), so nothing loads for nobody.
+    for (const folder of Object.keys(state.fileLists)) void actions.loadFiles(folder);
+  }
   if (event.kind === "thread_updated" && !event.data.thread.participants.some((p) => p.type === "user" && p.id === state.currentUserId)) {
     // A change that left you out. Heard live, you were removed: the group goes now (the API ends
     // the stream too). Replayed as the chat opened, it's an old change: you may have been added

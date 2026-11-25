@@ -24,7 +24,7 @@ export function SecretField({ id, label, value, onChange, problem, keepsSaved }:
           onChange={(e) => onChange(e.target.value)} placeholder={keepsSaved ? "Leave blank to keep the saved one" : undefined}
           aria-invalid={problem !== undefined} aria-describedby={problem ? `${id}-hint ${id}-error` : `${id}-hint`} />
         <InputGroupAddon align="inline-end">
-          <InputGroupButton size="icon-xs" aria-pressed={shown} aria-label={`Show ${label.toLowerCase()}`} onClick={() => setShown((s) => !s)}>
+          <InputGroupButton size="icon-xs" aria-pressed={shown} aria-label={`Show ${inSentence(label)}`} onClick={() => setShown((s) => !s)}>
             {shown ? <EyeOff /> : <Eye />}
           </InputGroupButton>
         </InputGroupAddon>
@@ -33,4 +33,9 @@ export function SecretField({ id, label, value, onChange, problem, keepsSaved }:
       {problem && <FieldError id={`${id}-error`}>{problem}</FieldError>}
     </Field>
   );
+}
+
+/** "Secret access key" → "secret access key", but "API key" stays "API key". */
+function inSentence(label: string): string {
+  return /^[A-Z][a-z]/.test(label) ? label[0].toLowerCase() + label.slice(1) : label;
 }

@@ -42,7 +42,7 @@ export function BrowserProviderForm({ current, onDone }: { current: BrowserProvi
       onSubmit={(e) => { e.preventDefault(); if (!checking) void save(); }}>
       <FieldSet>
         <FieldLegend variant="label">Run browsers</FieldLegend>
-        <RadioGroup value={provider} onValueChange={(value) => { setProvider(value as BrowserProviderId); setApiKey(""); setError(""); }}>
+        <RadioGroup value={provider} onValueChange={(value) => { setProvider(value as BrowserProviderId); setApiKey(""); setError(""); setTried(false); }}>
           <ProviderOption group="browser" value="local" label="Local" disabled={!current.localAvailable} autoFocus={provider === "local"}
             hint={current.localAvailable ? "On this BotDesk server. Each open browser uses about 300–500 MB of its memory." : "Turned off on this server."} />
           {CLOUD_BROWSERS.map((p) => (

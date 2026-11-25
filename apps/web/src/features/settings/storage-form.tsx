@@ -54,7 +54,7 @@ export function StorageForm({ current, onDone }: { current: FileStorage; onDone:
       onSubmit={(e) => { e.preventDefault(); if (!checking) void save(); }}>
       <FieldSet>
         <FieldLegend variant="label">Keep files</FieldLegend>
-        <RadioGroup value={provider} onValueChange={(value) => { setProvider(value as StorageProviderId); setError(""); }}>
+        <RadioGroup value={provider} onValueChange={(value) => { setProvider(value as StorageProviderId); setError(""); setTried(false); }}>
           <ProviderOption group="storage" value="local" label="Local" disabled={!current.localAvailable} autoFocus={provider === "local"}
             hint={current.localAvailable ? "On this BotDesk server. Lost if the server's disk is wiped." : "Turned off on this server."} />
           <ProviderOption group="storage" value="s3" label="S3-compatible" autoFocus={provider === "s3"}

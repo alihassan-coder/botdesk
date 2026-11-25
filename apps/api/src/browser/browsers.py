@@ -25,6 +25,7 @@ from collections.abc import Awaitable, Callable, Coroutine
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal
+from urllib.parse import unquote, urljoin, urlsplit
 
 from botdesk_plugin_sdk import NotDone
 from playwright.async_api import Browser, BrowserContext, Page, Playwright, Route, WebSocketRoute, async_playwright
@@ -135,6 +136,31 @@ KEYS = (
 
 
 @dataclass(frozen=True)
+class Download:
+    data: bytes
+    name: str  # from the site's Content-Disposition, else the address; safe as a file name
+    type: str  # the site's Content-Type ("" when it gave none)
+
+
+MAX_REDIRECTS = 5
+
+
+def file_name(disposition: str, url: str) -> str:
+    """A safe file name for a download: the site's suggestion, else the address's last part."""
+    suggested = ""
+    for part in disposition.split(";"):
+        name, _, value = part.strip().partition("=")
+        if name.lower() == "filename*" and "''" in value:
+            suggested = unquote(value.split("''", 1)[1])
+        elif name.lower() == "filename" and not suggested:
+            suggested = value.strip('"')
+    if not suggested:
+        suggested = unquote(urlsplit(url).path.rsplit("/", 1)[-1])
+    cleaned = "".join(char if char.isalnum() or char in "._- " else "_" for char in suggested).strip(" ._")
+    return cleaned[:100] or "download"
+
+
+@dataclass(frozen=True)
 class PersonInput:
     """One thing a person did on the live view. `x`, `y`: a click in page pixels (the screen is
     `VIEWPORT`); `y` alone: how far to scroll. `text`: what they typed, the key, or the address."""
@@ -201,6 +227,50 @@ class Browsers:
             return await _view(_page(session))
 
         return await self._call(self._with_open_session(key, do, NO_PAGE))
+
+    async def download(self, key: BotKey, ref: int, max_bytes: int) -> Download:
+        """The file link `ref` points to, fetched with the browser's sign-ins (its cookies).
+
+        Playwright makes this request from the BotDesk server itself, even for a cloud browser, so
+        every address on the way (each redirect) is checked against this server's address rules,
+        whatever the provider."""
+
+        async def fetch(session: _Session) -> Download:
+            page = _page(session)
+            raw = await page.evaluate(INSPECT_JS, ref)
+            if raw is None:
+                raise BrowserUnavailable(GONE.format(ref=ref))
+            element = Element.from_js(raw)
+            if not element.is_link:
+                raise BrowserUnavailable(f"[{ref}] is a {element.kind}, not a link to a file.")
+            guard = AddressGuard(allow_private=self.settings.allow_private)
+            url = element.href
+            for _ in range(MAX_REDIRECTS + 1):
+                if why_not := await guard.why_not(url):
+                    raise BrowserUnavailable(why_not)
+                response = await session.context.request.get(
+                    url, max_redirects=0, timeout=NAVIGATION_MS, fail_on_status_code=False
+                )
+                location = response.headers.get("location")
+                if 300 <= response.status < 400 and location:
+                    url = urljoin(url, location)
+                    continue
+                break
+            else:
+                raise BrowserUnavailable("That link sent the browser on too many times.")
+            if not response.ok:
+                raise BrowserUnavailable(f"The site answered {response.status} for that file.")
+            too_big = BrowserUnavailable(f"That file is too big: files can be up to {max_bytes // 1024 // 1024} MB.")
+            length = response.headers.get("content-length", "")
+            if length.isdigit() and int(length) > max_bytes:
+                raise too_big
+            data = await response.body()
+            if len(data) > max_bytes:
+                raise too_big
+            kind = response.headers.get("content-type", "").split(";")[0].strip()
+            return Download(data=data, name=file_name(response.headers.get("content-disposition", ""), url), type=kind)
+
+        return await self._call(self._with_open_session(key, fetch, NO_PAGE))
 
     async def back(self, key: BotKey) -> PageView:
         async def go_back(session: _Session) -> PageView:

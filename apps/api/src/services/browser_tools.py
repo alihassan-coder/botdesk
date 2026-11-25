@@ -92,6 +92,16 @@ class BrowserTools:
     async def screenshot(self, ctx: ToolContext, *, path: str) -> ToolResult:
         picture = await self._local().screenshot(_key(ctx))
         path = path.strip() or f"screenshots/{datetime.now(UTC):%Y-%m-%d-%H%M%S}.png"
+        return await self._save(ctx, path, picture, "image/png")
+
+    async def download(self, ctx: ToolContext, *, ref: int, path: str) -> ToolResult:
+        max_bytes = self._settings.file_max_mb * 1024 * 1024
+        got = await self._local().download(_key(ctx), ref, max_bytes)
+        saved = await self._save(ctx, path.strip() or f"downloads/{got.name}", got.data, got.type or None)
+        return {**saved, "note": "Read it with files.read."}
+
+    async def _save(self, ctx: ToolContext, path: str, data: bytes, content_type: str | None) -> ToolResult:
+        """Into the bot's own files, by the same rules as everything saved there."""
         async with self._sessionmaker() as db:
             bot = await db.get(Bot, ctx.bot_id)
             if bot is None or bot.org_id != ctx.org_id:
@@ -105,15 +115,15 @@ class BrowserTools:
                     org_id=ctx.org_id,
                     bot=bot,
                     path=path,
-                    data=picture,
-                    content_type="image/png",
+                    data=data,
+                    content_type=content_type,
                     settings=self._settings,
                     run_id=ctx.run_id,
                 )
             except AppError as error:
                 raise NotDone(error.message) from None
             await db.commit()
-            return {"saved": file.storage_key, "path": file.path, "size": file.size_bytes}
+            return {"saved": file.storage_key, "path": file.path, "type": file.content_type, "size": file.size_bytes}
 
     def _local(self) -> Browsers:
         if self._browsers is None:

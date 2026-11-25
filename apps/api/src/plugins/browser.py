@@ -34,6 +34,7 @@ class BrowserAccess(Protocol):
     async def choose(self, ctx: ToolContext, *, ref: int, option: str, field: str) -> ToolResult: ...
     async def back(self, ctx: ToolContext) -> ToolResult: ...
     async def screenshot(self, ctx: ToolContext, *, path: str) -> ToolResult: ...
+    async def download(self, ctx: ToolContext, *, ref: int, path: str) -> ToolResult: ...
 
 
 class OpenArgs(BaseModel):
@@ -85,11 +86,18 @@ class ScreenshotArgs(BaseModel):
     )
 
 
+class DownloadArgs(BaseModel):
+    ref: int = Field(ge=1, description="The number of the link to the file, from the page's list of elements.")
+    path: str = Field(
+        default="", max_length=300, description="Where to save it in your files. Empty: downloads/<its name>."
+    )
+
+
 class _Unavailable:
     async def _refuse(self, *_: Any, **__: Any) -> ToolResult:
         raise RuntimeError("The browser isn't available here.")
 
-    open = read = follow = search = click = type = choose = back = screenshot = _refuse
+    open = read = follow = search = click = type = choose = back = screenshot = download = _refuse
 
 
 def manifest(access: BrowserAccess | None = None) -> PluginManifest:
@@ -121,6 +129,9 @@ def manifest(access: BrowserAccess | None = None) -> PluginManifest:
 
     async def screenshot(args: ScreenshotArgs, ctx: ToolContext) -> ToolResult:
         return await browser.screenshot(ctx, path=args.path)
+
+    async def download(args: DownloadArgs, ctx: ToolContext) -> ToolResult:
+        return await browser.download(ctx, ref=args.ref, path=args.path)
 
     page = "You get back the page: its address, title, text, and the numbered elements you can use."
     return PluginManifest(
@@ -222,6 +233,18 @@ def manifest(access: BrowserAccess | None = None) -> PluginManifest:
                 args_model=ScreenshotArgs,
                 risk="write-internal",
                 handler=screenshot,
+                idempotent=True,
+            ),
+            ToolSpec(
+                name="download",
+                title="Download a file",
+                description=(
+                    "Download the file a link on the page points to (a PDF, a spreadsheet…) into your files, "
+                    "with the browser's sign-ins. Then read it with files.read."
+                ),
+                args_model=DownloadArgs,
+                risk="write-internal",  # it only fetches (GET) and saves to the bot's own files
+                handler=download,
                 idempotent=True,
             ),
         ),

@@ -30,7 +30,8 @@ HOME = """<!doctype html><title>Acme</title>
 <form action="/order" method="post"><input name="qty" aria-label="Quantity"><button>Buy now</button></form>
 <input type="password" aria-label="Password">
 <form action="/subscribe" method="get"><input name="email" aria-label="Newsletter">
-<button formmethod="post">Subscribe</button></form>"""
+<button formmethod="post">Subscribe</button></form>
+<a href="/report.csv">Q3 report</a>"""
 PRICING = "<!doctype html><title>Pricing</title><p>Free forever.</p>"
 SEARCH = "<!doctype html><title>Search</title><p>Results</p>"
 
@@ -39,6 +40,7 @@ SEARCH = "<!doctype html><title>Search</title><p>Results</p>"
 def site(tmp_path: Path) -> Iterator[str]:
     for name, html in (("index.html", HOME), ("pricing.html", PRICING), ("search.html", SEARCH)):
         (tmp_path / name).write_text(html, encoding="utf-8")
+    (tmp_path / "report.csv").write_bytes(b"quarter,revenue\nQ3,120\n")
     server = ThreadingHTTPServer(("127.0.0.1", 0), partial(SimpleHTTPRequestHandler, directory=str(tmp_path)))
     threading.Thread(target=server.serve_forever, daemon=True).start()
     yield f"http://127.0.0.1:{server.server_address[1]}"
@@ -104,6 +106,7 @@ async def test_a_bot_reads_a_page_and_follows_links_and_searches(scout: Browsing
         '[5] password field "Password"',
         '[6] text box "Newsletter"',
         '[7] button "Subscribe"',
+        f'[8] link "Q3 report" → {site}/report.csv',
     ]
 
     pricing = await scout.call("follow", ref=1)
@@ -149,3 +152,16 @@ async def test_the_local_browser_refuses_the_servers_own_network(site: str) -> N
     async for scout in _browsing(guarded):
         with pytest.raises(NotDone, match="private network"):
             await scout.open_or_skip(f"{site}/index.html")
+
+
+async def test_a_bot_downloads_a_linked_file_into_its_folder_and_reads_it(scout: Browsing, site: str) -> None:
+    await scout.open_or_skip(f"{site}/index.html")
+    with pytest.raises(NotDone, match="not a link to a file"):
+        await scout.call("download", ref=4)
+
+    saved = await scout.call("download", ref=8)
+    assert (saved["saved"], saved["type"]) == ("botdesk/scout/downloads/report.csv", "text/csv")
+
+    registered = scout.app.state.runs.registry.get("files.read")
+    read = await registered.spec.handler(registered.spec.args_model(path="downloads/report.csv"), scout.ctx)
+    assert read["text"] == "quarter,revenue\nQ3,120\n"

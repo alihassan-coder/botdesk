@@ -3,6 +3,7 @@ browser's address rules (§6). No browser needed."""
 
 import pytest
 
+from src.browser.browsers import file_name
 from src.browser.guard import NOT_WEB, PRIVATE, AddressGuard
 from src.browser.page import TEXT_CHARS, Element, PageView
 
@@ -70,3 +71,17 @@ async def test_a_page_may_load_its_own_data_but_not_private_addresses() -> None:
     assert await guard.allows("data:image/png;base64,AAAA")
     assert not await guard.allows("http://10.1.2.3/admin")
     assert await AddressGuard(allow_private=True, resolve=_resolve).allows("http://10.1.2.3/admin")
+
+
+@pytest.mark.parametrize(
+    ("disposition", "url", "name"),
+    [
+        ('attachment; filename="Q3 report.pdf"', "https://acme.dev/dl?id=7", "Q3 report.pdf"),
+        ("attachment; filename*=UTF-8''r%C3%A9sum%C3%A9.pdf", "https://acme.dev/x", "résumé.pdf"),
+        ("", "https://acme.dev/files/q3.csv", "q3.csv"),
+        ('attachment; filename="../../etc/passwd"', "https://acme.dev/x", "etc_passwd"),
+        ("", "https://acme.dev/", "download"),
+    ],
+)
+def test_downloads_get_a_safe_file_name(disposition: str, url: str, name: str) -> None:
+    assert file_name(disposition, url) == name

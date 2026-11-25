@@ -31,7 +31,7 @@ from playwright.async_api import Browser, BrowserContext, Page, Playwright, Rout
 from playwright.async_api import Error as PlaywrightError
 from playwright.async_api import TimeoutError as PlaywrightTimeout
 
-from src.browser.cloud import NAMES, CloudBrowser, CloudBrowserError
+from src.browser.cloud import NAMES, SESSION_MINUTES, CloudBrowser, CloudBrowserError
 from src.browser.guard import PRIVATE, AddressGuard
 from src.browser.page import INSPECT_JS, MAX_ELEMENTS, SNAPSHOT_JS, Element, PageView
 from src.core.config import Settings
@@ -50,6 +50,9 @@ NOT_INSTALLED = (
 BUSY = "Every browser on this server is in use. Try again in a few minutes."
 NO_PAGE = "The browser has no page open. Open one first with browser.open."
 NOT_OPEN = "The bot's browser isn't open. Open a page to start it."
+ENDED = "The bot's browser closed (a cloud browser lasts up to 30 minutes). Open the page again."
+# Cloud providers end a session at SESSION_MINUTES; BotDesk lets it go a little before.
+CLOUD_SESSION_SECONDS = (SESSION_MINUTES - 2) * 60
 GONE = "There's no element [{ref}] on the page now. Read the page again to get the current numbers."
 
 
@@ -92,6 +95,15 @@ class _Session:
     release: Callable[[], Awaitable[None]] | None = None
     lock: asyncio.Lock = field(default_factory=asyncio.Lock)
     last_used: float = field(default_factory=time.monotonic)
+    started: float = field(default_factory=time.monotonic)
+
+    @property
+    def alive(self) -> bool:
+        """Still usable: a cloud browser whose connection hasn't dropped and that is well inside
+        the provider's time limit (it ends the session then, whatever BotDesk does)."""
+        if self.browser is None:
+            return True
+        return self.browser.is_connected() and time.monotonic() - self.started < CLOUD_SESSION_SECONDS
 
     @property
     def page(self) -> Page | None:
@@ -142,7 +154,9 @@ class Browsers:
         # Only touched on the browsers' own thread:
         self._playwright: Playwright | None = None
         self._sessions: dict[BotKey, _Session] = {}
-        self._opening: asyncio.Lock | None = None
+        self._starting: dict[BotKey, asyncio.Lock] = {}  # one start at a time per bot
+        self._local_cap: asyncio.Lock | None = None
+        self._local_starting = 0
         self._reaper: asyncio.Task[None] | None = None
 
     # What the tools call (from the API's or worker's event loop)
@@ -221,7 +235,8 @@ class Browsers:
         async def shoot(session: _Session) -> bytes:
             return await _page(session).screenshot(type="jpeg", quality=60, timeout=ACTION_MS)
 
-        return await self._call(self._with_open_session(key, shoot))
+        # Watching isn't using: an open live view mustn't keep an idle browser (and its bill) going.
+        return await self._call(self._with_open_session(key, shoot, touch=False))
 
     async def take_over(self, key: BotKey, person: PersonInput, launch: Launch = LOCAL) -> None:
         """Do what the person did on the live view. `open` starts the browser if it isn't open."""
@@ -259,6 +274,15 @@ class Browsers:
             return session.profile if session else None
 
         return await self._call(look())
+
+    async def close_org(self, org_id: uuid.UUID) -> None:
+        """Close every browser of the organization (it chose another provider: they restart there)."""
+
+        async def close_all() -> None:
+            for key in [key for key in self._sessions if key[0] == org_id]:
+                await self._close_session(key)
+
+        await self._call(close_all())
 
     async def forget(self, key: BotKey) -> None:
         """Close the bot's browser and delete its Local profile: every site it was signed in to
@@ -312,13 +336,18 @@ class Browsers:
     # On the browsers' thread
 
     async def _with_session[T](
-        self, key: BotKey, work: Callable[[_Session], Awaitable[T]], launch: Launch | None = LOCAL
+        self,
+        key: BotKey,
+        work: Callable[[_Session], Awaitable[T]],
+        launch: Launch | None = LOCAL,
+        *,
+        touch: bool = True,
     ) -> T:
         """Run `work` on the bot's browser, one action at a time. `launch` None: the browser that's
-        open, whichever provider it runs on; else one started there (replacing one elsewhere)."""
+        open, whichever provider it runs on; else one started there (replacing one elsewhere).
+        `touch`: it counts as use, so the idle reaper leaves the browser open."""
         session = await self._session(key, launch)
         async with session.lock:  # one action at a time per bot
-            session.last_used = time.monotonic()
             try:
                 return await work(session)
             except PlaywrightTimeout:
@@ -326,36 +355,51 @@ class Browsers:
             except PlaywrightError as error:
                 raise BrowserUnavailable(_explain(error)) from None
             finally:
-                session.last_used = time.monotonic()
+                if touch:
+                    session.last_used = time.monotonic()
 
     async def _with_open_session[T](
-        self, key: BotKey, work: Callable[[_Session], Awaitable[T]], closed: str = NOT_OPEN
+        self, key: BotKey, work: Callable[[_Session], Awaitable[T]], closed: str = NOT_OPEN, *, touch: bool = True
     ) -> T:
         """Like `_with_session`, but never starts a browser: only opening a page does."""
         session = self._sessions.get(key)
-        if session is None:
-            raise BrowserUnavailable(closed)
-        return await self._with_session(key, work, None)
+        if session is None or not session.alive:
+            raise BrowserUnavailable(closed if session is None else ENDED)
+        return await self._with_session(key, work, None, touch=touch)
 
     async def _session(self, key: BotKey, launch: Launch | None) -> _Session:
-        self._opening = self._opening or asyncio.Lock()
-        async with self._opening:
+        starting = self._starting.setdefault(key, asyncio.Lock())
+        async with starting:  # bots start their browsers side by side; one bot's waits for its own
             open_now = self._sessions.get(key)
+            if open_now is not None and not open_now.alive:  # dropped, or at the provider's time limit
+                await self._close_session(key)
+                open_now = None
             if open_now is not None and (launch is None or open_now.provider == launch.provider):
                 return open_now
             if launch is None:
-                raise BrowserUnavailable(NOT_OPEN)
+                raise BrowserUnavailable(ENDED)
             if open_now is not None:  # the organization chose another provider since
                 await self._close_session(key)
-            local_open = sum(1 for session in self._sessions.values() if session.provider == "local")
-            if launch.cloud is None and local_open >= self.settings.max_sessions:
-                raise BrowserUnavailable(BUSY)
             playwright = await self._start()
-            session = await (
-                self._launch(playwright, key) if launch.cloud is None else _connect(playwright, key, launch)
-            )
+            if launch.cloud is not None:
+                session = await _connect(playwright, key, launch)
+            else:
+                session = await self._launch_counted(playwright, key)
             self._sessions[key] = session
             return session
+
+    async def _launch_counted(self, playwright: Playwright, key: BotKey) -> _Session:
+        """A Local browser, within BROWSER_MAX_SESSIONS (counting ones still starting)."""
+        self._local_cap = self._local_cap or asyncio.Lock()
+        async with self._local_cap:
+            local_open = sum(1 for session in self._sessions.values() if session.provider == "local")
+            if local_open + self._local_starting >= self.settings.max_sessions:
+                raise BrowserUnavailable(BUSY)
+            self._local_starting += 1
+        try:
+            return await self._launch(playwright, key)
+        finally:
+            self._local_starting -= 1
 
     async def _start(self) -> Playwright:
         if self._playwright is None:
@@ -442,11 +486,15 @@ async def _connect(playwright: Playwright, key: BotKey, launch: Launch) -> _Sess
         raise BrowserUnavailable(str(error)) from None
     try:
         browser = await playwright.chromium.connect_over_cdp(cloud.cdp_url, timeout=NAVIGATION_MS)
-    except PlaywrightError:
+        context = browser.contexts[0] if browser.contexts else await browser.new_context(viewport=VIEWPORT)  # type: ignore[arg-type]
+    except BaseException as error:  # cancelled or failed: never leave a paid browser running
         with contextlib.suppress(Exception):
-            await cloud.release()
-        raise BrowserUnavailable(f"BotDesk couldn't connect to the {name} browser. Try again in a moment.") from None
-    context = browser.contexts[0] if browser.contexts else await browser.new_context(viewport=VIEWPORT)  # type: ignore[arg-type]
+            await asyncio.shield(cloud.release())
+        if isinstance(error, PlaywrightError):
+            raise BrowserUnavailable(
+                f"BotDesk couldn't connect to the {name} browser. Try again in a moment."
+            ) from None
+        raise
     # The page runs on the provider's network, not this server's: no address check needed.
     return _Session(
         context=context,

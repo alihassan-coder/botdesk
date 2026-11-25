@@ -7,8 +7,9 @@ reads it back through the signed `download` call. Calls are signed as Cloudinary
 `api.cloudinary.com`; a download may redirect, but only to another `cloudinary.com` address.
 
 Cloudinary sorts files into images, videos and raw files, and names images and videos without
-their extension. The kind comes from the key's extension, the same way for every call, so a
-file is always found where it was put.
+their extension. So the extension becomes part of the name (`shot.png` → `shot_png`): `shot.png`
+and `shot.jpg` stay two files. The kind comes from the key's extension, the same way for every
+call, so a file is always found where it was put.
 """
 
 import hashlib
@@ -32,14 +33,14 @@ def sign(params: dict[str, str], api_secret: str) -> str:
 
 
 def kind_of(key: str) -> tuple[str, str, str]:
-    """(resource type, public id, format): `botdesk/x/shot.png` → ("image", "botdesk/x/shot", "png");
+    """(resource type, public id, format): `botdesk/x/shot.png` → ("image", "botdesk/x/shot_png", "png");
     `botdesk/x/notes.csv` → ("raw", "botdesk/x/notes.csv", "")."""
     guessed, _ = mimetypes.guess_type(key)
     stem, dot, extension = key.rpartition(".")
     if guessed and guessed.startswith("image/") and dot and "/" not in extension:
-        return "image", stem, extension.lower()
+        return "image", f"{stem}_{extension.lower()}", extension.lower()
     if guessed and guessed.startswith(("video/", "audio/")) and dot and "/" not in extension:
-        return "video", stem, extension.lower()
+        return "video", f"{stem}_{extension.lower()}", extension.lower()
     return "raw", key, ""
 
 

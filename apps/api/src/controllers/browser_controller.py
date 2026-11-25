@@ -49,16 +49,20 @@ async def choose_provider(
     access: Access,
     body: BrowserProviderIn,
     *,
+    runs: RunManager,
     settings: Settings,
     vault: CredentialVault,
     transport: httpx.AsyncBaseTransport | None,
 ) -> BrowserProviderOut:
-    """Owners and admins. A cloud provider is checked by starting and stopping a browser there."""
+    """Owners and admins. A cloud provider is checked by starting and stopping a browser there.
+    The organization's open browsers close: each starts again on the chosen provider."""
     access.require_admin()
     row = await browser_service.choose(
         db, org_id=access.org.id, user_id=access.user.id, body=body, settings=settings, vault=vault, transport=transport
     )
     await db.commit()
+    if runs.browsers is not None:
+        await runs.browsers.close_org(access.org.id)
     return browser_service.view_of(row, settings)
 
 
@@ -114,11 +118,19 @@ async def take_over(
     return await state(db, access, bot_id, runs, settings)
 
 
-async def forget(db: AsyncSession, access: Access, bot_id: uuid.UUID, runs: RunManager, settings: Settings) -> None:
+async def forget(
+    db: AsyncSession,
+    access: Access,
+    bot_id: uuid.UUID,
+    runs: RunManager,
+    settings: Settings,
+    vault: CredentialVault,
+    transport: httpx.AsyncBaseTransport | None = None,
+) -> None:
     """Close the bot's browser and forget its sign-ins, on this server and at cloud providers."""
     key = await _key(db, access, bot_id)
     await _call(_required(runs, settings).forget(key))
-    await browser_service.forget_profiles(db, bot_id)
+    await browser_service.forget_profiles(db, access.org.id, bot_id, settings, vault, transport)
     await db.commit()
 
 

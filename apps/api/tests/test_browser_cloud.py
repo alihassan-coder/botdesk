@@ -10,7 +10,9 @@ import httpx
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from src.browser.browsers import CLOUD_SESSION_SECONDS, _Session
 from src.browser.cloud import BrowserbaseBrowser, CloudBrowserError, KernelBrowser, SteelBrowser
+from src.browser.guard import AddressGuard
 from src.services import browser_service
 from tests.conftest import TEST_SETTINGS, FakeProviders, api_client, sign_up
 
@@ -38,7 +40,7 @@ class FakeCloud:
         if path == "/v1/contexts":
             return httpx.Response(201, json={"id": "bb-context-1"})
         if path == "/profiles":
-            return httpx.Response(409, json={"error": "exists"})
+            return httpx.Response(201, json={"name": body["name"] if body else ""})
         if path == "/browsers" and request.method == "POST":
             return httpx.Response(200, json={"session_id": "k-1", "cdp_ws_url": "wss://kernel/cdp"})
         return httpx.Response(200, json={})
@@ -72,15 +74,46 @@ async def test_browserbase_keeps_a_context_per_bot() -> None:
     assert fake.calls[-1] == ("POST", "/v1/sessions/s-1", {"projectId": "project-9", "status": "REQUEST_RELEASE"})
 
 
-async def test_kernel_uses_a_named_profile_per_bot() -> None:
+async def test_kernel_makes_a_fresh_named_profile_per_bot() -> None:
     fake = FakeCloud(key_header="authorization", key="Bearer k-key")
     kernel = KernelBrowser("k-key", transport=httpx.MockTransport(fake.handle))
 
-    session = await kernel.start(BOT, None)  # the profile already exists there (409): fine
-    assert (session.cdp_url, session.profile) == ("wss://kernel/cdp", f"botdesk-{BOT}")
-    assert fake.calls[1][2]["profile"] == {"name": f"botdesk-{BOT}", "save_changes": True}
+    session = await kernel.start(BOT, None)
+    name = session.profile
+    assert name is not None and name.startswith(f"botdesk-{BOT}-")  # random part: forgetting means a new one
+    assert (session.cdp_url, fake.calls[0][2]) == ("wss://kernel/cdp", {"name": name})
+    assert fake.calls[1][2]["profile"] == {"name": name, "save_changes": True}
     await session.release()
     assert fake.calls[-1][:2] == ("DELETE", "/browsers/k-1")
+
+    await kernel.forget(name)
+    assert fake.calls[-1][:2] == ("DELETE", f"/profiles/{name}")
+
+
+async def test_forgetting_at_the_provider_never_fails() -> None:
+    fake = FakeCloud(key_header="x-bb-api-key", key="bb-key")
+    await BrowserbaseBrowser("bb-key", transport=httpx.MockTransport(fake.handle)).forget("ctx-1")
+    assert fake.calls[-1][:2] == ("DELETE", "/v1/contexts/ctx-1")
+    await BrowserbaseBrowser("wrong", transport=httpx.MockTransport(fake.handle)).forget("ctx-1")  # 401: ignored
+
+
+def test_a_cloud_session_counts_as_closed_when_dropped_or_near_the_providers_limit() -> None:
+    class Connection:
+        def __init__(self, connected: bool) -> None:
+            self.connected = connected
+
+        def is_connected(self) -> bool:
+            return self.connected
+
+    def session(connected: bool, age: float) -> _Session:
+        made = _Session(context=None, guard=AddressGuard(allow_private=True), browser=Connection(connected))  # type: ignore[arg-type]
+        made.started -= age
+        return made
+
+    assert session(True, 60).alive
+    assert not session(False, 60).alive
+    assert not session(True, CLOUD_SESSION_SECONDS + 1).alive
+    assert _Session(context=None, guard=AddressGuard(allow_private=False)).alive  # type: ignore[arg-type]  # Local
 
 
 async def test_refusals_say_what_to_do() -> None:
@@ -124,8 +157,20 @@ async def test_an_admin_chooses_steel_and_bots_start_there(providers: FakeProvid
             launch = await browser_service.launch_for(db, org_id, bot_id, TEST_SETTINGS, app.state.vault)
         assert launch is not None and (launch.provider, launch.profile) == ("steel", "steel-profile-1")
 
-        # Forgetting sign-ins forgets the profile; back to Local.
+        # Forgetting sign-ins forgets the profile, here and at Steel.
         assert (await client.delete(f"{org}/bots/{bot['id']}/browser")).status_code == 204
+        assert fake.calls[-1][:2] == ("DELETE", "/v1/profiles/steel-profile-1")
+        async with app.state.sessionmaker() as db:
+            launch = await browser_service.launch_for(db, org_id, bot_id, TEST_SETTINGS, app.state.vault)
+        assert launch is not None and launch.profile is None
+
+        # Another key (another account): the bots' profiles from the old one are dropped.
+        async with app.state.sessionmaker() as db:
+            await browser_service.remember_profile(db, org_id, bot_id, "steel", "steel-profile-2")
+            await db.commit()
+        fake_key = "steel-key-5678"
+        providers.answer("api.steel.dev", handler=FakeCloud(key_header="steel-api-key", key=fake_key).handle)
+        assert (await client.put(f"{org}/browser-provider", json={"provider": "steel", "apiKey": fake_key})).is_success
         async with app.state.sessionmaker() as db:
             launch = await browser_service.launch_for(db, org_id, bot_id, TEST_SETTINGS, app.state.vault)
         assert launch is not None and launch.profile is None

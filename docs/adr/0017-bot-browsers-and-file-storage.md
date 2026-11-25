@@ -143,3 +143,9 @@ Each step is usable on its own and ends with tests and a browser check.
 - Step 4 (cloud browsers) built: Steel, Browserbase and Kernel behind `src/browser/cloud.py`, chosen in `PUT /orgs/{id}/browser-provider` (a `computer_providers` row of kind "browser"), a profile per bot in `browser_profiles`. Only opening a page starts a browser; every other tool works on the one that's open. The Docker image still has no Local browser: use a cloud provider there.
 - Step 5 (Cloudinary) built in `src/storage/cloudinary.py`: private uploads read back through the signed download call, signatures checked against Cloudinary's documented examples.
 - Still open: the Local browser's address check resolves names once, so DNS rebinding can get past it (Chromium resolves again); the local quota check isn't atomic under concurrent saves.
+
+## Update 2026-11-25: second review
+
+- A cloud session counts as closed when its connection drops or it is 2 minutes from the provider's 30-minute limit; the next open starts a new one. Watching the live view doesn't count as use, so an idle browser still closes. Bots start their browsers side by side (one lock per bot); a cloud session is released even when starting it fails or is cancelled.
+- Choosing a provider closes the organization's open browsers, and another provider, key or project drops the bots' saved profiles (they belong to the old account). Forget sign-ins also asks the provider to delete the profile (best effort); Kernel profile names carry a random part so a forgotten one is never picked up again by name.
+- Cloudinary keeps an image's or video's extension in its name (`shot.png` → `shot_png`), so `shot.png` and `shot.jpg` are two files.

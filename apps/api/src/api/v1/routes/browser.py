@@ -18,13 +18,19 @@ async def get_browser_provider(access: OrgAccess, db: Db, settings: AppSettings)
 
 @provider_router.put("/browser-provider")
 async def choose_browser_provider(
-    body: BrowserProviderIn, access: OrgAccess, db: Db, settings: AppSettings, vault: Vault, outbound: Outbound
+    body: BrowserProviderIn,
+    access: OrgAccess,
+    db: Db,
+    runs: Runs,
+    settings: AppSettings,
+    vault: Vault,
+    outbound: Outbound,
 ) -> BrowserProviderOut:
     """Choose it (owners and admins): `{provider: "local"}`, or `{provider: "steel" | "browserbase" |
     "kernel", apiKey, projectId?}`. A cloud provider is checked by starting and stopping a browser
     there (a few seconds of its browser time). Leave `apiKey` out to keep the saved one."""
     return await browser_controller.choose_provider(
-        db, access, body, settings=settings, vault=vault, transport=outbound
+        db, access, body, runs=runs, settings=settings, vault=vault, transport=outbound
     )
 
 
@@ -52,6 +58,8 @@ async def browser_input(
 
 
 @router.delete("", status_code=status.HTTP_204_NO_CONTENT)
-async def forget_sign_ins(bot_id: uuid.UUID, access: OrgAccess, db: Db, runs: Runs, settings: AppSettings) -> None:
+async def forget_sign_ins(
+    bot_id: uuid.UUID, access: OrgAccess, db: Db, runs: Runs, settings: AppSettings, vault: Vault, outbound: Outbound
+) -> None:
     """Close the bot's browser and forget every site it was signed in to (here and at cloud providers)."""
-    await browser_controller.forget(db, access, bot_id, runs, settings)
+    await browser_controller.forget(db, access, bot_id, runs, settings, vault, outbound)

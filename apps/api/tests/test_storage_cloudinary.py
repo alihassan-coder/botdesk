@@ -19,9 +19,10 @@ def test_signatures_match_cloudinarys_examples() -> None:
     assert sign(signed, SECRET) == "bfd09f95f331f558cbd1320e67aa8d488770583e"
 
 
-def test_images_and_videos_drop_their_extension_other_files_keep_it() -> None:
-    assert kind_of("botdesk/scout/shot.png") == ("image", "botdesk/scout/shot", "png")
-    assert kind_of("botdesk/scout/demo.mp4") == ("video", "botdesk/scout/demo", "mp4")
+def test_images_and_videos_keep_their_extension_in_their_name() -> None:
+    assert kind_of("botdesk/scout/shot.png") == ("image", "botdesk/scout/shot_png", "png")
+    assert kind_of("botdesk/scout/shot.jpg") == ("image", "botdesk/scout/shot_jpg", "jpg")  # two files, not one
+    assert kind_of("botdesk/scout/demo.mp4") == ("video", "botdesk/scout/demo_mp4", "mp4")
     assert kind_of("botdesk/scout/notes.csv") == ("raw", "botdesk/scout/notes.csv", "")
     assert kind_of("botdesk/scout/README") == ("raw", "botdesk/scout/README", "")
 
@@ -85,7 +86,7 @@ async def test_files_round_trip_as_private_assets() -> None:
     await storage.check()
     await storage.put("botdesk/scout/shot.png", b"\x89PNG", content_type="image/png")
     await storage.put("botdesk/scout/notes.csv", b"a,b", content_type="text/csv")
-    assert set(fake.assets) == {("image", "botdesk/scout/shot"), ("raw", "botdesk/scout/notes.csv")}
+    assert set(fake.assets) == {("image", "botdesk/scout/shot_png"), ("raw", "botdesk/scout/notes.csv")}
     assert await storage.get("botdesk/scout/shot.png") == b"\x89PNG"
     assert await storage.get("botdesk/scout/notes.csv") == b"a,b"  # through the delivery redirect
     await storage.delete("botdesk/scout/notes.csv")

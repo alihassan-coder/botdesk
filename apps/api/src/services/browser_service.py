@@ -10,6 +10,7 @@ import uuid
 
 import httpx
 from sqlalchemy import delete, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.browser.browsers import LOCAL, Launch
@@ -71,20 +72,38 @@ async def launch_for(
 async def remember_profile(
     db: AsyncSession, org_id: uuid.UUID, bot_id: uuid.UUID, provider: str, ref: str | None
 ) -> None:
-    """Keep the bot's profile at the provider (a new one the provider just made). The caller commits."""
+    """Keep the bot's profile at the provider (a new one the provider just made). The caller commits.
+    A bot's run and a person taking over can both open its first browser at once: the second one
+    to save finds the row there, and leaves it."""
     if not ref:
         return
     row = await db.scalar(
         select(BrowserProfile).where(BrowserProfile.bot_id == bot_id, BrowserProfile.provider == provider)
     )
-    if row is None:
-        db.add(BrowserProfile(org_id=org_id, bot_id=bot_id, provider=provider, ref=ref))
-    elif row.ref != ref:
-        row.ref = ref
+    if row is not None:
+        if row.ref != ref:
+            row.ref = ref
+        return
+    try:
+        async with db.begin_nested():
+            db.add(BrowserProfile(org_id=org_id, bot_id=bot_id, provider=provider, ref=ref))
+    except IntegrityError:
+        pass  # saved by the other one meanwhile
 
 
-async def forget_profiles(db: AsyncSession, bot_id: uuid.UUID) -> None:
-    """Forget sign-ins at every cloud provider: the bot's next browser gets a fresh profile."""
+async def forget_profiles(
+    db: AsyncSession,
+    org_id: uuid.UUID,
+    bot_id: uuid.UUID,
+    settings: Settings,
+    vault: CredentialVault,
+    transport: httpx.AsyncBaseTransport | None = None,
+) -> None:
+    """Forget sign-ins at cloud providers: the bot's next browser gets a fresh profile, and the
+    organization's provider is asked to delete the old one (best effort). The caller commits."""
+    launch = await launch_for(db, org_id, bot_id, settings, vault, transport)
+    if launch is not None and launch.cloud is not None and launch.profile:
+        await launch.cloud.forget(launch.profile)
     await db.execute(delete(BrowserProfile).where(BrowserProfile.bot_id == bot_id))
 
 
@@ -106,6 +125,7 @@ async def choose(
             raise BadRequest(LOCAL_OFF)
         if existing is not None:
             await db.delete(existing)
+            await db.execute(delete(BrowserProfile).where(BrowserProfile.org_id == org_id))
         return None
 
     key = body.api_key or _saved_key(existing, body.provider, vault)
@@ -114,14 +134,27 @@ async def choose(
     except CloudBrowserError as error:
         raise BadRequest(str(error)) from None
 
+    config = {"project_id": body.project_id.strip()} if body.project_id.strip() else {}
+    if existing is None or (existing.provider, existing.config, _saved_key_or_none(existing, vault)) != (
+        body.provider,
+        config,
+        key,
+    ):
+        # Another account or project: the bots' profiles there aren't valid any more.
+        await db.execute(delete(BrowserProfile).where(BrowserProfile.org_id == org_id))
     row = existing or ComputerProvider(org_id=org_id, kind=BROWSER, created_by=user_id)
     row.provider = body.provider
-    row.config = {"project_id": body.project_id.strip()} if body.project_id.strip() else {}
+    row.config = config
     row.encrypted_secret = vault.seal(json.dumps({"api_key": key}))
     row.secret_hint = key[-4:]
     row.checked_at = utcnow()
     db.add(row)
     return row
+
+
+def _saved_key_or_none(existing: ComputerProvider, vault: CredentialVault) -> str | None:
+    key = json.loads(vault.unseal(existing.encrypted_secret)).get("api_key")
+    return key if isinstance(key, str) else None
 
 
 def _saved_key(existing: ComputerProvider | None, provider: str, vault: CredentialVault) -> str:

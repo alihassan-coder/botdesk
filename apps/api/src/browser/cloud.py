@@ -5,11 +5,17 @@ Protocol address that `browser.local` drives with the same Playwright code as a 
 A bot's **profile** at each provider:
 - Steel: `profileId`, made by the first session (`persistProfile`), then reused.
 - Browserbase: a context, made once (`POST /v1/contexts`), used with `persist: true`.
-- Kernel: a profile named `botdesk-<bot id>`, made once (`POST /profiles`), used with `save_changes`.
+- Kernel: a profile named `botdesk-<bot id>-<random>`, made once (`POST /profiles`), used with
+  `save_changes`. The random part means a forgotten profile is never picked up again by name.
+
+Forgetting sign-ins drops BotDesk's record of the profile, so the next browser gets a fresh one,
+and asks the provider to delete the old one (best effort: `forget`).
 
 The organization's key goes only to the provider's fixed address; nothing here follows redirects.
 """
 
+import contextlib
+import secrets
 import uuid
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
@@ -47,6 +53,10 @@ class CloudBrowser(Protocol):
         """Start a browser and release it: `CloudBrowserError` saying what's wrong, or nothing."""
         ...
 
+    async def forget(self, profile: str) -> None:
+        """Ask the provider to delete this profile (and so its sign-ins). Best effort: never raises."""
+        ...
+
 
 class _Api:
     """Calls to one provider's fixed address with the organization's key."""
@@ -80,6 +90,15 @@ class _Api:
                 "Check your plan there, or try again later."
             )
         raise CloudBrowserError(f"{name} couldn't start a browser (it answered {response.status_code}).")
+
+    async def forget(self, path: str) -> None:
+        """Delete something at the provider, best effort (a profile the bot no longer uses)."""
+        await _forget(self, path)
+
+
+async def _forget(api: "_Api", path: str) -> None:
+    with contextlib.suppress(CloudBrowserError):  # else it stays at the provider, unused by BotDesk
+        await api.call("DELETE", path, ok=(404,))
 
 
 def _field(body: Any, name: str, provider: CloudProviderId) -> str:
@@ -117,6 +136,9 @@ class SteelBrowser:
         answer = await self._api.call("POST", "/v1/sessions", {"timeout": 60_000})
         await self._api.call("POST", f"/v1/sessions/{_field(answer, 'id', 'steel')}/release")
 
+    async def forget(self, profile: str) -> None:
+        await self._api.forget(f"/v1/profiles/{profile}")
+
 
 class BrowserbaseBrowser:
     provider: CloudProviderId = "browserbase"
@@ -150,6 +172,9 @@ class BrowserbaseBrowser:
         session_id = _field(answer, "id", "browserbase")
         await self._api.call("POST", f"/v1/sessions/{session_id}", {**self._project, "status": "REQUEST_RELEASE"})
 
+    async def forget(self, profile: str) -> None:
+        await self._api.forget(f"/v1/contexts/{profile}")
+
 
 class KernelBrowser:
     provider: CloudProviderId = "kernel"
@@ -159,8 +184,8 @@ class KernelBrowser:
 
     async def start(self, bot_id: uuid.UUID, profile: str | None) -> CloudSession:
         if not profile:
-            profile = f"botdesk-{bot_id}"
-            await self._api.call("POST", "/profiles", {"name": profile}, ok=(409,))  # 409: made before
+            profile = f"botdesk-{bot_id}-{secrets.token_hex(4)}"
+            await self._api.call("POST", "/profiles", {"name": profile})
         body = {
             "headless": True,
             "timeout_seconds": SESSION_MINUTES * 60,
@@ -178,6 +203,9 @@ class KernelBrowser:
     async def check(self) -> None:
         answer = await self._api.call("POST", "/browsers", {"headless": True, "timeout_seconds": 60})
         await self._api.call("DELETE", f"/browsers/{_field(answer, 'session_id', 'kernel')}", ok=(404,))
+
+    async def forget(self, profile: str) -> None:
+        await self._api.forget(f"/profiles/{profile}")
 
 
 def cloud_browser(

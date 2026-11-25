@@ -135,6 +135,9 @@ When you finish something, tick it here in the same pull request.
 - [x] Cloud browser providers: Steel, Browserbase, Kernel (API; ADR 0017 step 4)
 - [x] Cloudinary storage (API; ADR 0017 step 5)
 - [x] Browser provider card and Cloudinary in Settings → Computers
-- [ ] A browser in the Docker image (or Docker users pick a cloud browser); files attached in chat
+- [x] Files attached in chat (paperclip, drop or paste; kept unchanged after sending)
+- [x] Bots read PDFs, download linked files (`browser.download`), and search the web with a Brave Search key (`plugins/brave-search`)
+- [ ] Bots see images ([ADR 0018](adr/0018-bots-see-images.md), proposed)
+- [ ] A browser in the Docker image (or Docker users pick a cloud browser)
 - [ ] The full bot computer (a whole desktop) and routine recording
 - [ ] Desktop app, then mobile

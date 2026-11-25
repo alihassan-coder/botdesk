@@ -22,7 +22,7 @@
  * Screens can't tell the difference: they use the hooks and actions below either way.
  */
 import { useCallback, useEffect, useRef, useSyncExternalStore } from "react";
-import { fileNameOf } from "@/lib/attachments";
+import { fileNameOf, freePath, previewOf } from "@/lib/attachments";
 import { makeHandle } from "@/lib/handle";
 import { parseMentions } from "@/lib/mentions";
 import { HOP_LIMIT, chainStoppedText, routeMessage, type BotReply, type ChatBots } from "@/lib/mention-routing";
@@ -1709,9 +1709,12 @@ function withFile(items: BotFile[], saved: BotFile): BotFile[] {
 }
 
 /** MOCK: the bot's folder (or the shared one) gets the file, at `path`, with the API's size limit. */
-function saveMockFile(botId: string | undefined, file: File, path: string): UploadResult {
+function saveMockFile(botId: string | undefined, file: File, path: string, keepBoth = false): UploadResult {
   if (file.size > FILE_MAX_MB * 1024 * 1024) return { ok: false, error: `That file is too big: files can be up to ${FILE_MAX_MB} MB.` };
-  const replaced = state.fileLists[botId ?? ""]?.items.find((f) => f.path === path);
+  const items = state.fileLists[botId ?? ""]?.items ?? [];
+  // Like the API: keep both means a free name next to a taken one, never a replacement.
+  if (keepBoth && items.some((f) => f.path === path)) path = freePath(path, items.map((f) => f.path));
+  const replaced = items.find((f) => f.path === path);
   forgetDemoUrl(replaced);
   const at = now();
   const folder = botId ? `botdesk/${state.bots.find((b) => b.id === botId)?.handle ?? "bot"}` : "botdesk/_shared";
@@ -1821,13 +1824,19 @@ const fileActions = {
 
   /**
    * Give a bot a file (no `botId`: the shared folder), at `path` or else its name (the same path again
-   * replaces it). Any member. Answers the saved file, so a chat message can attach it by id.
+   * replaces it, unless `keepBoth`: then it gets a free name next to it, as chat attachments must never
+   * change after they're sent). Any member. Answers the saved file, so a chat message can attach it by id.
    */
-  async uploadFile(botId: string | undefined, file: File, path = file.name): Promise<UploadResult> {
+  async uploadFile(
+    botId: string | undefined,
+    file: File,
+    path = file.name,
+    { keepBoth = false }: { keepBoth?: boolean } = {},
+  ): Promise<UploadResult> {
     const folder = botId ?? "";
     let saved: BotFile;
     if (isDemoMode()) {
-      const result = saveMockFile(botId, file, path);
+      const result = saveMockFile(botId, file, path, keepBoth);
       if (!result.ok) return result;
       saved = result.file;
       // The demo's lists are all there is, so one never opened yet starts here.
@@ -1835,7 +1844,7 @@ const fileActions = {
     } else {
       const orgId = state.org.id;
       try {
-        const uploaded = await fileApi.upload(orgId, file, botId, path);
+        const uploaded = await fileApi.upload(orgId, file, botId, path, keepBoth);
         saved = toBotFile(uploaded, fileApi.contentUrl(orgId, uploaded.id));
       } catch (error) {
         return failure(error);
@@ -2125,7 +2134,7 @@ export const actions = {
       ...st,
       messages: [...st.messages, msg],
       threads: st.threads.map((t) =>
-        t.id === threadId ? { ...t, lastMessageAt: msg.createdAt, lastMessagePreview: text } : t,
+        t.id === threadId ? { ...t, lastMessageAt: msg.createdAt, lastMessagePreview: previewOf(msg.parts) } : t,
       ),
     }));
 
@@ -2704,7 +2713,7 @@ function pushBotMessage(threadId: string, botId: string, parts: Message["parts"]
     messages: [...st.messages, msg],
     threads: st.threads.map((t) =>
       t.id === threadId
-        ? { ...t, lastMessageAt: msg.createdAt, lastMessagePreview: parts.find((p) => p.type === "text")?.text ?? t.lastMessagePreview }
+        ? { ...t, lastMessageAt: msg.createdAt, lastMessagePreview: previewOf(parts) || t.lastMessagePreview }
         : t,
     ),
   }));

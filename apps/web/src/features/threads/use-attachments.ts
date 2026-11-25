@@ -34,7 +34,8 @@ export function useAttachments(thread: Thread) {
   }
 
   async function upload(draft: DraftAttachment) {
-    const result = await actions.uploadFile(botId, draft.file, draft.path);
+    // Keep both: a file attached earlier at the same path must not change under its message.
+    const result = await actions.uploadFile(botId, draft.file, draft.path, { keepBoth: true });
     if (!current.current.some((d) => d.key === draft.key)) return;
     change((list) => list.map((d) => (d.key !== draft.key ? d : result.ok
       ? { ...d, status: "uploaded", saved: result.file, error: undefined }

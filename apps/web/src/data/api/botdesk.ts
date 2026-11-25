@@ -295,12 +295,16 @@ export const fileApi = {
   /** A bot's files by path; without `botId`, the shared ones. */
   list: (orgId: string, botId?: string) =>
     apiFetch<ApiFile[]>(`/api/v1/orgs/${orgId}/files${botId ? `?botId=${encodeURIComponent(botId)}` : ""}`),
-  /** Into the bot's folder (the shared one without `botId`), at `path` or else the file's name. Saving the same path again replaces it. */
-  upload: (orgId: string, file: File, botId?: string, path?: string) => {
+  /**
+   * Into the bot's folder (the shared one without `botId`), at `path` or else the file's name. Saving
+   * the same path again replaces it, unless `keepBoth`: then the API picks a free name ("q3 (2).pdf").
+   */
+  upload: (orgId: string, file: File, botId?: string, path?: string, keepBoth = false) => {
     const form = new FormData();
     form.append("file", file);
     if (botId) form.append("botId", botId);
     if (path) form.append("path", path);
+    if (keepBoth) form.append("keepBoth", "true");
     return apiFetch<ApiFile>(`/api/v1/orgs/${orgId}/files`, { method: "POST", body: form });
   },
   remove: (orgId: string, fileId: string) => apiFetch<void>(`/api/v1/orgs/${orgId}/files/${fileId}`, { method: "DELETE" }),

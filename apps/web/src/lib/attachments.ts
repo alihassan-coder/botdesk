@@ -41,6 +41,30 @@ export function pastedFileName(name: string, at: Date): string {
   return `image-${stamp}${match[1].toLowerCase()}`;
 }
 
+/** `path`, or the first of "name (2).ext", "name (3).ext"… in its folder that isn't `taken`. */
+export function freePath(path: string, taken: Iterable<string>): string {
+  const used = new Set(taken);
+  const slash = path.lastIndexOf("/");
+  const [folder, name] = [path.slice(0, slash + 1), path.slice(slash + 1)];
+  const dot = name.lastIndexOf(".");
+  const [stem, extension] = dot > 0 ? [name.slice(0, dot), name.slice(dot)] : [name, ""];
+  let free = path;
+  for (let n = 2; used.has(free); n++) free = `${folder}${stem} (${n})${extension}`;
+  return free;
+}
+
+/**
+ * What the chat list shows for a message, as the API does: its text, else what was attached
+ * ("Sent q3.pdf", "Sent 3 files").
+ */
+export function previewOf(parts: readonly { type: string; text?: string; path?: string }[]): string {
+  const text = parts.filter((p) => p.type === "text").map((p) => p.text ?? "").join("\n");
+  if (text) return text.slice(0, 80);
+  const files = parts.filter((p) => p.type === "file").map((p) => fileNameOf(p.path ?? ""));
+  if (files.length === 0) return "";
+  return files.length === 1 ? `Sent ${files[0]}` : `Sent ${files.length} files`;
+}
+
 /** The file's own name, without its folders: "chat/report.pdf" → "report.pdf". */
 export function fileNameOf(path: string): string {
   return path.slice(path.lastIndexOf("/") + 1);

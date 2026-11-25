@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { chatPath, fileNameOf, hasThumbnail, pastedFileName } from "./attachments";
+import { chatPath, fileNameOf, freePath, hasThumbnail, pastedFileName, previewOf } from "./attachments";
 
 describe("chatPath", () => {
   it("puts the file in the chat folder under its own name", () => {
@@ -47,5 +47,23 @@ describe("hasThumbnail", () => {
     expect(hasThumbnail("image/jpeg; charset=binary")).toBe(true);
     expect(hasThumbnail("image/svg+xml")).toBe(false);
     expect(hasThumbnail("application/pdf")).toBe(false);
+  });
+});
+
+describe("freePath", () => {
+  it("keeps a free path and numbers a taken one in its folder", () => {
+    expect(freePath("chat/q3.pdf", [])).toBe("chat/q3.pdf");
+    expect(freePath("chat/q3.pdf", ["chat/q3.pdf", "chat/q3 (2).pdf"])).toBe("chat/q3 (3).pdf");
+    expect(freePath("notes", ["notes"])).toBe("notes (2)");
+  });
+});
+
+describe("previewOf", () => {
+  it("shows the text, else what was attached, as the API does", () => {
+    const file = { type: "file", path: "chat/a.pdf" };
+    expect(previewOf([{ type: "text", text: "Look" }, file])).toBe("Look");
+    expect(previewOf([file])).toBe("Sent a.pdf");
+    expect(previewOf([file, file, file])).toBe("Sent 3 files");
+    expect(previewOf([])).toBe("");
   });
 });

@@ -46,6 +46,7 @@ SAVED_MEANWHILE = "Someone saved a file at this path at the same moment. Try aga
 NOT_ATTACHABLE_DM = "Attach this bot's own files, or shared ones."
 NOT_ATTACHABLE_GROUP = "In a group, attach shared files: every bot here can read those."
 MAX_CONTENT_TYPE = 120
+MAX_COPIES = 99
 
 
 def clean_path(path: str) -> str:
@@ -138,13 +139,18 @@ async def save(
     settings: Settings,
     run_id: uuid.UUID | None = None,
     user_id: uuid.UUID | None = None,
+    keep_both: bool = False,
 ) -> File:
     """Write the file to storage and record it. Saving a path again replaces the file (same row,
-    same place in storage). The caller commits."""
+    same place in storage), unless `keep_both`: then the new one gets a free name next to it
+    ("q3 (2).pdf"), as files attached in chat must never change after they're sent. The caller
+    commits."""
     path = clean_path(path)
     _check_size(len(data), settings)
     bot_id = bot.id if bot else None
     file = await find_by_path(db, org_id, bot_id, path)
+    if file is not None and keep_both:
+        path, file = await _free_path(db, org_id, bot_id, path), None
     replacing = file is not None and file.storage == storage.name
     if storage.name == LOCAL:
         await _check_quota(db, org_id, len(data) - (file.size_bytes if file and replacing else 0), settings)
@@ -169,6 +175,17 @@ async def save(
     except IntegrityError:  # the same path saved by someone else between our read and this write
         raise BadRequest(SAVED_MEANWHILE) from None
     return file
+
+
+async def _free_path(db: AsyncSession, org_id: uuid.UUID, bot_id: uuid.UUID | None, path: str) -> str:
+    """`q3.pdf` → the first of `q3 (2).pdf`, `q3 (3).pdf`… that no file has yet."""
+    folder, _, name = path.rpartition("/")
+    stem, dot, extension = name.rpartition(".") if "." in name.strip(".") else (name, "", "")
+    for number in range(2, MAX_COPIES + 2):
+        candidate = f"{folder + '/' if folder else ''}{stem} ({number}){dot}{extension}"
+        if await find_by_path(db, org_id, bot_id, candidate) is None:
+            return clean_path(candidate)
+    raise BadRequest(f"There are already {MAX_COPIES} files called {name} here. Delete some, or use another name.")
 
 
 async def _free_key(db: AsyncSession, org_id: uuid.UUID, storage: OrgStorage, bot: Bot | None, path: str) -> str:

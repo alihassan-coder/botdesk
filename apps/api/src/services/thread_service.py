@@ -146,7 +146,17 @@ async def _last_message_previews(db: AsyncSession, thread_ids: list[uuid.UUID]) 
     newest_first = func.row_number().over(partition_by=Message.thread_id, order_by=Message.created_at.desc()).label("n")
     ranked = select(Message.thread_id, Message.parts, newest_first).where(Message.thread_id.in_(thread_ids)).subquery()
     rows = await db.execute(select(ranked.c.thread_id, ranked.c.parts).where(ranked.c.n == 1))
-    return {thread_id: text_of(parts)[:PREVIEW_LENGTH] for thread_id, parts in rows}
+    return {thread_id: preview_of(parts) for thread_id, parts in rows}
+
+
+def preview_of(parts: list[dict[str, Any]]) -> str:
+    """What the chat list shows for a message: its text, else what was attached ("Sent q3.pdf")."""
+    if text := text_of(parts):
+        return text[:PREVIEW_LENGTH]
+    names = [str(part.get("path", "")).rsplit("/", 1)[-1] for part in parts if part.get("type") == FILE_PART]
+    if not names:
+        return ""
+    return (f"Sent {names[0]}" if len(names) == 1 else f"Sent {len(names)} files")[:PREVIEW_LENGTH]
 
 
 async def threads_for_user(db: AsyncSession, *, org_id: uuid.UUID, user_id: uuid.UUID) -> list[Thread]:

@@ -61,11 +61,13 @@ async def upload_file(
     vault: Vault,
     bot_id: Annotated[uuid.UUID | None, Form(alias="botId")] = None,
     path: Annotated[str | None, Form()] = None,
+    keep_both: Annotated[bool, Form(alias="keepBoth")] = False,
 ) -> FileOut:
     """Give a bot a file (or the shared folder, without `botId`). `path` defaults to the file's
-    name; saving the same path again replaces it."""
+    name; saving the same path again replaces it, unless `keepBoth` (files attached in chat): then
+    the new one gets a free name next to it, "q3 (2).pdf"."""
     return await file_controller.upload(
-        db, access, bot_id=bot_id, path=path, upload=file, settings=settings, vault=vault
+        db, access, bot_id=bot_id, path=path, upload=file, settings=settings, vault=vault, keep_both=keep_both
     )
 
 

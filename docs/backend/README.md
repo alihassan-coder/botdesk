@@ -626,7 +626,7 @@ Bots keep files ([ADR 0017](../adr/0017-bot-browsers-and-file-storage.md)). Each
 | `GET /api/v1/orgs/{id}/storage` | `{provider: "local" \| "s3", s3: {endpoint, region, bucket, prefix, accessKeyHint} \| null, localAvailable, checkedAt}` |
 | `PUT /api/v1/orgs/{id}/storage` | Owners and admins. `{provider: "local"}`, `{provider: "s3", s3: {endpoint?, region, bucket, prefix?, accessKeyId, secretAccessKey?}}` or `{provider: "cloudinary", cloudinary: {cloudName, apiKey, apiSecret?}}` (leave the secret out to keep the saved one). Checked with a live write, read and delete; then `botdesk/README.txt`, a folder per bot and `_shared` are created. 400 with the reason when it doesn't work |
 | `GET /api/v1/orgs/{id}/files?botId=` | A bot's files, or the shared ones without `botId` |
-| `POST /api/v1/orgs/{id}/files` | Multipart `file`, optional `botId` and `path` (default: the file's name). Any member. 201 |
+| `POST /api/v1/orgs/{id}/files` | Multipart `file`, optional `botId` and `path` (default: the file's name). Saving a path again replaces the file, unless `keepBoth=true` (chat attachments): then it gets a free name next to it, `q3 (2).pdf`, so a sent attachment never changes. Any member. 201 |
 | `GET /api/v1/orgs/{id}/files/{fileId}/content` | The bytes. Images, video, audio and plain text are shown inline; everything else downloads. Always `nosniff` and a `sandbox` CSP |
 | `DELETE /api/v1/orgs/{id}/files/{fileId}` | Removes it from the list and from storage. 204 |
 

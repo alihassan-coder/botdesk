@@ -7,6 +7,7 @@ from typing import Any
 import httpx
 
 from src.services.run_service import _file_lines
+from src.services.thread_service import preview_of
 from tests.conftest import sign_up
 
 
@@ -96,3 +97,41 @@ def test_a_run_reads_where_each_attached_file_is() -> None:
         '(attached file "brief.pdf" (application/pdf, 3.3 MB) in the shared folder: files.read with shared=true)',
         '(attached file "x.txt" (text/plain, 10 B) in another bot\'s folder)',
     ]
+
+
+async def test_chat_uploads_keep_both_so_a_sent_attachment_never_changes(client: httpx.AsyncClient) -> None:
+    org = await _org(client)
+    bot = (await client.post(f"{org}/bots", json={"name": "Scout"})).json()
+
+    async def upload(data: bytes) -> dict[str, Any]:
+        form = {"botId": bot["id"], "path": "chat/report.pdf", "keepBoth": "true"}
+        response = await client.post(f"{org}/files", data=form, files={"file": ("report.pdf", data, "application/pdf")})
+        assert response.status_code == 201, response.text
+        file: dict[str, Any] = response.json()
+        return file
+
+    first, second, third = await upload(b"one"), await upload(b"two"), await upload(b"three")
+    assert [first["path"], second["path"], third["path"]] == [
+        "chat/report.pdf",
+        "chat/report (2).pdf",
+        "chat/report (3).pdf",
+    ]
+    assert (await client.get(f"{org}/files/{first['id']}/content")).content == b"one"
+
+
+async def test_a_message_with_only_files_has_a_preview(client: httpx.AsyncClient) -> None:
+    org = await _org(client)
+    bot = (await client.post(f"{org}/bots", json={"name": "Scout"})).json()
+    dm = (await client.post(f"{org}/threads/dm", json={"botId": bot["id"]})).json()
+    one = await _upload(client, org, "q3.csv", bot_id=bot["id"])
+    await client.post(f"{org}/threads/{dm['id']}/messages", json={"attachments": [one["id"]]})
+    threads = {t["id"]: t for t in (await client.get(f"{org}/threads")).json()}
+    assert threads[dm["id"]]["lastMessagePreview"] == "Sent q3.csv"
+
+
+def test_previews_say_what_was_sent() -> None:
+    file = {"type": "file", "path": "chat/a.pdf"}
+    assert preview_of([{"type": "text", "text": "Look"}, file]) == "Look"
+    assert preview_of([file]) == "Sent a.pdf"
+    assert preview_of([file, file, file]) == "Sent 3 files"
+    assert preview_of([]) == ""

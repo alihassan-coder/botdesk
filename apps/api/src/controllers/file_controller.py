@@ -63,6 +63,7 @@ async def upload(
     upload: UploadFile,
     settings: Settings,
     vault: CredentialVault,
+    keep_both: bool = False,
 ) -> FileOut:
     """Any member may give a bot (or the shared folder) a file. Same path: replaced."""
     bot = await bot_service.get_bot(db, access.org.id, bot_id) if bot_id else None
@@ -79,6 +80,7 @@ async def upload(
         content_type=upload.content_type,
         settings=settings,
         user_id=access.user.id,
+        keep_both=keep_both,
     )
     await db.commit()
     return file_service.view_of(file, storage)

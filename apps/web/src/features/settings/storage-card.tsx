@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import Link from "next/link";
 import { flushSync } from "react-dom";
 import { Cloud, HardDrive } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
@@ -58,7 +59,8 @@ export function StorageCard() {
       </div>
       {changing && <StorageForm current={load.current} onDone={close} />}
       <p className="text-sm text-muted-foreground">
-        Each bot gets a folder named after it inside <Path>botdesk/</Path>, plus <Path>_shared</Path> for files every bot can read.
+        Each bot gets a folder named after it inside <Path>botdesk/</Path>, plus <Path>_shared</Path> for files every bot can read.{" "}
+        <Link href="/files" className="font-medium text-brand hover:underline">Browse files</Link>
       </p>
       {!canManage && <p className="text-sm text-muted-foreground">Only owners and admins can change where files go.</p>}
     </div>

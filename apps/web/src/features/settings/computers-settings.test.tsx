@@ -24,6 +24,7 @@ describe("ComputersSettings in the demo", () => {
     renderUI(<ComputersSettings />);
     expect(storage().getByText("On this BotDesk server.")).toBeInTheDocument();
     expect(storage().getByText(/Each bot gets a folder named after it inside/)).toHaveTextContent("botdesk/, plus _shared for files every bot can read.");
+    expect(storage().getByRole("link", { name: "Browse files" })).toHaveAttribute("href", "/files");
     expect(browser().getByText("On this BotDesk server.")).toBeInTheDocument();
   });
 

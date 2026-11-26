@@ -10,7 +10,7 @@ import { AttachFilesButton } from "./attach-files-button";
 import { AttachmentChips } from "./attachment-chips";
 import { MENTION_LIST_ID, MentionSuggestions, mentionOptionId, type MentionOption } from "./mention-suggestions";
 import { useAttachments } from "./use-attachments";
-import { useFileDrop } from "./use-file-drop";
+import { useFileDrop } from "@/hooks/use-file-drop";
 import { useMentionOptions } from "./use-mention-options";
 
 /**

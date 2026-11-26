@@ -1805,7 +1805,7 @@ const fileActions = {
     }
   },
 
-  /** A bot's files, by path. */
+  /** A bot's files, by path ("": the shared folder's). */
   async loadFiles(botId: string): Promise<void> {
     if (isDemoMode()) {
       if (!state.fileLists[botId]) setFileList(botId, { status: "ready", items: [] });
@@ -3081,9 +3081,9 @@ export const useBrowserProvider = () => useStore(useCallback((s: State) => s.bro
 /** A bot's browser as last seen; undefined until `actions.loadBrowser` has started. */
 export const useBotBrowser = (botId?: string) =>
   useStore(useCallback((s: State) => (botId ? s.browsers[botId] : undefined), [botId]));
-/** A bot's files as last loaded; undefined until `actions.loadFiles` has started. */
+/** A bot's files as last loaded ("": the shared folder's); undefined until `actions.loadFiles` has started. */
 export const useFileList = (botId?: string) =>
-  useStore(useCallback((s: State) => (botId ? s.fileLists[botId] : undefined), [botId]));
+  useStore(useCallback((s: State) => (botId === undefined ? undefined : s.fileLists[botId]), [botId]));
 
 /**
  * Where a file in a message opens: its bytes on the API (the session cookie goes with them). In the

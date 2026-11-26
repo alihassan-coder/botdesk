@@ -1,15 +1,16 @@
 import { TimeAgo } from "@/components/time-ago";
-import type { Bot, BotFile } from "@/data/types";
+import type { BotFile } from "@/data/types";
+import type { FileFolder } from "@/lib/files";
 import { formatBytes } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import { DeleteFileButton } from "./delete-file-button";
 import { FileTypeIcon } from "./file-type-icon";
 
 /**
- * One file in a bot's folder: its path (opens in a new tab), size and when it last changed.
+ * One file in a folder: its path (opens in a new tab), size and when it last changed.
  * One saved to storage the organization no longer uses is dimmed and can't be opened.
  */
-export function FileRow({ bot, file }: { bot: Bot; file: BotFile }) {
+export function FileRow({ folder, file }: { folder: FileFolder; file: BotFile }) {
   const slash = file.path.lastIndexOf("/") + 1;
   const name = (
     <>
@@ -34,7 +35,7 @@ export function FileRow({ bot, file }: { bot: Bot; file: BotFile }) {
           {file.available ? <>{formatBytes(file.sizeBytes)} · <TimeAgo iso={file.updatedAt} /></> : "In storage you no longer use"}
         </p>
       </div>
-      <DeleteFileButton bot={bot} file={file} />
+      <DeleteFileButton folder={folder} file={file} />
     </li>
   );
 }

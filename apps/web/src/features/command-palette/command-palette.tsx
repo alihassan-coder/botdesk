@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useTheme } from "next-themes";
-import { Inbox, Moon, Plug, Plus, Repeat, Settings, Store, Sun } from "lucide-react";
+import { FolderOpen, Inbox, Moon, Plug, Plus, Repeat, Settings, Store, Sun } from "lucide-react";
 import {
   Command,
   CommandDialog,
@@ -18,6 +18,7 @@ import { BotAvatar } from "@/features/bots/bot-avatar";
 const PAGES = [
   { label: "Approvals", href: "/approvals", icon: Inbox },
   { label: "Routines", href: "/routines", icon: Repeat },
+  { label: "Files", href: "/files", icon: FolderOpen },
   { label: "Connect apps", href: "/apps", icon: Plug },
   { label: "Marketplace", href: "/marketplace", icon: Store },
   { label: "Settings", href: "/settings/profile", icon: Settings },

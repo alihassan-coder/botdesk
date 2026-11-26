@@ -1,6 +1,6 @@
 import { useState } from "react";
 import Link from "next/link";
-import { Inbox, Plug, Repeat, Settings, Store } from "lucide-react";
+import { FolderOpen, Inbox, Plug, Repeat, Settings, Store } from "lucide-react";
 import {
   Sidebar,
   SidebarContent,
@@ -21,6 +21,7 @@ import { WorkspaceHeader } from "./workspace-header";
 /** Pages reached from the bottom of the sidebar. */
 const FOOTER_LINKS = [
   { href: "/routines", label: "Routines", icon: Repeat },
+  { href: "/files", label: "Files", icon: FolderOpen },
   { href: "/apps", label: "Connect apps", icon: Plug },
   { href: "/marketplace", label: "Marketplace", icon: Store },
   { href: "/settings/profile", label: "Settings", icon: Settings },

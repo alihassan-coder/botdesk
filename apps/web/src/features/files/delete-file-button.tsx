@@ -6,12 +6,13 @@ import {
 } from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
 import { actions } from "@/data/store";
-import type { Bot, BotFile } from "@/data/types";
+import type { BotFile } from "@/data/types";
+import type { FileFolder } from "@/lib/files";
 
-/** Delete a file, after asking. Any member may; the bot can't read it afterwards. */
-export function DeleteFileButton({ bot, file }: { bot: Bot; file: BotFile }) {
+/** Delete a file, after asking. Any member may; no bot can read it afterwards. */
+export function DeleteFileButton({ folder, file }: { folder: FileFolder; file: BotFile }) {
   const remove = async () => {
-    const result = await actions.deleteFile(bot.id, file.id);
+    const result = await actions.deleteFile(folder.key, file.id);
     if (!result.ok) return void toast.error(result.error);
     toast.success(`Deleted ${file.path}`);
   };
@@ -28,7 +29,7 @@ export function DeleteFileButton({ bot, file }: { bot: Bot; file: BotFile }) {
           <AlertDialogTitle className="break-all">Delete {file.path}?</AlertDialogTitle>
           <AlertDialogDescription>
             {file.available
-              ? `It's removed from ${bot.name}'s folder and from your storage. This can't be undone.`
+              ? `It's removed from ${folder.phrase} and from your storage. This can't be undone.`
               : "It leaves this list. The copy in the storage you used before stays there."}
           </AlertDialogDescription>
         </AlertDialogHeader>

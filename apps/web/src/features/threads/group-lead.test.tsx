@@ -1,4 +1,4 @@
-import { screen } from "@testing-library/react";
+import { screen, waitFor } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 import { actions, getStoreSnapshot } from "@/data/store";
 import { renderUI } from "@/test/render";
@@ -9,17 +9,32 @@ const launch = () => getStoreSnapshot().threads.find((t) => t.id === "t_launch")
 describe("GroupLead", () => {
   it("its creator picks another of the group's bots, or none", async () => {
     const { user, rerender } = renderUI(<GroupLead thread={launch()} />);
-    const select = screen.getByRole("combobox", { name: "Lead" });
-    expect(select).toHaveValue("b_chief");
-    expect(screen.getAllByRole("option").map((o) => o.textContent)).toEqual(["Chief", "Sales Outbound", "Bug Fixer", "No lead"]);
+    const lead = screen.getByRole("combobox", { name: "Lead" });
+    expect(lead).toHaveTextContent("Chief");
 
-    await user.selectOptions(select, "Bug Fixer");
-    expect(launch().leadBotId).toBe("b_bugs");
+    await user.click(lead);
+    expect(screen.getAllByRole("option").map((o) => o.textContent)).toEqual(["No lead", "Chief", "Sales Outbound", "Bug Fixer"]);
+    await user.click(screen.getByRole("option", { name: "Bug Fixer" }));
+    await waitFor(() => expect(launch().leadBotId).toBe("b_bugs"));
     rerender(<GroupLead thread={launch()} />);
     expect(screen.getByText("Bug Fixer answers messages that don't @mention a bot.")).toBeInTheDocument();
 
-    await user.selectOptions(screen.getByRole("combobox", { name: "Lead" }), "No lead");
-    expect(launch().leadBotId).toBeUndefined();
+    await user.click(screen.getByRole("combobox", { name: "Lead" }));
+    await user.click(screen.getByRole("option", { name: "No lead" }));
+    await waitFor(() => expect(launch().leadBotId).toBeUndefined());
+    rerender(<GroupLead thread={launch()} />);
+    expect(screen.getByRole("combobox", { name: "Lead" })).toHaveTextContent("No lead");
+    expect(screen.getByText("Only the bots you @mention reply.")).toBeInTheDocument();
+  });
+
+  it("works from the keyboard", async () => {
+    const { user } = renderUI(<GroupLead thread={launch()} />);
+    screen.getByRole("combobox", { name: "Lead" }).focus();
+    await user.keyboard("{Enter}");
+    expect(await screen.findByRole("listbox")).toBeInTheDocument();
+    // The list opens on the current lead (Chief); one down is Sales Outbound.
+    await user.keyboard("{ArrowDown}{Enter}");
+    await waitFor(() => expect(launch().leadBotId).toBe("b_sales"));
   });
 
   it("a member who didn't make the group just sees who leads", async () => {

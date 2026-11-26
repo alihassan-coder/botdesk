@@ -1,17 +1,18 @@
 import { useId, useTransition } from "react";
 import { toast } from "sonner";
-import { NativeSelect, NativeSelectOption } from "@/components/ui/native-select";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { actions, useBots, useCanChangeLead } from "@/data/store";
 import type { Thread } from "@/data/types";
 
-const NO_LEAD = "";
+/** Radix Select can't hold an empty value, so "No lead" has a name of its own (bot ids never look like it). */
+const NO_LEAD = "none";
 
 /**
  * A group's lead: the bot that answers messages that don't @mention a bot (ADR 0009). Its
  * creator, owners and admins can pick another of the group's bots, or none; everyone else sees who it is.
  */
 export function GroupLead({ thread }: { thread: Thread }) {
-  const selectId = useId();
+  const triggerId = useId();
   const canChange = useCanChangeLead(thread);
   const allBots = useBots();
   const bots = allBots.filter((b) => thread.participants.some((p) => p.type === "bot" && p.id === b.id));
@@ -28,15 +29,16 @@ export function GroupLead({ thread }: { thread: Thread }) {
   return (
     <section>
       <h3 className="mb-1 text-xs font-medium text-muted-foreground">
-        {canChange ? <label htmlFor={selectId}>Lead</label> : "Lead"}
+        {canChange ? <label htmlFor={triggerId}>Lead</label> : "Lead"}
       </h3>
       {canChange ? (
-        <NativeSelect id={selectId} className="w-full" value={lead?.id ?? NO_LEAD} disabled={saving} onChange={(e) => change(e.target.value)}>
-          {bots.map((b) => (
-            <NativeSelectOption key={b.id} value={b.id}>{b.name}</NativeSelectOption>
-          ))}
-          <NativeSelectOption value={NO_LEAD}>No lead</NativeSelectOption>
-        </NativeSelect>
+        <Select value={lead?.id ?? NO_LEAD} onValueChange={change} disabled={saving}>
+          <SelectTrigger id={triggerId} className="w-full"><SelectValue /></SelectTrigger>
+          <SelectContent>
+            <SelectItem value={NO_LEAD}>No lead</SelectItem>
+            {bots.map((b) => <SelectItem key={b.id} value={b.id}>{b.name}</SelectItem>)}
+          </SelectContent>
+        </Select>
       ) : (
         <p className="text-sm font-medium">{lead?.name ?? "No lead"}</p>
       )}

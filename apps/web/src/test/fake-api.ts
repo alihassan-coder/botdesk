@@ -7,7 +7,8 @@ import { actions, getStoreSnapshot } from "@/data/store";
  * then `signInOnApi()` in a test (or a beforeEach) to enter Zara's org "o1" with bot "b1".
  */
 
-type Route = { status: number; body?: unknown };
+/** `wait`: the answer comes once it settles (a slow request). */
+type Route = { status: number; body?: unknown; wait?: Promise<unknown> };
 
 export const apiOrg = { id: "o1", name: "Zara's team", slug: "zara-team", role: "owner", defaultSecurityLevel: "ask-before-acting", maxSecurityLevel: "autonomous" };
 export const apiMe = { user: { id: "u1", name: "Zara", email: "zara@example.com", handle: "zara" }, organizations: [apiOrg] };
@@ -62,6 +63,7 @@ export function withFakeApi(): FakeApi {
         const key = `${init?.method ?? "GET"} ${url.replace("http://api.test", "")}`;
         api.sent.push({ key, body: sentBody(init?.body) });
         const route = api.routes[key] ?? { status: 404, body: { detail: "Not found" } };
+        await route.wait;
         return route.body === undefined ? new Response(null, { status: route.status }) : Response.json(route.body, { status: route.status });
       }),
     );

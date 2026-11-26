@@ -14,7 +14,8 @@
  *   budgets: daily spend, each bot's spend this month and the org's budget; and Routines:
  *   listed with the org, created, edited, switched on and off, run now and removed; and
  *   bots' Files: where the org keeps them (Settings → Computers) and each bot's list; and
- *   each bot's Browser: watching it and taking over. Apps
+ *   each bot's Browser: watching it and taking over. Recent chats' messages are also kept on
+ *   this device (./message-cache.ts), so a chat opens at once after a reload. Apps
  *   aren't all on the API yet, so some stay mock.
  * - Not set (tests, e2e, demos): everything is the in-memory mock, with fake bot replies.
  * Guest mode ("Explore the demo") uses the mock in either case, so people can look
@@ -32,6 +33,7 @@ import { rememberOAuthReturn } from "@/lib/connections";
 import { browser } from "@/lib/navigate";
 import { approvalApi, authApi, botApi, browserApi, connectionApi, fileApi, inviteApi, mcpApi, memoryApi, modelApi, orgApi, pluginApi, routineApi, runApi, templateApi, threadApi, usageApi } from "./api/botdesk";
 import { ApiError, apiBaseUrl } from "./api/client";
+import { messageCache } from "./message-cache";
 import { toAccountConnection, toApiBot, toApproval, toBot, toBotBrowser, toBotFile, toBrowserProvider, toFileStorage, toInvitation, toMcpServer, toMemory, toMemoryStatus, toMessage, toModel, toModelProvider, toOrg, toRoutine, toTemplate, toThread, toUsage, toUser } from "./api/map";
 import { applyRunEvent, typingId, upsertApproval, withActiveRuns, withPreview, withWaitingApprovals, type ActiveRun } from "./api/run-events";
 import type { ApiMe, ApiMessage, ApiRunEvent, ApiThread, ApiThreadRuns } from "./api/types";
@@ -429,6 +431,12 @@ function enterOrg(org: Membership) {
   void loadTemplates();
 }
 
+/** Going to another organization (switching, joining, creating one): the chats kept on this device go. */
+function switchToOrg(org: Membership) {
+  void messageCache.clear();
+  enterOrg(org);
+}
+
 /** The marketplace's templates (`GET /templates`): the same for every org on this server. */
 async function loadTemplates() {
   set((st) => ({ ...st, templates: { ...st.templates, status: "loading" } }));
@@ -614,8 +622,11 @@ const authActions = {
     }
     closeChatStreams();
     if (isDemoMode()) saveMockSession(null);
-    // Signed out here even if the API can't be reached; the cookie expires on its own.
-    else await authApi.signOut().catch(() => {});
+    else {
+      void messageCache.clear(); // nothing of yours stays on this device
+      // Signed out here even if the API can't be reached; the cookie expires on its own.
+      await authApi.signOut().catch(() => {});
+    }
     set((st) => ({ ...st, authStatus: "signed-out" }));
   },
 
@@ -648,7 +659,7 @@ const authActions = {
     try {
       const org = await inviteApi.accept(token);
       set((st) => ({ ...st, orgs: [...st.orgs.filter((o) => o.id !== org.id), org] }));
-      enterOrg(org);
+      switchToOrg(org);
       return { ok: true };
     } catch (error) {
       return failure(error);
@@ -663,7 +674,7 @@ const orgActions = {
   async switchOrg(orgId: string): Promise<void> {
     const org = state.orgs.find((o) => o.id === orgId);
     if (!org || org.id === state.org.id || isDemoMode()) return;
-    enterOrg(org);
+    switchToOrg(org);
   },
 
   async updateOrg(patch: Partial<Pick<Org, "name" | "slug">>): Promise<ActionResult> {
@@ -725,7 +736,7 @@ const orgActions = {
     try {
       const created: Membership = { ...toOrg(await orgApi.create({ name: name.trim() })), role: "owner" };
       set((st) => ({ ...st, orgs: [...st.orgs.filter((o) => o.id !== created.id), created] }));
-      enterOrg(created);
+      switchToOrg(created);
       return { ok: true };
     } catch (error) {
       return failure(error);
@@ -944,9 +955,31 @@ async function loadMessages(orgId: string, threadId: string, active: ApiThreadRu
       const withCards = withWaitingApprovals(loaded, apiApprovals.map(toApproval), activeRuns ?? undefined);
       return withRunStatus({ ...loaded, ...(active ? withActiveRuns(withCards, threadId, active.runs, active.lastEventId) : withCards) });
     });
+    cacheMessages(orgId, threadId);
   } catch {
     if (state.org.id === orgId) setThreadLoad(threadId, { status: "error", hasOlder: false });
   }
+}
+
+/* ---------- Messages kept on this device (API only, see message-cache.ts) ----------
+ * A chat's newest messages are saved when its page loads and when it closes, and shown at once the
+ * next time it opens (after a reload) while the API's page is on its way, which then replaces them.
+ */
+const cacheKey = (orgId: string, threadId: string) => ({ userId: state.currentUserId, orgId, threadId });
+
+function cacheMessages(orgId: string, threadId: string) {
+  if (isDemoMode() || state.authStatus !== "signed-in" || state.org.id !== orgId) return;
+  void messageCache.save(cacheKey(orgId, threadId), state.messages.filter((m) => m.threadId === threadId));
+}
+
+/** Only while the chat's first page is on its way and nothing of it is in the store yet. */
+async function showCachedMessages(orgId: string, threadId: string) {
+  const cached = await messageCache.read(cacheKey(orgId, threadId));
+  if (cached.length === 0) return;
+  set((st) => {
+    const waiting = st.org.id === orgId && st.threadLoads[threadId]?.status === "loading" && !st.messages.some((m) => m.threadId === threadId);
+    return waiting ? { ...st, messages: [...st.messages, ...cached.map((m) => ({ ...m, threadId }))] } : st;
+  });
 }
 
 /**
@@ -1087,7 +1120,10 @@ const chatActions = {
   openThread(threadId: string): () => void {
     if (isDemoMode() || !state.threads.some((t) => t.id === threadId)) return () => {};
     const orgId = state.org.id;
+    const firstTime = !state.messages.some((m) => m.threadId === threadId);
     setThreadLoad(threadId, { status: "loading", hasOlder: state.threadLoads[threadId]?.hasOlder ?? false });
+    // Opened for the first time since the page loaded: what this device kept, until the API answers.
+    if (firstTime) void showCachedMessages(orgId, threadId);
     let closed = false;
     let stopFollowing = () => {};
     void (async () => {
@@ -1104,6 +1140,8 @@ const chatActions = {
     return () => {
       closed = true;
       stopFollowing();
+      // With what arrived while it was open, for next time.
+      if (state.threadLoads[threadId]?.status === "ready") cacheMessages(orgId, threadId);
     };
   },
 

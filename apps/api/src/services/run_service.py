@@ -11,9 +11,10 @@ import json
 import uuid
 from collections.abc import Sequence
 from dataclasses import dataclass, field
+from datetime import datetime
 from typing import Any
 
-from sqlalchemy import Select, and_, exists, func, or_, select, update
+from sqlalchemy import ColumnElement, Select, and_, exists, func, or_, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
@@ -411,6 +412,7 @@ async def run_context(db: AsyncSession, run_id: uuid.UUID) -> RunContext:
                 Organization.history_summaries,
                 Thread.summary,
                 Thread.summary_through,
+                Thread.summary_through_id,
                 Thread.summary_tainted,
             )
             .join(Bot, Bot.id == Run.bot_id)
@@ -430,7 +432,15 @@ async def run_context(db: AsyncSession, run_id: uuid.UUID) -> RunContext:
         if row.history_summaries
         and row.summary
         and row.summary_through is not None
-        and (row.trigger_at is None or row.summary_through < row.trigger_at)
+        and (
+            row.trigger_at is None
+            or row.summary_through < row.trigger_at
+            or (
+                row.summary_through == row.trigger_at
+                and row.summary_through_id is not None
+                and row.summary_through_id < row.trigger_id
+            )
+        )
         else None
     )
     query = (
@@ -442,7 +452,7 @@ async def run_context(db: AsyncSession, run_id: uuid.UUID) -> RunContext:
         .limit(HISTORY_LENGTH + SUMMARY_EVERY if summary else HISTORY_LENGTH)
     )
     if summary:  # what the summary doesn't cover
-        query = query.where(Message.created_at > row.summary_through)
+        query = query.where(after_message(row.summary_through, row.summary_through_id))
     if row.trigger_at is not None:  # up to the trigger; ties on the time go by id
         query = query.where(
             or_(
@@ -500,6 +510,14 @@ async def run_context(db: AsyncSession, run_id: uuid.UUID) -> RunContext:
         more_teammates=more,
         summary=summary,
     )
+
+
+def after_message(at: datetime, message_id: uuid.UUID | None) -> ColumnElement[bool]:
+    """Messages written after the one at `at` with id `message_id` (ties on the time go by id, as
+    everywhere else). Without the id: by the time alone."""
+    if message_id is None:
+        return Message.created_at > at
+    return or_(Message.created_at > at, and_(Message.created_at == at, Message.id > message_id))
 
 
 def chat_lines(thread_id: uuid.UUID) -> Select[Any]:

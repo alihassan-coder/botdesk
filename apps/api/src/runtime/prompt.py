@@ -10,6 +10,7 @@ A DM can hold other bots' messages too (ADR 0009): a guest that a member pulled 
 @mention. Those are wrapped the same way, and a guest is told whose chat it is answering in.
 """
 
+import re
 from dataclasses import dataclass
 from typing import Any
 
@@ -185,7 +186,7 @@ def system_text(
         lines += ["", "Things you remember:", *(f"- {memory}" for memory in memories)]
     if summary:
         # Written from the chat's messages, so it's data like them, and it can't close its own block.
-        text = summary.replace(SUMMARY_CLOSE, "&lt;/chat-summary>")
+        text = re.sub(r"<\s*/\s*chat-summary", "&lt;/chat-summary", summary, flags=re.IGNORECASE)
         lines += ["", SUMMARY_INTRO, SUMMARY_OPEN, text, SUMMARY_CLOSE]
     return "\n".join(lines)
 

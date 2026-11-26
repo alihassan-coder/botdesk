@@ -49,6 +49,10 @@ from src.services.trigger_service import Target
 JOBS = JobRegistry()
 log = logging.getLogger(__name__)
 
+# `prune_messages` deletes at most this many batches (`history_service.PRUNE_BATCH` rows each) per
+# organization a night.
+PRUNE_MAX_BATCHES = 200
+
 # A run that can't start yet (its chat's turn, or its bot is busy) tries again this much later.
 # A new job, not a retry: it goes to the back of its chat's line, behind the run it waits for.
 TURN_RETRY = timedelta(seconds=1)
@@ -202,8 +206,11 @@ async def prune_messages(env: JobEnv, timestamp: int) -> None:
         limits = await history_service.retention_limits(db)
     for org_id, days in limits:
         try:
-            async with env.sessionmaker() as db:
-                await history_service.prune(db, org_id, now - timedelta(days=days))
-                await db.commit()
+            for _ in range(PRUNE_MAX_BATCHES):  # short transactions; what's left waits for tomorrow
+                async with env.sessionmaker() as db:
+                    deleted = await history_service.prune(db, org_id, now - timedelta(days=days))
+                    await db.commit()
+                if not deleted:
+                    break
         except Exception:
             log.exception("Organization %s: old messages weren't deleted; the others carry on.", org_id)

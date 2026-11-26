@@ -3,14 +3,15 @@ running summary, with one model call.
 
 Runs the `summarize_thread` job, which a run's end queues once enough messages have fallen out of
 the window (`history_service.summary_due`). The call uses the bot's model with the organization's
-key (never a member's own: the summary serves everyone in the chat), is skipped when that would be
-the stand-in model or would pass the organization's budget, and is recorded as the organization's
-usage without a bot.
+key, else the server's (a self-hosted install's own key, as for runs), never a member's own: the
+summary serves everyone in the chat. It is skipped when that would be the stand-in model or would
+pass the organization's budget, and is recorded as the organization's usage without a bot.
 """
 
 import asyncio
 import logging
 import math
+import re
 import uuid
 from collections.abc import Awaitable, Callable
 
@@ -29,6 +30,8 @@ logger = logging.getLogger(__name__)
 SUMMARIZE_THREAD = "summarize_thread"
 SUMMARY_MAX_CHARS = 1_500
 SUMMARY_TIMEOUT_SECONDS = 90
+# Summaries one job writes at most: a chat that fell far behind catches up over a few run ends.
+MAX_FOLDS_PER_JOB = 3
 
 ModelFor = Callable[[uuid.UUID, str, uuid.UUID | None], Awaitable[BaseChatModel]]
 PriceFor = Callable[[uuid.UUID, str, uuid.UUID | None], Awaitable[ModelPrice]]
@@ -49,8 +52,8 @@ def summarize_job(thread_id: uuid.UUID, bot_id: uuid.UUID) -> Job:
 
 
 def _closed(text: str, tag: str) -> str:
-    """The text can't close its own block early."""
-    return text.replace(f"</{tag}", f"&lt;/{tag}")
+    """The text can't close its own block early (in any case or spacing)."""
+    return re.sub(rf"<\s*/\s*{tag}", f"&lt;/{tag}", text, flags=re.IGNORECASE)
 
 
 def summary_prompt(batch: SummaryBatch) -> list[SystemMessage | HumanMessage]:
@@ -92,16 +95,30 @@ async def summarize(
     price_for: PriceFor,
     thread_id: uuid.UUID,
     bot_id: uuid.UUID,
+) -> int:
+    """Bring the chat's summary up to date: how many summaries were saved (at most
+    `MAX_FOLDS_PER_JOB`). Safe to run twice: the second time finds nothing to fold in."""
+    saved = 0
+    while saved < MAX_FOLDS_PER_JOB and await _fold_once(sessionmaker, model_for, price_for, thread_id, bot_id):
+        saved += 1
+    return saved
+
+
+async def _fold_once(
+    sessionmaker: async_sessionmaker[AsyncSession],
+    model_for: ModelFor,
+    price_for: PriceFor,
+    thread_id: uuid.UUID,
+    bot_id: uuid.UUID,
 ) -> bool:
-    """Bring the chat's summary up to date. True when a new summary was saved. Safe to run twice:
-    the second time finds nothing to fold in. No transaction is open during the model call."""
+    """One batch folded into the summary. No transaction is open during the model call."""
     async with sessionmaker() as db:
         batch = await history_service.next_batch(db, thread_id, bot_id)
     if batch is None:
         return False
     model = await model_for(batch.org_id, batch.model_id, None)
     if isinstance(model, StandInModel):
-        return False  # no organization key for this provider: no summary
+        return False  # no key for this provider: no summary
     price = await price_for(batch.org_id, batch.model_id, None)
     prompt = summary_prompt(batch)
     prompt_chars = sum(len(str(message.content)) for message in prompt)

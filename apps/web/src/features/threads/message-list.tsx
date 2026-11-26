@@ -11,6 +11,7 @@ import { Spinner } from "@/components/ui/spinner";
 import { useThreadLoad, useThreadMessages } from "@/data/store";
 import type { Thread } from "@/data/types";
 import { DmWelcome } from "./dm-welcome";
+import { FollowOnSend } from "./follow-on-send";
 import { LoadOlderMessages } from "./load-older-messages";
 import { MessageItem } from "./message-item";
 import { RunAttentionNotices } from "./run-attention-notice";
@@ -77,6 +78,7 @@ export function MessageList({ thread }: { thread: Thread }) {
         </MessageScrollerViewport>
         <MessageScrollerButton />
       </MessageScroller>
+      <FollowOnSend viewport={viewport} messages={messages} />
     </MessageScrollerProvider>
   );
 }

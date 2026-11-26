@@ -93,6 +93,8 @@ class StandInModel(BaseChatModel):
     """A fake model that can call tools on command (see the module docstring)."""
 
     provider: str = "this model"
+    # Seconds between words when streaming, so the reply arrives like a real model's (0 in tests).
+    word_delay: float = 0.0
 
     @property
     def _llm_type(self) -> str:
@@ -157,12 +159,18 @@ class StandInModel(BaseChatModel):
         run_manager: AsyncCallbackManagerForLLMRun | None = None,
         **kwargs: Any,
     ) -> AsyncIterator[ChatGenerationChunk]:
-        for chunk in self._chunks(messages):
+        for index, chunk in enumerate(self._chunks(messages)):
+            if index and self.word_delay and chunk.message.content:
+                await asyncio.sleep(self.word_delay)
             yield chunk
 
 
-def stand_in_model(provider: str) -> BaseChatModel:
-    return StandInModel(provider=provider or "this model")
+# A real model streams a few words at a time; the stand-in does the same, so the chat shows it.
+STAND_IN_WORD_SECONDS = 0.03
+
+
+def stand_in_model(provider: str, *, word_delay: float = 0.0) -> BaseChatModel:
+    return StandInModel(provider=provider or "this model", word_delay=word_delay)
 
 
 class ModelUnavailable(Exception):
@@ -306,7 +314,8 @@ class ModelResolver:
                     db, org_id, provider_id, self.settings, self.secrets, requester_id=requester_id
                 )
             if connection is None:
-                return stand_in_model(provider_id)
+                delay = 0.0 if self.settings.environment == "test" else STAND_IN_WORD_SECONDS
+                return stand_in_model(provider_id, word_delay=delay)
             base_url = connection.base_url
             transport = None
             if connection.kind == "custom" and base_url:

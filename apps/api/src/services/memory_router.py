@@ -16,12 +16,10 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from src.core.config import Settings
 from src.models import MemoryKey
 from src.runtime.memory import (
-    NO_POSTGRES,
     MemoryProvider,
     MemoryRecord,
     MemoryScope,
     MemoryService,
-    NoMemory,
     build_mem0,
 )
 from src.services.credential_vault import CredentialVault
@@ -51,12 +49,15 @@ class OrgMemory:
         self._built.pop(org_id, None)
 
     async def _for(self, org_id: uuid.UUID) -> MemoryService:
+        if not self._settings.uses_postgres:
+            # Memory needs Postgres, whatever the key, so there's nothing to look up. (And no query:
+            # `remember` runs beside the run, and on in-memory SQLite every session shares one
+            # connection, so a session closing here would roll back the run's own transaction.)
+            return self._server
         async with self._sessionmaker() as db:
             row = await db.scalar(select(MemoryKey).where(MemoryKey.org_id == org_id))
         if row is None:
             return self._server
-        if not self._settings.uses_postgres:
-            return NoMemory(NO_POSTGRES)
         fingerprint = hashlib.sha256(f"{row.provider}:{row.encrypted_key}".encode()).hexdigest()
         built = self._built.get(org_id)
         if built is None or built[0] != fingerprint:

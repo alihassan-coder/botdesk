@@ -15,6 +15,10 @@
   new events post a message in the subscriber's DM and start a tainted run (`trigger_service`).
 - `prune_routine_runs` (daily): routine runs older than 90 days, or beyond each routine's
   newest 200, are forgotten.
+- `summarize_thread` (deferred when a run ends and enough messages fell out of what runs read):
+  the chat's summary is brought up to date (ADR 0019, `runtime.summarizer`).
+- `prune_messages` (daily): organizations that keep messages for a limited time lose the older
+  ones (ADR 0019, `history_service.prune`).
 
 To add a job (routines, Gmail polling…), declare it on `JOBS` in a module this one imports, then
 defer it with `queue.defer(Job("name", {...}))`, or give it a `cron` to run on a schedule. See the
@@ -29,8 +33,17 @@ from datetime import UTC, datetime, timedelta
 from src.core.database import utcnow
 from src.jobs.queue import JobEnv, JobRegistry
 from src.models import Run, Task
+from src.runtime import summarizer
+from src.runtime.chat_model import describe_model_error
 from src.runtime.runner import RUN_BOT, run_job
-from src.services import approval_service, routine_service, run_event_service, task_service, trigger_service
+from src.services import (
+    approval_service,
+    history_service,
+    routine_service,
+    run_event_service,
+    task_service,
+    trigger_service,
+)
 from src.services.trigger_service import Target
 
 JOBS = JobRegistry()
@@ -168,3 +181,29 @@ async def prune_routine_runs(env: JobEnv, timestamp: int) -> None:
     async with env.sessionmaker() as db:
         await routine_service.prune_runs(db, datetime.fromtimestamp(timestamp, UTC))
         await db.commit()
+
+
+@JOBS.task(summarizer.SUMMARIZE_THREAD)
+async def summarize_thread(env: JobEnv, thread_id: str, bot_id: str) -> None:
+    """A model that fails (a revoked key, a timeout) is logged: the next run's end tries again."""
+    try:
+        await summarizer.summarize(
+            env.sessionmaker, env.runs.model_for, env.runs.price_for, uuid.UUID(thread_id), uuid.UUID(bot_id)
+        )
+    except Exception as error:  # the description never includes a key
+        log.warning("Chat %s: the summary wasn't updated. %s", thread_id, describe_model_error(error))
+
+
+@JOBS.task("prune_messages", cron="41 3 * * *")
+async def prune_messages(env: JobEnv, timestamp: int) -> None:
+    """Once a day: each organization with a limit loses its older messages, in its own transaction."""
+    now = datetime.fromtimestamp(timestamp, UTC)
+    async with env.sessionmaker() as db:
+        limits = await history_service.retention_limits(db)
+    for org_id, days in limits:
+        try:
+            async with env.sessionmaker() as db:
+                await history_service.prune(db, org_id, now - timedelta(days=days))
+                await db.commit()
+        except Exception:
+            log.exception("Organization %s: old messages weren't deleted; the others carry on.", org_id)

@@ -54,6 +54,8 @@ def org_out(org: Organization, role: str) -> OrgOut:
             "monthly_budget_usd": org.monthly_budget_usd,
             "default_security_level": org.default_security_level,
             "max_security_level": org.max_security_level,
+            "history_summaries": org.history_summaries,
+            "history_retention_days": org.history_retention_days,
         }
     )
 
@@ -150,6 +152,15 @@ async def update_org(
     if default_security_level:
         org.default_security_level = default_security_level
     return org
+
+
+def set_history(org: Organization, *, summaries: bool | None, retention_days: int | None, keep_retention: bool) -> None:
+    """Chat history settings (ADR 0019). Turning summaries off stops new ones and runs stop reading
+    them; nothing is deleted. A retention limit takes effect at the next nightly clean-up."""
+    if summaries is not None:
+        org.history_summaries = summaries
+    if not keep_retention:
+        org.history_retention_days = retention_days
 
 
 def set_budget(org: Organization, monthly_budget_usd: int | None) -> None:

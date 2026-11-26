@@ -1,7 +1,7 @@
 import uuid
 from typing import Literal
 
-from sqlalchemy import ForeignKey, String, text
+from sqlalchemy import ForeignKey, String, sql, text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from src.core.database import Base, CreatedAtMixin, IdMixin
@@ -26,6 +26,10 @@ class Organization(IdMixin, CreatedAtMixin, Base):
     max_security_level: Mapped[str] = mapped_column(
         String(30), default="autonomous", server_default=text("'autonomous'")
     )
+    # Chat history (ADR 0019): bots read a summary of messages older than what a run reads, and
+    # messages older than `history_retention_days` are deleted every night (None = kept forever).
+    history_summaries: Mapped[bool] = mapped_column(default=True, server_default=sql.true())
+    history_retention_days: Mapped[int | None] = mapped_column(default=None)
 
 
 class Membership(CreatedAtMixin, Base):

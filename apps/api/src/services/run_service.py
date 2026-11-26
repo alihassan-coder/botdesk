@@ -9,10 +9,11 @@ done) → running again. Every change of state is a single conditional UPDATE, s
 
 import json
 import uuid
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from typing import Any
 
-from sqlalchemy import and_, exists, func, or_, select, update
+from sqlalchemy import Select, and_, exists, func, or_, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
@@ -47,6 +48,10 @@ from src.services.thread_service import FILE_PART, message_out, text_of, text_pa
 from src.services.tool_execution_service import runs_with_a_started_call, settle_by_a_person, started_call
 
 HISTORY_LENGTH = 30  # messages the bot sees: the newest ones up to its trigger
+# A chat's summary (ADR 0019) is brought up to date once this many messages have fallen out of
+# the window since it. Until then a run reads every message since the summary (at most
+# HISTORY_LENGTH + SUMMARY_EVERY), so nothing falls between the summary and the messages.
+SUMMARY_EVERY = 20
 RESTART_ERROR = "Interrupted by a restart. Send your message again."
 LOST_PAUSE_ERROR = "This run can't continue: its saved progress is gone (the API restarted). Send your message again."
 NOT_WAITING_FOR_AN_ANSWER = "This run isn't waiting for anyone to check on it."
@@ -251,6 +256,8 @@ class RunContext:
     # The strictest of the bot's level and the run's own, without the organization's ceiling:
     # when it's looser than `security_level`, the ceiling is what limits the run (and refusals say so).
     own_security_level: str = ""
+    # The chat's summary of messages older than `history` (ADR 0019), when summaries are on.
+    summary: str | None = None
 
 
 # A routine's trigger is a system message (people see "Routine: {name}") whose `routine-run` part
@@ -401,6 +408,10 @@ async def run_context(db: AsyncSession, run_id: uuid.UUID) -> RunContext:
                 Thread.created_by,
                 trigger.created_at.label("trigger_at"),
                 trigger.id.label("trigger_id"),
+                Organization.history_summaries,
+                Thread.summary,
+                Thread.summary_through,
+                Thread.summary_tainted,
             )
             .join(Bot, Bot.id == Run.bot_id)
             .join(Organization, Organization.id == Run.org_id)
@@ -412,36 +423,26 @@ async def run_context(db: AsyncSession, run_id: uuid.UUID) -> RunContext:
             .where(Run.id == run_id)
         )
     ).one()
-    author_bot, reply_of = aliased(Bot), aliased(Run)
-    task_of, handed_by = aliased(Task), aliased(Run)
-    written_by_tainted_run = or_(
-        exists().where(reply_of.thread_id == row.thread_id, reply_of.reply_message_id == Message.id, reply_of.tainted),
-        # A handoff message carries its run's taint too (ADR 0014).
-        exists().where(task_of.message_id == Message.id, handed_by.id == task_of.parent_run_id, handed_by.tainted),
-    ).label("tainted")
+    # The summary, when summaries are on and it's older than the trigger (a run that waited in line
+    # never reads a summary of messages written after its own).
+    summary = (
+        row.summary
+        if row.history_summaries
+        and row.summary
+        and row.summary_through is not None
+        and (row.trigger_at is None or row.summary_through < row.trigger_at)
+        else None
+    )
     query = (
-        select(
-            Message.id,
-            Message.author_type,
-            Message.author_id,
-            Message.parts,
-            User.name.label("user_name"),
-            User.handle.label("user_handle"),
-            author_bot.name.label("bot_name"),
-            author_bot.handle.label("bot_handle"),
-            written_by_tainted_run,
-        )
-        .outerjoin(User, and_(Message.author_type == "user", User.id == Message.author_id))
-        .outerjoin(author_bot, and_(Message.author_type == "bot", author_bot.id == Message.author_id))
+        chat_lines(row.thread_id)
         # Notices like "Stopped a chain of bot replies" are for people, not part of the conversation;
         # the one exception is the run's own trigger when a routine started it.
-        .where(
-            Message.thread_id == row.thread_id,
-            or_(Message.author_type != "system", Message.id == row.trigger_id),
-        )
+        .where(or_(Message.author_type != "system", Message.id == row.trigger_id))
         .order_by(Message.created_at.desc(), Message.id.desc())
-        .limit(HISTORY_LENGTH)
+        .limit(HISTORY_LENGTH + SUMMARY_EVERY if summary else HISTORY_LENGTH)
     )
+    if summary:  # what the summary doesn't cover
+        query = query.where(Message.created_at > row.summary_through)
     if row.trigger_at is not None:  # up to the trigger; ties on the time go by id
         query = query.where(
             or_(
@@ -472,7 +473,8 @@ async def run_context(db: AsyncSession, run_id: uuid.UUID) -> RunContext:
     ]
     teammates, more = await _teammates(db, org_id=row.org_id, bot_id=row.bot_id)
     tainted = row.tainted
-    if not tainted and any(line.tainted for line in lines):
+    # A tainted summary taints the run that reads it, as its messages would have (ADR 0019).
+    if not tainted and (any(line.tainted for line in lines) or (summary and row.summary_tainted)):
         await db.execute(update(Run).where(Run.id == run_id).values(tainted=True))
         tainted = True
     return RunContext(
@@ -496,7 +498,43 @@ async def run_context(db: AsyncSession, run_id: uuid.UUID) -> RunContext:
         task=task,
         teammates=teammates,
         more_teammates=more,
+        summary=summary,
     )
+
+
+def chat_lines(thread_id: uuid.UUID) -> Select[Any]:
+    """A chat's messages as runs and summaries read them: each with its author's name and handle,
+    and whether a tainted run wrote it. Add the filters, order and limit."""
+    author_bot, reply_of = aliased(Bot), aliased(Run)
+    task_of, handed_by = aliased(Task), aliased(Run)
+    written_by_tainted_run = or_(
+        exists().where(reply_of.thread_id == thread_id, reply_of.reply_message_id == Message.id, reply_of.tainted),
+        # A handoff message carries its run's taint too (ADR 0014).
+        exists().where(task_of.message_id == Message.id, handed_by.id == task_of.parent_run_id, handed_by.tainted),
+    ).label("tainted")
+    return (
+        select(
+            Message.id,
+            Message.created_at,
+            Message.author_type,
+            Message.author_id,
+            Message.parts,
+            User.name.label("user_name"),
+            User.handle.label("user_handle"),
+            author_bot.name.label("bot_name"),
+            author_bot.handle.label("bot_handle"),
+            written_by_tainted_run,
+        )
+        .outerjoin(User, and_(Message.author_type == "user", User.id == Message.author_id))
+        .outerjoin(author_bot, and_(Message.author_type == "bot", author_bot.id == Message.author_id))
+        .where(Message.thread_id == thread_id)
+    )
+
+
+async def as_chat_lines(db: AsyncSession, rows: Sequence[Any], *, bot_id: uuid.UUID) -> list[ChatLine]:
+    """`chat_lines` rows in the words a run reads them (`bot_id`: whose own messages they are)."""
+    handles = await _handles_of_cards(db, [row.parts for row in rows])
+    return [_line(row, bot_id=bot_id, handles=handles) for row in rows]
 
 
 async def _teammates(db: AsyncSession, *, org_id: uuid.UUID, bot_id: uuid.UUID) -> tuple[list[Teammate], int]:

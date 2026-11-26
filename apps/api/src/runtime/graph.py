@@ -126,6 +126,8 @@ class RunState(TypedDict, total=False):
     # Oldest first, ending with the trigger: {"fromThisBot", "text", "authorType", "author"}
     # (checkpoints saved before speaker labels have only the first two).
     history: list[dict[str, Any]]
+    # The chat's summary of messages older than `history` (ADR 0019; missing in old checkpoints: none).
+    summary: str | None
     memories: list[str]
     reply_message_id: str
     reply: str  # the text of every model step so far, joined
@@ -259,6 +261,7 @@ async def load_context(state: RunState, runtime: Runtime[RunDeps]) -> RunState:
         "task": _task_state(context.task) if context.task else None,
         "teammates": [{"name": m.name, "handle": m.handle, "role": m.role} for m in context.teammates],
         "more_teammates": context.more_teammates,
+        "summary": context.summary,
         "history": [
             {
                 "fromThisBot": line.from_this_bot,
@@ -340,6 +343,7 @@ async def call_model(state: RunState, runtime: Runtime[RunDeps]) -> RunState:
         teammates=_teammates(state),
         more_teammates=state.get("more_teammates", 0),
         task=_task_brief(state),
+        summary=state.get("summary"),
     )
     turns = state.get("turns", [])
     messages = [*prompt, *messages_from_dict(turns)]

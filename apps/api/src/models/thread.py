@@ -2,7 +2,7 @@ import uuid
 from datetime import datetime
 from typing import Any, Literal
 
-from sqlalchemy import ForeignKey, Index, String, func
+from sqlalchemy import ForeignKey, Index, String, Text, func, sql
 from sqlalchemy.orm import Mapped, mapped_column
 
 from src.core.database import Base, CreatedAtMixin, IdMixin, utcnow
@@ -27,6 +27,12 @@ class Thread(IdMixin, CreatedAtMixin, Base):
     # Groups: the bot that answers a member's message that mentions no bot (ADR 0009). Optional.
     lead_bot_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("bots.id", ondelete="SET NULL"))
     last_message_at: Mapped[datetime] = mapped_column(default=utcnow)
+    # A running summary of the messages older than what a run reads (ADR 0019): it covers every
+    # message up to `summary_through` (that message's time), and is tainted when any of them was
+    # written by a tainted run. Kept when old messages are deleted: it's what remains of them.
+    summary: Mapped[str | None] = mapped_column(Text, default=None)
+    summary_through: Mapped[datetime | None] = mapped_column(default=None)
+    summary_tainted: Mapped[bool] = mapped_column(default=False, server_default=sql.false())
 
 
 class ThreadParticipant(Base):

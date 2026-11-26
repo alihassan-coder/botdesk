@@ -59,9 +59,17 @@ from src.runtime.graph import RunDeps, RunError, RunStopped, build_graph
 from src.runtime.limits import RunLimits, time_limit_message
 from src.runtime.memory import MemoryService, NoMemory
 from src.runtime.reporter import RunReporter
+from src.runtime.summarizer import summarize_job
 from src.runtime.tool_access import ToolAccessProvider
 from src.runtime.tool_pipeline import NeedsAttention
-from src.services import approval_service, run_event_service, run_service, task_service, tool_execution_service
+from src.services import (
+    approval_service,
+    history_service,
+    run_event_service,
+    run_service,
+    task_service,
+    tool_execution_service,
+)
 from src.services.browser_tools import BrowserTools
 from src.services.credential_vault import CredentialVault
 from src.services.file_tools import FileTools
@@ -498,6 +506,7 @@ class RunManager:
         ends its task (if it was a child) and cancels its own open tasks; what that resumes is
         deferred in the same transaction, and what it stops is stopped after the commit."""
         aftermath = task_service.Aftermath()
+        ended = False
         async with self.sessionmaker() as db:
             if outcome.status == "waiting_handoff":
                 # The UPDATE takes the run's row lock, so a task ending at this moment either sees
@@ -516,6 +525,7 @@ class RunManager:
                 if await run_service.pause_run(db, ticket.id, status="needs_attention", error=outcome.error):
                     reporter.add(db, "run_needs_attention", {"status": "needs_attention", "error": outcome.error})
             elif await run_service.finish_run(db, ticket.id, status=outcome.status, error=outcome.error):
+                ended = True
                 if outcome.status == "failed":
                     failed: dict[str, Any] = {"status": "failed", "error": outcome.error}
                     if outcome.code:
@@ -532,6 +542,15 @@ class RunManager:
         reporter.announce()
         for child_id in aftermath.stop:
             await self.stop(child_id)
+        if ended:  # its own short transaction: a summary is never worth failing a run's end for
+            await self._log_failure(self._summarize_if_due(ticket))
+
+    async def _summarize_if_due(self, ticket: RunTicket) -> None:
+        """Queue the chat's summary once enough messages fell out of what runs read (ADR 0019)."""
+        async with self.sessionmaker() as db:
+            if await history_service.summary_due(db, ticket.thread_id):
+                await self.queue.defer(summarize_job(ticket.thread_id, ticket.bot_id), db=db)
+                await db.commit()
 
     async def _unknown_outcome(self, run_id: uuid.UUID) -> str | None:
         async with self.sessionmaker() as db:

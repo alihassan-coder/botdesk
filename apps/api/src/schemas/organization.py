@@ -1,10 +1,14 @@
 import uuid
+from typing import Literal
 
 from pydantic import Field
 
 from src.models.bot import SecurityLevel
 from src.models.organization import Role
 from src.schemas.common import ApiModel
+
+# "Delete messages older than" (ADR 0019), in days. None = never.
+RetentionDays = Literal[30, 90, 180, 365]
 
 
 class OrgOut(ApiModel):
@@ -20,6 +24,10 @@ class OrgOut(ApiModel):
     default_security_level: SecurityLevel = "ask-before-acting"
     # The ceiling: no bot in the organization acts above it. "autonomous" = no ceiling.
     max_security_level: SecurityLevel = "autonomous"
+    # Chat history (ADR 0019): bots read a summary of older messages; messages older than this many
+    # days are deleted every night (None = kept forever).
+    history_summaries: bool = True
+    history_retention_days: RetentionDays | None = None
 
 
 class OrgCreate(ApiModel):
@@ -35,6 +43,9 @@ class OrgUpdate(ApiModel):
     monthly_budget_usd: int | None = Field(default=None, ge=0, le=1_000_000)
     default_security_level: SecurityLevel | None = None
     max_security_level: SecurityLevel | None = None
+    history_summaries: bool | None = None
+    # Send null to keep messages forever; leave it out to keep the setting as it is.
+    history_retention_days: RetentionDays | None = None
 
 
 class MemberRoleUpdate(ApiModel):

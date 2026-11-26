@@ -40,6 +40,12 @@ async def update(db: AsyncSession, access: Access, body: OrgUpdate) -> OrgOut:
     )
     if "monthly_budget_usd" in body.model_fields_set:  # null is a value here: "no limit"
         organization_service.set_budget(org, body.monthly_budget_usd)
+    organization_service.set_history(
+        org,
+        summaries=body.history_summaries,
+        retention_days=body.history_retention_days,
+        keep_retention="history_retention_days" not in body.model_fields_set,  # null is "forever"
+    )
     await db.commit()
     return organization_service.org_out(org, access.role)
 

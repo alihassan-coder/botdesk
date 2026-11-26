@@ -37,8 +37,8 @@ def record(
     db: AsyncSession,
     *,
     org_id: uuid.UUID,
-    bot_id: uuid.UUID,
-    run_id: uuid.UUID,
+    bot_id: uuid.UUID | None,
+    run_id: uuid.UUID | None,
     provider: str,
     model_id: str,
     input_tokens: int,
@@ -47,7 +47,8 @@ def record(
     estimated: bool = False,
 ) -> UsageRecord:
     """Add one model call's usage. The caller commits (one short insert, outside any long transaction).
-    `estimated` marks tokens guessed from characters, for calls the provider never reported."""
+    `estimated` marks tokens guessed from characters, for calls the provider never reported. A call
+    made for the whole organization (a chat's summary) has no bot or run."""
     row = UsageRecord(
         org_id=org_id,
         bot_id=bot_id,
@@ -86,6 +87,19 @@ async def month_spend(db: AsyncSession, org_id: uuid.UUID, bot_id: uuid.UUID, no
     """What the bot and its organization spent since the start of this month: one SUM query."""
     row = (await db.execute(_month_sums(org_id, bot_id, now))).one()
     return MonthSpend(bot_usd=_money(row[0]), org_usd=_money(row[1]))
+
+
+async def org_can_spend(db: AsyncSession, org_id: uuid.UUID, estimate_usd: float, now: datetime) -> bool:
+    """Whether a call for the whole organization (no bot) fits under its monthly budget."""
+    budget = await db.scalar(select(Organization.monthly_budget_usd).where(Organization.id == org_id))
+    if not budget:
+        return True
+    spent = await db.scalar(
+        select(func.sum(UsageRecord.cost_usd)).where(
+            UsageRecord.org_id == org_id, UsageRecord.created_at >= month_start(now)
+        )
+    )
+    return not _over(_money(spent), estimate_usd, budget)
 
 
 def bot_budget_message(bot_name: str, budget: int) -> str:

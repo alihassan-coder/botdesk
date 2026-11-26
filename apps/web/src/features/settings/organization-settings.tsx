@@ -21,9 +21,10 @@ import { pluralize } from "@/lib/format";
 import { finishSlug, slugWhileTyping } from "@/lib/handle";
 import { actions, useBots, useOrg, useUsers } from "@/data/store";
 import { OrgAvatar } from "@/features/shell/org-avatar";
+import { ChatHistory } from "./chat-history";
 import { SettingsSection } from "./settings-shell";
 
-/** Settings → Organization: the org's name and address, what's in it, and deleting it. */
+/** Settings → Organization: the org's name and address, what's in it, its chat history settings, and deleting it. */
 export function OrganizationSettings() {
   const org = useOrg();
   const users = useUsers();
@@ -74,6 +75,10 @@ export function OrganizationSettings() {
             <Button type="submit" disabled={!changed || !valid || saving} className="w-fit">{saving ? "Saving…" : "Save changes"}</Button>
           </FieldGroup>
         </form>
+      </SettingsSection>
+
+      <SettingsSection title="Chat history" description="How much of a chat bots read, and how long messages are kept.">
+        <ChatHistory />
       </SettingsSection>
 
       <SettingsSection title="People" description="Invite teammates and set what they can do.">

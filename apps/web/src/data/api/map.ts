@@ -1,7 +1,7 @@
-import type { AccountConnection, Approval, ArgsSchema, Bot, BotBrowser, BotFile, BrowserProvider, FilePart, FileStorage, HandoffPart, Invitation, McpServer, MemoryItem, MemoryStatus, Message, MessagePart, Model, ModelProvider, Org, Routine, Template, Thread, UsageSummary, User } from "../types";
+import type { AccountConnection, Approval, ArgsSchema, Bot, BotBrowser, BotFile, BrowserProvider, FilePart, FileStorage, HandoffPart, Invitation, McpServer, Membership, MemoryItem, MemoryKey, MemoryStatus, Message, MessagePart, Model, ModelProvider, Org, Routine, Template, Thread, UsageSummary, User } from "../types";
 import { describeCron } from "@/lib/schedule";
 import type { TaskChange } from "@/lib/tasks";
-import type { ApiApproval, ApiTask, ApiBot, ApiBrowser, ApiBrowserProvider, ApiConnection, ApiBotInput, ApiFile, ApiInvitation, ApiMcpServer, ApiMemory, ApiMemoryStatus, ApiMessage, ApiModel, ApiModelProvider, ApiOrg, ApiRole, ApiRoutine, ApiStorage, ApiTemplate, ApiThread, ApiUsage, ApiUser } from "./types";
+import type { ApiApproval, ApiTask, ApiBot, ApiBrowser, ApiBrowserProvider, ApiConnection, ApiBotInput, ApiFile, ApiInvitation, ApiMcpServer, ApiMemory, ApiMemoryKey, ApiMemoryStatus, ApiMessage, ApiModel, ApiModelProvider, ApiOrg, ApiRole, ApiRoutine, ApiStorage, ApiTemplate, ApiThread, ApiUsage, ApiUser } from "./types";
 
 /**
  * Turns API answers into the web app's own types, so screens never see API shapes.
@@ -21,8 +21,14 @@ export function toUser({ id, name, email, handle }: ApiUser, role: ApiRole): Use
 }
 
 /** An API from before the ceiling sends none: that means no ceiling (the API is what enforces it). */
-export function toOrg({ id, name, slug, defaultSecurityLevel, maxSecurityLevel = "autonomous" }: ApiOrg): Org {
-  return { id, name, slug, defaultSecurityLevel, maxSecurityLevel };
+/** An org from an older API, without the chat history settings, gets their defaults (summaries on, kept forever). */
+export function toOrg({ id, name, slug, defaultSecurityLevel, maxSecurityLevel = "autonomous", historySummaries = true, historyRetentionDays = null }: ApiOrg): Org {
+  return { id, name, slug, defaultSecurityLevel, maxSecurityLevel, historySummaries, historyRetentionDays };
+}
+
+/** An org you belong to, with your role in it (the org switcher's list). */
+export function toMembership(org: ApiOrg): Membership {
+  return { ...toOrg(org), role: org.role };
 }
 
 /** Drops the one-time invite link, so it never sits in the store. */
@@ -184,6 +190,11 @@ export function toMemory({ id, text, scope, createdAt, updatedAt }: ApiMemory, b
 
 export function toMemoryStatus({ enabled, reason }: ApiMemoryStatus): MemoryStatus {
   return { enabled, ...(reason ? { reason } : {}) };
+}
+
+export function toMemoryKey({ provider, keyHint, checkedAt }: ApiMemoryKey): MemoryKey {
+  if (!provider) return {};
+  return { provider, ...(keyHint ? { keyHint } : {}), ...(checkedAt ? { checkedAt: asUtc(checkedAt) } : {}) };
 }
 
 /** A connection without the fields screens don't use; times read as UTC. */

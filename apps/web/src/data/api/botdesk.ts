@@ -21,6 +21,7 @@ import {
   type ApiMcpToolChoice,
   type ApiFile,
   type ApiMemory,
+  type ApiMemoryKey,
   type ApiMemoryStatus,
   type ApiStorage,
   type ApiStorageInput,
@@ -35,6 +36,7 @@ import {
   type ApiPlugin,
   type ApiProviderKeyInput,
   type ApiProviderTest,
+  type ApiRetentionDays,
   type ApiRole,
   type ApiRoutine,
   type ApiRoutineInput,
@@ -75,7 +77,8 @@ export const orgApi = {
   create: (input: { name: string; slug?: string }) => apiFetch<ApiOrg>("/api/v1/orgs", { method: "POST", body: input }),
   /**
    * `monthlyBudgetUsd`: null removes the limit. `maxSecurityLevel`: the ceiling for every bot;
-   * lowering it below the default lowers the default too. Owners and admins only.
+   * lowering it below the default lowers the default too. `historyRetentionDays`: null keeps messages
+   * forever (left out, it stays as it is). Owners and admins only.
    */
   update: (
     orgId: string,
@@ -85,6 +88,8 @@ export const orgApi = {
       monthlyBudgetUsd?: number | null;
       defaultSecurityLevel?: ApiSecurityLevel;
       maxSecurityLevel?: ApiSecurityLevel;
+      historySummaries?: boolean;
+      historyRetentionDays?: ApiRetentionDays | null;
     },
   ) =>
     apiFetch<ApiOrg>(`/api/v1/orgs/${orgId}`, { method: "PATCH", body: patch }),
@@ -332,6 +337,13 @@ export const browserApi = {
 /** What a bot remembers. Members see the bot's shared memories and their own DM ones. */
 export const memoryApi = {
   status: (orgId: string) => apiFetch<ApiMemoryStatus>(`/api/v1/orgs/${orgId}/memory/status`),
+  /** The organization's memory key (OpenAI or Gemini, used only for memory): its last 4 characters, never the key. Any member. */
+  key: (orgId: string) => apiFetch<ApiMemoryKey>(`/api/v1/orgs/${orgId}/memory-key`),
+  /** Owners and admins. Checked live first; a key that doesn't work comes back as a 400 saying why. */
+  saveKey: (orgId: string, input: { provider: "openai" | "gemini"; apiKey: string }) =>
+    apiFetch<ApiMemoryKey>(`/api/v1/orgs/${orgId}/memory-key`, { method: "PUT", body: input }),
+  /** Owners and admins. Memory goes back to the server's key, if it has one. */
+  removeKey: (orgId: string) => apiFetch<void>(`/api/v1/orgs/${orgId}/memory-key`, { method: "DELETE" }),
   /** Everything, newest first; or with a query, the closest matches first. */
   list: (orgId: string, botId: string, query = "") =>
     apiFetch<ApiMemory[]>(`/api/v1/orgs/${orgId}/bots/${botId}/memories${query ? `?q=${encodeURIComponent(query)}` : ""}`),

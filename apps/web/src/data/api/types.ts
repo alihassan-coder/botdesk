@@ -20,7 +20,13 @@ export interface ApiOrg {
   defaultSecurityLevel: ApiSecurityLevel;
   /** The ceiling: no bot here acts above it ("autonomous" = none). */
   maxSecurityLevel: ApiSecurityLevel;
+  /** Chat history (ADR 0019). Left out by an older API: summaries on, messages kept forever. */
+  historySummaries?: boolean;
+  /** null = keep messages forever. */
+  historyRetentionDays?: ApiRetentionDays | null;
 }
+
+export type ApiRetentionDays = 30 | 90 | 180 | 365;
 
 /** Who is signed in, and which organizations they belong to. */
 export interface ApiMe {
@@ -403,6 +409,13 @@ export interface ApiMemory {
 export interface ApiMemoryStatus {
   enabled: boolean;
   reason: string | null;
+}
+
+/** GET/PUT /orgs/{id}/memory-key. provider null: none, so memory uses the server's key, if any. */
+export interface ApiMemoryKey {
+  provider: "openai" | "gemini" | null;
+  keyHint: string | null;
+  checkedAt: string | null;
 }
 
 /* ---------- Plugins ---------- */

@@ -51,7 +51,8 @@ describe("auth on the API", () => {
     await expect(actions.signIn("zara@example.com", "long-enough")).resolves.toEqual({ ok: true });
     expect(state().authStatus).toBe("signed-in");
     expect(currentUser()).toMatchObject({ name: "Zara", role: "owner" });
-    expect(state().org).toEqual({ id: "o1", name: "Zara's team", slug: "zara-team", maxSecurityLevel: "autonomous" }); // an org sent without a ceiling has none
+    // An org sent without a ceiling has none; without chat history settings, summaries are on and messages kept.
+    expect(state().org).toEqual({ id: "o1", name: "Zara's team", slug: "zara-team", maxSecurityLevel: "autonomous", historySummaries: true, historyRetentionDays: null });
     await vi.waitFor(() => expect(state().users.map((u) => u.name)).toEqual(["Zara", "Omar"]));
     // The cookie is the session; nothing about it is kept in localStorage.
     expect(localStorage.getItem("botdesk.session")).toBeNull();

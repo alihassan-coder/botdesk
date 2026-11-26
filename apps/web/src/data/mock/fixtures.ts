@@ -33,7 +33,10 @@ import type {
 const MOCK_NOW = Date.parse("2026-11-12T05:00:00Z");
 const ago = (minutes: number) => new Date(MOCK_NOW - minutes * 60_000).toISOString();
 
-export const org: Org = { id: "org_1", name: "Acme Labs", slug: "acme", defaultSecurityLevel: "ask-before-acting", maxSecurityLevel: "autonomous" };
+export const org: Org = {
+  id: "org_1", name: "Acme Labs", slug: "acme", defaultSecurityLevel: "ask-before-acting", maxSecurityLevel: "autonomous",
+  historySummaries: true, historyRetentionDays: null,
+};
 
 export const users: User[] = [
   { id: "u_me", name: "Ali Hassan", email: "ali@acme.dev", handle: "ali", role: "owner", presence: "online" },

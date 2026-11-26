@@ -50,7 +50,14 @@ export interface Org {
   defaultSecurityLevel: SecurityLevel;
   /** The ceiling: no bot here acts above this level, whatever its own (ADR 0004). "autonomous" = no ceiling. */
   maxSecurityLevel: SecurityLevel;
+  /** Bots also read a short summary of a chat's messages older than the last 30 (ADR 0019). On by default. */
+  historySummaries: boolean;
+  /** Messages older than this many days are deleted every night (ADR 0019); null keeps them forever. */
+  historyRetentionDays: HistoryRetentionDays | null;
 }
+
+/** How long an organization keeps chat messages, in days (Settings → Organization's Chat history). */
+export type HistoryRetentionDays = 30 | 90 | 180 | 365;
 
 /** An organization you belong to, with your role in it: what the org switcher lists. */
 export interface Membership extends Org {
@@ -614,6 +621,27 @@ export interface MemoryItem {
 export interface MemoryStatus {
   enabled: boolean;
   reason?: string;
+}
+
+/** Which provider's key the organization's memory uses: OpenAI or Google Gemini. */
+export type MemoryKeyProvider = "openai" | "gemini";
+
+/**
+ * The organization's memory key (Settings → Memory): used only for remembering and recalling, never
+ * for replies. Never the key itself, only its last 4 characters. No `provider`: there's none, so
+ * memory uses the server's own key, if it has one.
+ */
+export interface MemoryKey {
+  provider?: MemoryKeyProvider;
+  keyHint?: string;
+  /** When the key last passed its check. */
+  checkedAt?: ISODate;
+}
+
+/** The organization's memory key as last loaded. */
+export interface MemoryKeyLoad {
+  status: "loading" | "ready" | "error";
+  current?: MemoryKey;
 }
 
 /** One bot's memories as last loaded: all of them, or the matches for `query`. */

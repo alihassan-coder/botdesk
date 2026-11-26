@@ -10,7 +10,8 @@
  *   chat's event stream (with a Stop button), and approvals: cards in the chat, live from
  *   the stream, and the Approvals page from the list; and Models & keys: providers, their
  *   keys, your own keys (My keys) and live model lists; the org's security ceiling; new
- *   organizations; what each bot remembers (Memory), loaded per bot; and Usage &
+ *   organizations; the org's chat history settings; what each bot remembers (Memory), loaded per bot,
+ *   and the org's memory key; and Usage &
  *   budgets: daily spend, each bot's spend this month and the org's budget; and Routines:
  *   listed with the org, created, edited, switched on and off, run now and removed; and
  *   bots' Files: where the org keeps them (Settings → Computers) and each bot's list; and
@@ -34,14 +35,14 @@ import { browser } from "@/lib/navigate";
 import { approvalApi, authApi, botApi, browserApi, connectionApi, fileApi, inviteApi, mcpApi, memoryApi, modelApi, orgApi, pluginApi, routineApi, runApi, templateApi, threadApi, usageApi } from "./api/botdesk";
 import { ApiError, apiBaseUrl } from "./api/client";
 import { messageCache } from "./message-cache";
-import { toAccountConnection, toApiBot, toApproval, toBot, toBotBrowser, toBotFile, toBrowserProvider, toFileStorage, toInvitation, toMcpServer, toMemory, toMemoryStatus, toMessage, toModel, toModelProvider, toOrg, toRoutine, toTemplate, toThread, toUsage, toUser } from "./api/map";
+import { toAccountConnection, toApiBot, toApproval, toBot, toBotBrowser, toBotFile, toBrowserProvider, toFileStorage, toInvitation, toMcpServer, toMemory, toMembership, toMemoryKey, toMemoryStatus, toMessage, toModel, toModelProvider, toOrg, toRoutine, toTemplate, toThread, toUsage, toUser } from "./api/map";
 import { applyRunEvent, typingId, upsertApproval, withActiveRuns, withPreview, withWaitingApprovals, type ActiveRun } from "./api/run-events";
 import type { ApiMe, ApiMessage, ApiRunEvent, ApiThread, ApiThreadRuns } from "./api/types";
 import { isTaskOpen, taskPreview, withTaskChangeIn, type TaskChange } from "@/lib/tasks";
 import * as chiefDemo from "./mock/chief-demo";
 import * as mock from "./mock/fixtures";
 import type {
-  AccountConnection, AccountConnectionList, Approval, ApprovalStatus, Bot, BotBrowser, BotFile, BotFileList, BrowserInput, BrowserLoad, BrowserProviderLoad, BotToolChange, BotTools, ConnectionOwner, FilePart, Invitation, McpServerInput, McpServerList, McpToolChoice, MemoryItem, MemoryList, MemoryStatus, Membership, Message, MessagePart, Model, ModelListProblem, ModelProvider, Org,
+  AccountConnection, AccountConnectionList, Approval, ApprovalStatus, Bot, BotBrowser, BotFile, BotFileList, BrowserInput, BrowserLoad, BrowserProviderLoad, BotToolChange, BotTools, ConnectionOwner, FilePart, HistoryRetentionDays, Invitation, McpServerInput, McpServerList, McpToolChoice, MemoryItem, MemoryKeyLoad, MemoryKeyProvider, MemoryList, MemoryStatus, Membership, Message, MessagePart, Model, ModelListProblem, ModelProvider, Org,
   Participant, PluginList, Routine, SecurityLevel, ServerConnectorList, StorageLoad, TemplateList, Thread, UsageSummary, User,
 } from "./types";
 
@@ -153,6 +154,8 @@ interface State {
   memoryLists: Record<string, MemoryList>;
   /** Whether bots can remember here. Null until the API has said. */
   memoryStatus: MemoryStatus | null;
+  /** Settings → Memory: the org's own key for memory (OpenAI or Gemini), if it has one. */
+  memoryKey: MemoryKeyLoad;
   /** Settings → Usage & budgets. Each bot's own spend is on the bot. */
   usage: UsageSummary;
   /** API only: true while the usage report is on its way. */
@@ -211,6 +214,8 @@ function seed(): State {
     memories: mock.memories,
     memoryLists: {},
     memoryStatus: { enabled: true },
+    // MOCK: no key of its own; the demo's memory works anyway.
+    memoryKey: { status: "ready", current: {} },
     usage: mockUsage(),
     usageLoading: false,
     spentByBot: {},
@@ -230,7 +235,7 @@ function apiSeed(): State {
   const blankUser: User = { id: "", name: "", email: "", handle: "", role: "member", presence: "online" };
   return {
     ...seed(),
-    org: { id: "", name: "", slug: "", defaultSecurityLevel: "ask-before-acting", maxSecurityLevel: "autonomous" },
+    org: { id: "", name: "", slug: "", defaultSecurityLevel: "ask-before-acting", maxSecurityLevel: "autonomous", historySummaries: true, historyRetentionDays: null },
     orgs: [],
     users: [blankUser],
     currentUserId: "",
@@ -249,6 +254,7 @@ function apiSeed(): State {
     botTools: {},
     memories: [],
     memoryStatus: null,
+    memoryKey: { status: "loading" },
     models: [],
     modelProviders: [],
     myKeys: null,
@@ -369,7 +375,7 @@ function rememberedOrgId() {
 
 /** Signed in on the API: you, in the organization you used last here (else your first). */
 function startApiSession(me: ApiMe) {
-  const orgs: Membership[] = me.organizations;
+  const orgs = me.organizations.map(toMembership);
   const org = orgs.find((o) => o.id === rememberedOrgId()) ?? orgs[0];
   const user = toUser(me.user, org?.role ?? "member");
   set((st) => ({ ...st, orgs, users: [user], invitations: [], currentUserId: user.id, authStatus: "signed-in" }));
@@ -412,6 +418,7 @@ function enterOrg(org: Membership) {
     memories: [],
     memoryLists: {},
     memoryStatus: null,
+    memoryKey: { status: "loading" },
     botsLoading: true,
     usage: EMPTY_USAGE,
     usageLoading: true,
@@ -675,7 +682,7 @@ const authActions = {
   async acceptInvitation(token: string): Promise<ActionResult> {
     if (isDemoMode()) return { ok: false, error: "Invite links work once botdesk is connected to its API." };
     try {
-      const org = await inviteApi.accept(token);
+      const org = toMembership(await inviteApi.accept(token));
       set((st) => ({ ...st, orgs: [...st.orgs.filter((o) => o.id !== org.id), org] }));
       switchToOrg(org);
       return { ok: true };
@@ -701,7 +708,7 @@ const orgActions = {
       return { ok: true };
     }
     try {
-      const saved = await orgApi.update(state.org.id, patch);
+      const saved = toMembership(await orgApi.update(state.org.id, patch));
       set((st) => ({ ...st, org: toOrg(saved), orgs: st.orgs.map((o) => (o.id === saved.id ? saved : o)) }));
       return { ok: true };
     } catch (error) {
@@ -740,6 +747,27 @@ const orgActions = {
       try {
         const org = toOrg(await orgApi.update(state.org.id, { maxSecurityLevel: level }));
         saved = { maxSecurityLevel: org.maxSecurityLevel, defaultSecurityLevel: org.defaultSecurityLevel };
+      } catch (error) {
+        return failure(error);
+      }
+    }
+    set((st) => ({ ...st, org: { ...st.org, ...saved }, orgs: st.orgs.map((o) => (o.id === st.org.id ? { ...o, ...saved } : o)) }));
+    return { ok: true };
+  },
+
+  /**
+   * Chat history (ADR 0019): whether bots read a summary of older messages, and after how many days
+   * messages are deleted (null: never). Only what's passed changes. Owners and admins; the API refuses members.
+   */
+  async setChatHistory(patch: { historySummaries?: boolean; historyRetentionDays?: HistoryRetentionDays | null }): Promise<ActionResult> {
+    let saved: Pick<Org, "historySummaries" | "historyRetentionDays"> = {
+      historySummaries: patch.historySummaries ?? state.org.historySummaries,
+      historyRetentionDays: patch.historyRetentionDays === undefined ? state.org.historyRetentionDays : patch.historyRetentionDays,
+    };
+    if (!isDemoMode()) {
+      try {
+        const org = toOrg(await orgApi.update(state.org.id, patch));
+        saved = { historySummaries: org.historySummaries, historyRetentionDays: org.historyRetentionDays };
       } catch (error) {
         return failure(error);
       }
@@ -2191,6 +2219,71 @@ const routineActions = {
   },
 };
 
+/** Whether bots can remember here, and if not, why (it can change with the memory key). The demo always can. */
+async function loadMemoryStatus(): Promise<void> {
+  if (isDemoMode()) return;
+  const orgId = state.org.id;
+  const status = await memoryApi.status(orgId).catch(() => null);
+  set((st) => {
+    if (st.org.id !== orgId) return st;
+    return { ...st, memoryStatus: status ? toMemoryStatus(status) : { enabled: false, reason: "Couldn't check whether memory is on. Reload to try again." } };
+  });
+}
+
+/* ---------- The memory key (Settings → Memory) ----------
+ * An OpenAI or Gemini key the org's memory uses instead of the server's. Sent once and never kept:
+ * the store holds only its last 4 characters. MOCK: a key "works" unless it starts with "bad".
+ */
+
+const memoryKeyActions = {
+  /** The org's memory key, if it has one. The demo's is in its seed. */
+  async loadMemoryKey(): Promise<void> {
+    if (isDemoMode()) return;
+    const orgId = state.org.id;
+    const loaded = await memoryApi.key(orgId).catch(() => null);
+    set((st) => {
+      if (st.org.id !== orgId) return st;
+      return { ...st, memoryKey: loaded ? { status: "ready", current: toMemoryKey(loaded) } : { ...st.memoryKey, status: "error" } };
+    });
+  },
+
+  /** Owners and admins. The API checks the key live first; whether memory is on can change, so its status loads again. */
+  async saveMemoryKey(provider: MemoryKeyProvider, apiKey: string): Promise<ActionResult> {
+    const key = apiKey.trim();
+    if (isDemoMode()) {
+      if (key.startsWith("bad")) return { ok: false, error: "That key didn't work: 401 Unauthorized." };
+      set((st) => ({ ...st, memoryKey: { status: "ready", current: { provider, keyHint: key.slice(-4), checkedAt: now() } } }));
+      return { ok: true };
+    }
+    const orgId = state.org.id;
+    try {
+      const saved = toMemoryKey(await memoryApi.saveKey(orgId, { provider, apiKey: key }));
+      set((st) => (st.org.id === orgId ? { ...st, memoryKey: { status: "ready", current: saved } } : st));
+    } catch (error) {
+      return failure(error);
+    }
+    await loadMemoryStatus();
+    return { ok: true };
+  },
+
+  /** Owners and admins. Memory goes back to the server's key, if it has one, so its status loads again. */
+  async removeMemoryKey(): Promise<ActionResult> {
+    if (isDemoMode()) {
+      set((st) => ({ ...st, memoryKey: { status: "ready", current: {} } }));
+      return { ok: true };
+    }
+    const orgId = state.org.id;
+    try {
+      await memoryApi.removeKey(orgId);
+    } catch (error) {
+      return failure(error);
+    }
+    set((st) => (st.org.id === orgId ? { ...st, memoryKey: { status: "ready", current: {} } } : st));
+    await loadMemoryStatus();
+    return { ok: true };
+  },
+};
+
 export const actions = {
   ...authActions,
   ...orgActions,
@@ -2200,6 +2293,7 @@ export const actions = {
   ...usageActions,
   ...fileActions,
   ...browserActions,
+  ...memoryKeyActions,
 
   /**
    * Sends your message, with files you uploaded for it (`uploadFile`: in a DM to its bot, in a group
@@ -2268,15 +2362,7 @@ export const actions = {
    */
 
   /** Whether bots can remember on this server, and if not, why. The demo always can. */
-  async loadMemoryStatus() {
-    if (isDemoMode()) return;
-    const orgId = state.org.id;
-    const status = await memoryApi.status(orgId).catch(() => null);
-    set((st) => {
-      if (st.org.id !== orgId) return st;
-      return { ...st, memoryStatus: status ? toMemoryStatus(status) : { enabled: false, reason: "Couldn't check whether memory is on. Reload to try again." } };
-    });
-  },
+  loadMemoryStatus,
 
   /** A bot's memories, newest first; with a query, the closest matches (on the API) or the ones that contain it (mock). */
   async loadMemories(botId: string, query = "") {
@@ -3156,6 +3242,8 @@ export const useMemoryList = (botId?: string) =>
 
 /** Whether bots can remember here (null while the API is asked). */
 export const useMemoryStatus = () => useStore(useCallback((s: State) => s.memoryStatus, []));
+/** The org's memory key (Settings → Memory). */
+export const useMemoryKey = () => useStore(useCallback((s: State) => s.memoryKey, []));
 /** Where the org keeps bots' files (Settings → Computers). */
 export const useFileStorage = () => useStore(useCallback((s: State) => s.storage, []));
 /** Where the org's bots' browsers run (Settings → Computers). */

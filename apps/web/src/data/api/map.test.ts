@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { asUtc, toApiBot, toApproval, toBot, toMessage, toOrg, toThread, toUsage, toUser } from "./map";
+import { asUtc, toApiBot, toApproval, toBot, toMemoryKey, toMessage, toOrg, toThread, toUsage, toUser } from "./map";
 
 describe("API → web shapes", () => {
   it("a user gets the role they hold in the org and shows as online", () => {
@@ -12,7 +12,17 @@ describe("API → web shapes", () => {
     const apiOrg = { id: "o1", name: "Acme", slug: "acme", role: "owner", defaultSecurityLevel: "read-only", maxSecurityLevel: "ask-before-acting" } as const;
     expect(toOrg(apiOrg)).toEqual({
       id: "o1", name: "Acme", slug: "acme", defaultSecurityLevel: "read-only", maxSecurityLevel: "ask-before-acting",
+      // Sent without the chat history settings: summaries on, messages kept forever.
+      historySummaries: true, historyRetentionDays: null,
     });
+    expect(toOrg({ ...apiOrg, historySummaries: false, historyRetentionDays: 90 })).toMatchObject({ historySummaries: false, historyRetentionDays: 90 });
+  });
+
+  it("a memory key keeps only its provider, last 4 and check time; none means the server's", () => {
+    expect(toMemoryKey({ provider: "gemini", keyHint: "abcd", checkedAt: "2026-11-26T08:00:00" })).toEqual({
+      provider: "gemini", keyHint: "abcd", checkedAt: "2026-11-26T08:00:00Z",
+    });
+    expect(toMemoryKey({ provider: null, keyHint: null, checkedAt: null })).toEqual({});
   });
 
   const apiBot = {

@@ -137,8 +137,8 @@ When you finish something, tick it here in the same pull request.
 - [x] Browser provider card and Cloudinary in Settings → Computers
 - [x] Files attached in chat (paperclip, drop or paste; kept unchanged after sending)
 - [x] Bots read PDFs, download linked files (`browser.download`), and search the web with a Brave Search key (`plugins/brave-search`)
-- [x] A memory key per organization, OpenAI or Gemini, used only for bots' memory (API; Settings → Memory card next)
-- [x] Chat history: bots read a running summary of older messages; delete messages older than 30–365 days (API, [ADR 0019](adr/0019-chat-history-summaries-and-retention.md); Settings → Organization next)
+- [x] A memory key per organization, OpenAI or Gemini, used only for bots' memory (API; Settings → Memory card)
+- [x] Chat history: bots read a running summary of older messages; delete messages older than 30–365 days (API, [ADR 0019](adr/0019-chat-history-summaries-and-retention.md); Settings → Organization)
 - [ ] Bots see images ([ADR 0018](adr/0018-bots-see-images.md), proposed)
 - [ ] A browser in the Docker image (or Docker users pick a cloud browser)
 - [ ] The full bot computer (a whole desktop) and routine recording

@@ -164,6 +164,23 @@ describe("switching organizations on the API", () => {
     expect(state().org.id).toBe("o1");
   });
 
+  it("a setting saved while you switch lands on the organization it was made in", async () => {
+    await actions.signIn("zara@example.com", "long-enough");
+    let answer = () => {};
+    routes["PATCH /api/v1/orgs/o1"] = {
+      status: 200,
+      wait: new Promise<void>((resolve) => (answer = resolve)),
+      body: { ...org, historyRetentionDays: 90 },
+    };
+    const saving = actions.setChatHistory({ historyRetentionDays: 90 });
+    await actions.switchOrg("o2");
+    answer();
+    await expect(saving).resolves.toEqual({ ok: true });
+
+    expect(state().org).toMatchObject({ id: "o2", historyRetentionDays: null });
+    expect(state().orgs.find((o) => o.id === "o1")?.historyRetentionDays).toBe(90);
+  });
+
   it("switchOrg makes it current, with your role there, loads its people, and is remembered", async () => {
     await actions.signIn("zara@example.com", "long-enough");
     await actions.switchOrg("o2");

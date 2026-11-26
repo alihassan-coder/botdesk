@@ -20,8 +20,10 @@ export function toUser({ id, name, email, handle }: ApiUser, role: ApiRole): Use
   return { id, name, email, handle, role, presence: "online" };
 }
 
-/** An API from before the ceiling sends none: that means no ceiling (the API is what enforces it). */
-/** An org from an older API, without the chat history settings, gets their defaults (summaries on, kept forever). */
+/**
+ * An org from an older API may lack newer settings. No ceiling sent means no ceiling (the API is what
+ * enforces it); no chat history settings mean their defaults (summaries on, messages kept forever).
+ */
 export function toOrg({ id, name, slug, defaultSecurityLevel, maxSecurityLevel = "autonomous", historySummaries = true, historyRetentionDays = null }: ApiOrg): Org {
   return { id, name, slug, defaultSecurityLevel, maxSecurityLevel, historySummaries, historyRetentionDays };
 }

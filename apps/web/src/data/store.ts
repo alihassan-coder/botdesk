@@ -438,6 +438,18 @@ function enterOrg(org: Membership) {
   void loadTemplates();
 }
 
+/**
+ * A setting saved for organization `orgId`: into its entry in your list, and into the current
+ * organization only if it's still that one (you may have switched while the save was on its way).
+ */
+function withOrgChange(st: State, orgId: string, change: Partial<Org>): State {
+  return {
+    ...st,
+    org: st.org.id === orgId ? { ...st.org, ...change } : st.org,
+    orgs: st.orgs.map((o) => (o.id === orgId ? { ...o, ...change } : o)),
+  };
+}
+
 /** Going to another organization (switching, joining, creating one): the chats kept on this device go. */
 function switchToOrg(org: Membership) {
   void messageCache.clear();
@@ -718,19 +730,16 @@ const orgActions = {
 
   /** The security level new bots start at. Owners and admins; the API refuses members. */
   async setDefaultSecurityLevel(level: SecurityLevel): Promise<ActionResult> {
+    const orgId = state.org.id;
     let saved = level;
     if (!isDemoMode()) {
       try {
-        saved = toOrg(await orgApi.update(state.org.id, { defaultSecurityLevel: level })).defaultSecurityLevel;
+        saved = toOrg(await orgApi.update(orgId, { defaultSecurityLevel: level })).defaultSecurityLevel;
       } catch (error) {
         return failure(error);
       }
     }
-    set((st) => ({
-      ...st,
-      org: { ...st.org, defaultSecurityLevel: saved },
-      orgs: st.orgs.map((o) => (o.id === st.org.id ? { ...o, defaultSecurityLevel: saved } : o)),
-    }));
+    set((st) => withOrgChange(st, orgId, { defaultSecurityLevel: saved }));
     return { ok: true };
   },
 
@@ -739,19 +748,20 @@ const orgActions = {
    * members. Lowering it below the default for new bots lowers the default too.
    */
   async setMaxSecurityLevel(level: SecurityLevel): Promise<ActionResult> {
+    const orgId = state.org.id;
     let saved: Pick<Org, "maxSecurityLevel" | "defaultSecurityLevel"> = {
       maxSecurityLevel: level,
       defaultSecurityLevel: strictestLevel(state.org.defaultSecurityLevel, level),
     };
     if (!isDemoMode()) {
       try {
-        const org = toOrg(await orgApi.update(state.org.id, { maxSecurityLevel: level }));
+        const org = toOrg(await orgApi.update(orgId, { maxSecurityLevel: level }));
         saved = { maxSecurityLevel: org.maxSecurityLevel, defaultSecurityLevel: org.defaultSecurityLevel };
       } catch (error) {
         return failure(error);
       }
     }
-    set((st) => ({ ...st, org: { ...st.org, ...saved }, orgs: st.orgs.map((o) => (o.id === st.org.id ? { ...o, ...saved } : o)) }));
+    set((st) => withOrgChange(st, orgId, saved));
     return { ok: true };
   },
 
@@ -760,19 +770,20 @@ const orgActions = {
    * messages are deleted (null: never). Only what's passed changes. Owners and admins; the API refuses members.
    */
   async setChatHistory(patch: { historySummaries?: boolean; historyRetentionDays?: HistoryRetentionDays | null }): Promise<ActionResult> {
+    const orgId = state.org.id;
     let saved: Pick<Org, "historySummaries" | "historyRetentionDays"> = {
       historySummaries: patch.historySummaries ?? state.org.historySummaries,
       historyRetentionDays: patch.historyRetentionDays === undefined ? state.org.historyRetentionDays : patch.historyRetentionDays,
     };
     if (!isDemoMode()) {
       try {
-        const org = toOrg(await orgApi.update(state.org.id, patch));
+        const org = toOrg(await orgApi.update(orgId, patch));
         saved = { historySummaries: org.historySummaries, historyRetentionDays: org.historyRetentionDays };
       } catch (error) {
         return failure(error);
       }
     }
-    set((st) => ({ ...st, org: { ...st.org, ...saved }, orgs: st.orgs.map((o) => (o.id === st.org.id ? { ...o, ...saved } : o)) }));
+    set((st) => withOrgChange(st, orgId, saved));
     return { ok: true };
   },
 

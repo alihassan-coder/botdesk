@@ -71,7 +71,8 @@ export function ChatHistory() {
             </FieldDescription>
           </FieldContent>
           <div>
-            <Select value={retentionValue(retention ? retention.days : org.historyRetentionDays)} onValueChange={pick} disabled={!canEdit}>
+            {/* Not while a limit is being saved: the next pick is compared with what's saved, so it must be saved first. */}
+            <Select value={retentionValue(retention ? retention.days : org.historyRetentionDays)} onValueChange={pick} disabled={!canEdit || retention !== null}>
               <SelectTrigger id="history-retention" className="w-full @md/field-group:w-36"><SelectValue /></SelectTrigger>
               <SelectContent>
                 {RETENTION_CHOICES.map((c) => <SelectItem key={retentionValue(c.days)} value={retentionValue(c.days)}>{c.label}</SelectItem>)}

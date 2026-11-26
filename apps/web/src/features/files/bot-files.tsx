@@ -1,7 +1,7 @@
 import { useEffect, useId } from "react";
 import { actions, useFileList } from "@/data/store";
 import type { Bot } from "@/data/types";
-import { botFolder } from "@/lib/files";
+import { botFolder, folderPathOf } from "@/lib/files";
 import { FolderFileList } from "./folder-file-list";
 import { UploadFilesButton } from "./upload-files-button";
 import { useUploadFiles } from "./use-upload-files";
@@ -22,7 +22,7 @@ export function BotFiles({ bot }: { bot: Bot }) {
       <div className="flex items-center justify-between gap-3">
         <div className="min-w-0">
           <h3 id={titleId} className="text-sm font-medium">Files</h3>
-          <p className="truncate font-mono text-xs text-muted-foreground">{folder.path}</p>
+          <p className="truncate font-mono text-xs text-muted-foreground">{folderPathOf(folder, list?.items ?? [])}</p>
         </div>
         <UploadFilesButton folder={folder} uploads={uploads} />
       </div>

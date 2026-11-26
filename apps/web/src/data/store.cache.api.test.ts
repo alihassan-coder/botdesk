@@ -60,6 +60,20 @@ describe("messages kept on this device", () => {
     close();
   });
 
+  it("what was kept but the API no longer has goes, even when the page is empty", async () => {
+    kept.set("u1/o1/t1", { key: "u1/o1/t1", savedAt: 1, messages: [message("m1", "Removed on the server since")] as CachedChat["messages"] });
+    let answer = () => {};
+    api.routes[PAGE] = { status: 200, wait: new Promise<void>((resolve) => (answer = resolve)), body: [] };
+    await signInOnApi();
+
+    actions.openThread("t1");
+    await vi.waitFor(() => expect(texts()).toEqual(["Removed on the server since"]));
+    answer();
+    await vi.waitFor(() => expect(state().threadLoads.t1?.status).toBe("ready"));
+    expect(texts()).toEqual([]);
+    await vi.waitFor(() => expect(kept.has("u1/o1/t1")).toBe(false));
+  });
+
   it("a page that fails leaves what was kept on screen", async () => {
     kept.set("u1/o1/t1", { key: "u1/o1/t1", savedAt: 1, messages: [message("m1", "From last time")] as CachedChat["messages"] });
     api.routes[PAGE] = { status: 500, body: { detail: "Down for a moment." } };

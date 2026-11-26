@@ -2,7 +2,7 @@ import { useId } from "react";
 import { Upload } from "lucide-react";
 import { useFileList, useOrg } from "@/data/store";
 import { useFileDrop } from "@/hooks/use-file-drop";
-import { folderSummary, type FileFolder } from "@/lib/files";
+import { folderPathOf, folderSummary, type FileFolder } from "@/lib/files";
 import { cn } from "@/lib/utils";
 import { FolderFileList } from "./folder-file-list";
 import { UploadFilesButton } from "./upload-files-button";
@@ -30,7 +30,7 @@ export function FolderPanel({ folder }: { folder: FileFolder }) {
             {shared ? `Every bot in ${orgName || "your organization"} can read these.` : `What ${folder.name} saves, and files you give it.`}
           </p>
           <p className="mt-1 truncate text-xs text-muted-foreground">
-            <span className="font-mono">{folder.path}</span>
+            <span className="font-mono">{folderPathOf(folder, list?.items ?? [])}</span>
             {ready && <span className="tabular-nums"> · {folderSummary(list.items)}</span>}
           </p>
         </div>

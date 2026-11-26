@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { SHARED_FOLDER, botFolder, folderSummary } from "./files";
+import { SHARED_FOLDER, botFolder, folderPathOf, folderSummary } from "./files";
 
 describe("folders", () => {
   it("the shared folder is the store's empty key and has no bot", () => {
@@ -22,5 +22,17 @@ describe("folderSummary", () => {
 
   it("says when there's nothing in it", () => {
     expect(folderSummary([])).toBe("Empty");
+  });
+});
+
+describe("folderPathOf", () => {
+  const scout = botFolder({ id: "b1", name: "Scout", handle: "scout" });
+
+  it("is where the folder's files are", () => {
+    expect(folderPathOf(scout, [{ folder: "botdesk/scout-1a2b3c4d" }])).toBe("botdesk/scout-1a2b3c4d/");
+  });
+
+  it("is where it would be while it's empty", () => {
+    expect(folderPathOf(scout, [])).toBe("botdesk/scout/");
   });
 });

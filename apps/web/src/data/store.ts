@@ -814,6 +814,8 @@ const readAt = new Map<string, number>();
 const removedAt = new Map<string, number>();
 /** Each open chat's newest event id when it opened: its stream's events up to there are replays. */
 const replayedUpTo = new Map<string, number>();
+/** Per chat, the messages shown from this device's cache, until the API's page has the last word on them. */
+const shownFromCache = new Map<string, Set<string>>();
 
 function closeChatStreams() {
   chatStreams.forEach((close) => close());
@@ -822,6 +824,7 @@ function closeChatStreams() {
   readAt.clear();
   removedAt.clear();
   replayedUpTo.clear();
+  shownFromCache.clear();
 }
 
 /** Chats that are no longer yours leave the list now; a chat list asked for before this won't bring them back. */
@@ -955,6 +958,7 @@ async function loadMessages(orgId: string, threadId: string, active: ApiThreadRu
       const withCards = withWaitingApprovals(loaded, apiApprovals.map(toApproval), activeRuns ?? undefined);
       return withRunStatus({ ...loaded, ...(active ? withActiveRuns(withCards, threadId, active.runs, active.lastEventId) : withCards) });
     });
+    shownFromCache.delete(threadId);
     cacheMessages(orgId, threadId);
   } catch {
     if (state.org.id === orgId) setThreadLoad(threadId, { status: "error", hasOlder: false });
@@ -975,11 +979,10 @@ function cacheMessages(orgId: string, threadId: string) {
 /** Only while the chat's first page is on its way and nothing of it is in the store yet. */
 async function showCachedMessages(orgId: string, threadId: string) {
   const cached = await messageCache.read(cacheKey(orgId, threadId));
-  if (cached.length === 0) return;
-  set((st) => {
-    const waiting = st.org.id === orgId && st.threadLoads[threadId]?.status === "loading" && !st.messages.some((m) => m.threadId === threadId);
-    return waiting ? { ...st, messages: [...st.messages, ...cached.map((m) => ({ ...m, threadId }))] } : st;
-  });
+  const waiting = state.org.id === orgId && state.threadLoads[threadId]?.status === "loading" && !state.messages.some((m) => m.threadId === threadId);
+  if (cached.length === 0 || !waiting) return;
+  shownFromCache.set(threadId, new Set(cached.map((m) => m.id)));
+  set((st) => ({ ...st, messages: [...st.messages, ...cached.map((m) => ({ ...m, threadId }))] }));
 }
 
 /**
@@ -990,6 +993,8 @@ async function showCachedMessages(orgId: string, threadId: string) {
  */
 function keepBesidePage(st: State, message: Message, page: Message[]): boolean {
   if (page.some((m) => m.id === message.id)) return false;
+  // Shown from this device's cache and not in the API's answer: gone on the server since.
+  if (shownFromCache.get(message.threadId)?.has(message.id)) return false;
   if (st.runs.some((r) => message.id === typingId(r.id) || message.id === r.messageId)) return true;
   const oldest = page[0]?.createdAt;
   return oldest === undefined || Date.parse(message.createdAt) >= Date.parse(oldest);

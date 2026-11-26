@@ -42,3 +42,11 @@ export function folderSummary(items: Pick<BotFile, "sizeBytes">[]): string {
   const bytes = items.reduce((total, f) => total + f.sizeBytes, 0);
   return `${items.length} ${items.length === 1 ? "file" : "files"} · ${formatBytes(bytes)}`;
 }
+
+/**
+ * Where the folder really is: its files say (the API names a bot's folder "<handle>-<id>" when the
+ * handle once belonged to another bot), else where it would be.
+ */
+export function folderPathOf(folder: FileFolder, items: Pick<BotFile, "folder">[]): string {
+  return items[0]?.folder ? `${items[0].folder}/` : folder.path;
+}

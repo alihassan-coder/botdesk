@@ -1,3 +1,4 @@
+import { useRef } from "react";
 import {
   MessageScroller,
   MessageScrollerButton,
@@ -19,6 +20,7 @@ import { RunWaitingNotices } from "./run-waiting-notice";
 export function MessageList({ thread }: { thread: Thread }) {
   const messages = useThreadMessages(thread.id);
   const load = useThreadLoad(thread.id);
+  const viewport = useRef<HTMLDivElement>(null);
 
   if (messages.length === 0 && load?.status === "loading") {
     return (
@@ -50,9 +52,13 @@ export function MessageList({ thread }: { thread: Thread }) {
   return (
     <MessageScrollerProvider autoScroll defaultScrollPosition="end">
       <MessageScroller className="flex-1">
-        <MessageScrollerViewport aria-label={`Conversation with ${thread.title}`}>
+        <MessageScrollerViewport ref={viewport} aria-label={`Conversation with ${thread.title}`}>
+          {/* Above the content, so the first item there is always a message: that's how the scroller
+              tells older messages came in and keeps the one you were reading in place. */}
+          {load?.hasOlder && load.status === "ready" && (
+            <LoadOlderMessages threadId={thread.id} oldestId={messages[0].id} scrollRoot={viewport} />
+          )}
           <MessageScrollerContent className="mx-auto w-full max-w-3xl gap-5 px-4 py-6 md:px-6">
-            {load?.hasOlder && <LoadOlderMessages threadId={thread.id} />}
             {messages.map((message) => (
               // The id and tabIndex let a handoff card's "View reply" scroll to a message and focus it.
               <MessageScrollerItem

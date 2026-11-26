@@ -962,6 +962,29 @@ function keepBesidePage(st: State, message: Message, page: Message[]): boolean {
   return oldest === undefined || Date.parse(message.createdAt) >= Date.parse(oldest);
 }
 
+/** The older page on its way, per chat, so asking twice loads it once (see `loadOlderMessages`). */
+const olderLoads = new Map<string, Promise<ActionResult>>();
+
+async function loadOlderPage(threadId: string): Promise<ActionResult> {
+  const oldest = state.messages.find((m) => m.threadId === threadId);
+  if (!oldest) return { ok: true };
+  const orgId = state.org.id;
+  try {
+    const page = (await threadApi.messages(orgId, threadId, { limit: PAGE_SIZE, before: oldest.createdAt })).map(toMessage);
+    set((st) => {
+      if (st.org.id !== orgId) return st;
+      const known = new Set(st.messages.map((m) => m.id));
+      const older = page.filter((m) => !known.has(m.id));
+      const at = st.messages.findIndex((m) => m.threadId === threadId);
+      const messages = at === -1 ? [...st.messages, ...older] : [...st.messages.slice(0, at), ...older, ...st.messages.slice(at)];
+      return { ...st, messages, threadLoads: { ...st.threadLoads, [threadId]: { status: "ready", hasOlder: page.length === PAGE_SIZE } } };
+    });
+    return { ok: true };
+  } catch (error) {
+    return failure(error);
+  }
+}
+
 const chatActions = {
   /**
    * Call when a chat is on screen; call what it returns when it leaves. The chat is marked read
@@ -1084,25 +1107,18 @@ const chatActions = {
     };
   },
 
-  /** The page of messages before the oldest one shown. API only. */
-  async loadOlderMessages(threadId: string): Promise<ActionResult> {
-    const oldest = state.messages.find((m) => m.threadId === threadId);
-    if (isDemoMode() || !oldest) return { ok: true };
-    const orgId = state.org.id;
-    try {
-      const page = (await threadApi.messages(orgId, threadId, { limit: PAGE_SIZE, before: oldest.createdAt })).map(toMessage);
-      set((st) => {
-        if (st.org.id !== orgId) return st;
-        const known = new Set(st.messages.map((m) => m.id));
-        const older = page.filter((m) => !known.has(m.id));
-        const at = st.messages.findIndex((m) => m.threadId === threadId);
-        const messages = at === -1 ? [...st.messages, ...older] : [...st.messages.slice(0, at), ...older, ...st.messages.slice(at)];
-        return { ...st, messages, threadLoads: { ...st.threadLoads, [threadId]: { status: "ready", hasOlder: page.length === PAGE_SIZE } } };
-      });
-      return { ok: true };
-    } catch (error) {
-      return failure(error);
-    }
+  /**
+   * The page of messages before the oldest one shown. API only. One page at a time per chat: asked
+   * again while one is on its way (scrolling up and the button), it answers when that one does.
+   * Nothing while the chat's newest page is still loading, since the oldest message may change.
+   */
+  loadOlderMessages(threadId: string): Promise<ActionResult> {
+    const pending = olderLoads.get(threadId);
+    if (pending) return pending;
+    if (isDemoMode() || state.threadLoads[threadId]?.status === "loading") return Promise.resolve({ ok: true });
+    const load = loadOlderPage(threadId).finally(() => olderLoads.delete(threadId));
+    olderLoads.set(threadId, load);
+    return load;
   },
 
   /** Stop the bot replies in progress in this chat. In the demo, only the Chief demo can be stopped. */

@@ -907,6 +907,23 @@ describe("chats on the API", () => {
     expect(texts().slice(0, 2)).toEqual(["Old", "New 0"]);
     expect(state().threadLoads.t1).toEqual({ status: "ready", hasOlder: false });
   });
+
+  it("loadOlderMessages asked again while a page is on its way loads it once", async () => {
+    const newest = Array.from({ length: 50 }, (_, i) => message(`n${i}`, `New ${i}`, undefined, `2026-11-12T10:${String(i).padStart(2, "0")}:00Z`));
+    routes["GET /api/v1/orgs/o1/threads/t1/messages?limit=50"] = { status: 200, body: newest };
+    actions.openThread("t1");
+    await vi.waitFor(() => expect(state().threadLoads.t1).toEqual({ status: "ready", hasOlder: true }));
+
+    let land = () => {};
+    const older = "GET /api/v1/orgs/o1/threads/t1/messages?limit=50&before=2026-11-12T10%3A00%3A00Z";
+    routes[older] = { status: 200, wait: new Promise<void>((resolve) => (land = resolve)), body: [message("o1", "Old")] };
+    const first = actions.loadOlderMessages("t1");
+    const second = actions.loadOlderMessages("t1");
+    land();
+    await expect(Promise.all([first, second])).resolves.toEqual([{ ok: true }, { ok: true }]);
+    expect(calls.filter((c) => c === older)).toHaveLength(1);
+    expect(texts().filter((t) => t === "Old")).toHaveLength(1);
+  });
 });
 
 describe("approvals on the API", () => {

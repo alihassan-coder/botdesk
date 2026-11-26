@@ -571,6 +571,18 @@ const mockAuth = {
   },
 };
 
+/** True while signing out: nothing more is saved to the device cache (it's being cleared). */
+let signingOut = false;
+
+/**
+ * However the API session ended (Sign out, an expired session, a password reset that signs out
+ * every device): the chats kept on this device go with it.
+ */
+function signedOutOfApi() {
+  void messageCache.clear();
+  set((st) => ({ ...st, authStatus: "signed-out" }));
+}
+
 /*
  * Auth actions are async because the API is. In the mock they finish before their first
  * `await`, so the state is already updated when the call returns.
@@ -582,7 +594,7 @@ const authActions = {
     if (isDemoMode()) return mockAuth.restoreSession();
     restoring ??= authApi
       .me()
-      .then(startApiSession, () => set((st) => ({ ...st, authStatus: "signed-out" })))
+      .then(startApiSession, signedOutOfApi) // an expired session included
       .finally(() => (restoring = null));
     return restoring;
   },
@@ -621,13 +633,19 @@ const authActions = {
       return set((st) => ({ ...st, authStatus: "signed-out" }));
     }
     closeChatStreams();
-    if (isDemoMode()) saveMockSession(null);
-    else {
-      void messageCache.clear(); // nothing of yours stays on this device
+    if (isDemoMode()) {
+      saveMockSession(null);
+      return set((st) => ({ ...st, authStatus: "signed-out" }));
+    }
+    signingOut = true; // no chat is saved to this device from now on (see cacheMessages)
+    void messageCache.clear();
+    try {
       // Signed out here even if the API can't be reached; the cookie expires on its own.
       await authApi.signOut().catch(() => {});
+    } finally {
+      signedOutOfApi();
+      signingOut = false;
     }
-    set((st) => ({ ...st, authStatus: "signed-out" }));
   },
 
   /** Ask for a reset link. The answer never says whether the email has an account. */
@@ -646,7 +664,7 @@ const authActions = {
     if (isDemoMode()) return { ok: true }; // MOCK: there are no reset links without the API.
     try {
       await authApi.resetPassword(token, password);
-      set((st) => ({ ...st, authStatus: "signed-out" }));
+      signedOutOfApi();
       return { ok: true };
     } catch (error) {
       return failure(error);
@@ -972,7 +990,7 @@ async function loadMessages(orgId: string, threadId: string, active: ApiThreadRu
 const cacheKey = (orgId: string, threadId: string) => ({ userId: state.currentUserId, orgId, threadId });
 
 function cacheMessages(orgId: string, threadId: string) {
-  if (isDemoMode() || state.authStatus !== "signed-in" || state.org.id !== orgId) return;
+  if (isDemoMode() || signingOut || state.authStatus !== "signed-in" || state.org.id !== orgId) return;
   void messageCache.save(cacheKey(orgId, threadId), state.messages.filter((m) => m.threadId === threadId));
 }
 
@@ -1008,14 +1026,19 @@ async function loadOlderPage(threadId: string): Promise<ActionResult> {
   if (!oldest) return { ok: true };
   const orgId = state.org.id;
   try {
-    const page = (await threadApi.messages(orgId, threadId, { limit: PAGE_SIZE, before: oldest.createdAt })).map(toMessage);
+    // Before the oldest message by its time and id: messages written at the same moment aren't skipped.
+    const saved = /^[0-9a-f-]{36}$/i.test(oldest.id); // not a message still sending ("local-…")
+    const cursor = { limit: PAGE_SIZE, before: oldest.createdAt, beforeId: saved ? oldest.id : undefined };
+    const page = (await threadApi.messages(orgId, threadId, cursor)).map(toMessage);
     set((st) => {
       if (st.org.id !== orgId) return st;
       const known = new Set(st.messages.map((m) => m.id));
       const older = page.filter((m) => !known.has(m.id));
       const at = st.messages.findIndex((m) => m.threadId === threadId);
       const messages = at === -1 ? [...st.messages, ...older] : [...st.messages.slice(0, at), ...older, ...st.messages.slice(at)];
-      return { ...st, messages, threadLoads: { ...st.threadLoads, [threadId]: { status: "ready", hasOlder: page.length === PAGE_SIZE } } };
+      // The status stays as it is: the chat's newest page may be loading again (it reopened meanwhile).
+      const status = st.threadLoads[threadId]?.status ?? "ready";
+      return { ...st, messages, threadLoads: { ...st.threadLoads, [threadId]: { status, hasOlder: page.length === PAGE_SIZE } } };
     });
     return { ok: true };
   } catch (error) {

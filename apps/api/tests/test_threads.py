@@ -4,8 +4,10 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 
 import httpx
+from sqlalchemy import select
 
-from tests.conftest import sign_up
+from src.models import Message
+from tests.conftest import TEST_SETTINGS, FakeProviders, api_client, sign_up
 
 
 async def _org_with_bot(client: httpx.AsyncClient) -> tuple[str, dict[str, Any]]:
@@ -58,6 +60,24 @@ async def test_older_messages_page_with_before(client: httpx.AsyncClient) -> Non
     in_karachi = datetime.fromisoformat(latest[0]["createdAt"]).astimezone(timezone(timedelta(hours=5)))
     same = (await client.get(messages, params={"limit": 2, "before": in_karachi.isoformat()})).json()
     assert [m["parts"][0]["text"] for m in same] == ["m1", "m2"]
+
+
+async def test_messages_written_at_the_same_moment_page_by_id(providers: FakeProviders) -> None:
+    async with api_client(TEST_SETTINGS, providers) as (app, client):
+        org, bot = await _org_with_bot(client)
+        thread = (await client.post(f"{org}/threads/dm", json={"botId": bot["id"]})).json()
+        messages = f"{org}/threads/{thread['id']}/messages"
+        for n in range(4):
+            await client.post(messages, json={"text": f"m{n}"})
+        async with app.state.sessionmaker() as db:  # m1 and m2 were written at the same moment
+            rows = (await db.scalars(select(Message).order_by(Message.created_at))).all()
+            rows[2].created_at = rows[1].created_at
+            await db.commit()
+
+        latest = (await client.get(messages, params={"limit": 2})).json()  # the page ends between the two
+        cursor = {"limit": 2, "before": latest[0]["createdAt"], "beforeId": latest[0]["id"]}
+        older = (await client.get(messages, params=cursor)).json()
+        assert sorted(m["parts"][0]["text"] for m in older + latest) == ["m0", "m1", "m2", "m3"]
 
 
 async def test_times_are_utc_with_an_offset(client: httpx.AsyncClient) -> None:

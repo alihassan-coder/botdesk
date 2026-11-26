@@ -470,13 +470,24 @@ async def delete_groups(db: AsyncSession, thread_ids: list[uuid.UUID]) -> None:
 
 
 async def list_messages(
-    db: AsyncSession, thread: Thread, *, limit: int = 50, before: datetime | None = None
+    db: AsyncSession,
+    thread: Thread,
+    *,
+    limit: int = 50,
+    before: datetime | None = None,
+    before_id: uuid.UUID | None = None,
 ) -> list[Message]:
-    """Up to `limit` messages before a moment (default: now), oldest first. Page back with `before`."""
+    """Up to `limit` messages before a moment (default: now), oldest first. Page back with `before`
+    and `before_id`, the oldest message you have: ties on the time go by id, as everywhere else,
+    so messages written at the same moment are never skipped. (`before` alone: by time only.)"""
     query = select(Message).where(Message.thread_id == thread.id)
-    if before:
+    if before and before_id:
+        query = query.where(
+            or_(Message.created_at < before, and_(Message.created_at == before, Message.id < before_id))
+        )
+    elif before:
         query = query.where(Message.created_at < before)
-    newest_first = await db.scalars(query.order_by(Message.created_at.desc()).limit(limit))
+    newest_first = await db.scalars(query.order_by(Message.created_at.desc(), Message.id.desc()).limit(limit))
     return list(reversed(list(newest_first)))
 
 

@@ -150,10 +150,16 @@ async def mark_read(db: AsyncSession, access: Access, thread_id: uuid.UUID) -> N
 
 
 async def list_messages(
-    db: AsyncSession, access: Access, thread_id: uuid.UUID, *, limit: int, before: datetime | None
+    db: AsyncSession,
+    access: Access,
+    thread_id: uuid.UUID,
+    *,
+    limit: int,
+    before: datetime | None,
+    before_id: uuid.UUID | None = None,
 ) -> list[MessageOut]:
     thread = await thread_service.get_thread(db, org_id=access.org.id, user_id=access.user.id, thread_id=thread_id)
-    messages = await thread_service.list_messages(db, thread, limit=limit, before=before)
+    messages = await thread_service.list_messages(db, thread, limit=limit, before=before, before_id=before_id)
     return [thread_service.message_out(message) for message in messages]
 
 

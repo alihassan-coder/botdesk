@@ -95,9 +95,11 @@ async def list_messages(
     db: Db,
     limit: Annotated[int, Query(ge=1, le=200)] = 50,
     before: datetime | None = None,
+    before_id: Annotated[uuid.UUID | None, Query(alias="beforeId")] = None,
 ) -> list[MessageOut]:
-    """Messages, oldest first. For older ones, pass the first message's `createdAt` as `before`."""
-    return await thread_controller.list_messages(db, access, thread_id, limit=limit, before=before)
+    """Messages, oldest first. For older ones, pass the first message's `createdAt` as `before` and
+    its `id` as `beforeId` (messages written at the same moment go by id, so none is skipped)."""
+    return await thread_controller.list_messages(db, access, thread_id, limit=limit, before=before, before_id=before_id)
 
 
 @router.post("/{thread_id}/messages", status_code=status.HTTP_201_CREATED)

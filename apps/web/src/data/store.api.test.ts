@@ -908,6 +908,23 @@ describe("chats on the API", () => {
     expect(state().threadLoads.t1).toEqual({ status: "ready", hasOlder: false });
   });
 
+  it("loadOlderMessages pages by the oldest message's time and id, so messages written together aren't skipped", async () => {
+    const oldest = "0b8c2a52-0d6a-4c3e-9a51-6c9f3e8f1a01";
+    const newest = Array.from({ length: 50 }, (_, i) =>
+      message(i === 0 ? oldest : `n${i}`, `New ${i}`, undefined, `2026-11-12T10:${String(i).padStart(2, "0")}:00Z`),
+    );
+    routes["GET /api/v1/orgs/o1/threads/t1/messages?limit=50"] = { status: 200, body: newest };
+    actions.openThread("t1");
+    await vi.waitFor(() => expect(state().threadLoads.t1).toEqual({ status: "ready", hasOlder: true }));
+
+    routes[`GET /api/v1/orgs/o1/threads/t1/messages?limit=50&before=2026-11-12T10%3A00%3A00Z&beforeId=${oldest}`] = {
+      status: 200,
+      body: [message("o1", "Written at the same moment")],
+    };
+    await expect(actions.loadOlderMessages("t1")).resolves.toEqual({ ok: true });
+    expect(texts().slice(0, 2)).toEqual(["Written at the same moment", "New 0"]);
+  });
+
   it("loadOlderMessages asked again while a page is on its way loads it once", async () => {
     const newest = Array.from({ length: 50 }, (_, i) => message(`n${i}`, `New ${i}`, undefined, `2026-11-12T10:${String(i).padStart(2, "0")}:00Z`));
     routes["GET /api/v1/orgs/o1/threads/t1/messages?limit=50"] = { status: 200, body: newest };

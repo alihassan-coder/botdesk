@@ -94,6 +94,45 @@ describe("messages kept on this device", () => {
     await vi.waitFor(() => expect(kept.size).toBe(0));
   });
 
+  it("an expired session forgets everything kept here too", async () => {
+    api.routes[PAGE] = { status: 200, body: [message("m1", "Hi")] };
+    await signInOnApi();
+    actions.openThread("t1");
+    await vi.waitFor(() => expect(kept.size).toBe(1));
+
+    api.routes["GET /api/v1/auth/me"] = { status: 401, body: { detail: "Sign in again." } };
+    await actions.restoreSession();
+    expect(state().authStatus).toBe("signed-out");
+    await vi.waitFor(() => expect(kept.size).toBe(0));
+  });
+
+  it("a password reset (which signs out every device) forgets everything kept here", async () => {
+    api.routes[PAGE] = { status: 200, body: [message("m1", "Hi")] };
+    await signInOnApi();
+    actions.openThread("t1");
+    await vi.waitFor(() => expect(kept.size).toBe(1));
+
+    api.routes["POST /api/v1/auth/reset-password"] = { status: 200, body: { message: "Password changed." } };
+    await expect(actions.resetPassword("token", "a-new-long-password")).resolves.toEqual({ ok: true });
+    await vi.waitFor(() => expect(kept.size).toBe(0));
+  });
+
+  it("a chat closing while you sign out isn't saved back", async () => {
+    api.routes[PAGE] = { status: 200, body: [message("m1", "Hi")] };
+    await signInOnApi();
+    const close = actions.openThread("t1");
+    await vi.waitFor(() => expect(kept.size).toBe(1));
+
+    let answer = () => {};
+    api.routes["POST /api/v1/auth/sign-out"] = { status: 204, wait: new Promise<void>((resolve) => (answer = resolve)) };
+    const out = actions.signOut();
+    close(); // a chat saves itself as it closes
+    answer();
+    await out;
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(kept.size).toBe(0);
+  });
+
   it("switching organization forgets the other one's chats", async () => {
     const other = { ...apiOrg, id: "o2", name: "Side project", slug: "side" };
     api.routes["POST /api/v1/auth/sign-in"] = { status: 200, body: { ...apiMe, organizations: [apiOrg, other] } };

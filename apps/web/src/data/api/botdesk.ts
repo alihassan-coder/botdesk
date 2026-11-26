@@ -148,9 +148,9 @@ export const threadApi = {
     apiFetch<ApiThread>(`/api/v1/orgs/${orgId}/threads/${threadId}/participants/${type}/${id}`, { method: "DELETE" }),
   /** You've read the chat up to now: its unread count drops to 0. */
   markRead: (orgId: string, threadId: string) => apiFetch<void>(`/api/v1/orgs/${orgId}/threads/${threadId}/read`, { method: "POST" }),
-  /** Oldest first. For older ones, pass the first message's createdAt as `before`. */
-  messages: (orgId: string, threadId: string, { limit, before }: { limit: number; before?: string }) => {
-    const query = new URLSearchParams({ limit: String(limit), ...(before ? { before } : {}) });
+  /** Oldest first. For older ones, pass the first message's createdAt as `before` and its id as `beforeId`. */
+  messages: (orgId: string, threadId: string, { limit, before, beforeId }: { limit: number; before?: string; beforeId?: string }) => {
+    const query = new URLSearchParams({ limit: String(limit), ...(before ? { before } : {}), ...(before && beforeId ? { beforeId } : {}) });
     return apiFetch<ApiMessage[]>(`/api/v1/orgs/${orgId}/threads/${threadId}/messages?${query}`);
   },
   /**

@@ -27,6 +27,8 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.core.database import utcnow
+from src.jobs.queue import JobEnv
+from src.jobs.tasks import prune_messages, summarize_thread
 from src.model_providers.base import Pricing
 from src.models import Message, Organization, Run, RunEvent, Thread, UsageRecord
 from src.runtime import summarizer
@@ -381,6 +383,58 @@ async def test_messages_older_than_the_limit_are_deleted(chat: Chat) -> None:
         run = await db.get(Run, run_id)
         assert run is not None and run.trigger_message_id is None  # the run stays
     assert (await chat.thread()).summary == SUMMARY  # what remains of them for the bot
+
+
+async def test_the_nightly_job_deletes_in_batches_and_leaves_other_organizations_alone(
+    chat: Chat, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    now = utcnow()
+    await chat.add(5, start=now - timedelta(days=100))
+    kept = await chat.add(2, start=now - timedelta(days=10), numbered_from=6)
+    other = await sign_up(chat.client, name="Sara", email="sara@globex.dev")  # her own organization: no limit
+    other_org = f"/api/v1/orgs/{other['organizations'][0]['id']}"
+    other_bot = (await chat.client.post(f"{other_org}/bots", json={"name": "Scout"})).json()
+    other_dm = (await chat.client.post(f"{other_org}/threads/dm", json={"botId": other_bot["id"]})).json()
+    async with chat.db() as db:
+        db.add(
+            Message(
+                org_id=uuid.UUID(other["organizations"][0]["id"]),
+                thread_id=uuid.UUID(other_dm["id"]),
+                author_type="user",
+                author_id=uuid.UUID(other["user"]["id"]),
+                parts=[text_part("Sara's old message")],
+                created_at=now - timedelta(days=100),
+            )
+        )
+        org = await db.get(Organization, chat.org_id)
+        assert org is not None
+        org.history_retention_days = 30
+        await db.commit()
+
+    monkeypatch.setattr(history_service, "PRUNE_BATCH", 2)  # 5 old messages: three batches
+    runs = chat.app.state.runs
+    await prune_messages(JobEnv(runs, runs.queue, runs.sessionmaker, runs.settings), int(now.timestamp()))
+    async with chat.db() as db:
+        mine = (await db.scalars(select(Message.id).where(Message.thread_id == chat.thread_id))).all()
+        theirs = await db.scalar(select(func.count()).where(Message.thread_id == uuid.UUID(other_dm["id"])))
+    assert sorted(mine) == sorted(message.id for message in kept)
+    assert theirs == 1
+
+
+async def test_a_summary_that_fails_is_logged_and_the_job_ends(chat: Chat, caplog: pytest.LogCaptureFixture) -> None:
+    await chat.add(50, start=utcnow() - timedelta(days=1))
+
+    async def broken(_org: uuid.UUID, _model: str, _requester: uuid.UUID | None = None) -> BaseChatModel:
+        raise RuntimeError("Incorrect API key provided: sk-secret-0000")
+
+    runs = chat.app.state.runs
+    runs.model_for = broken
+    await summarize_thread(
+        JobEnv(runs, runs.queue, runs.sessionmaker, runs.settings), str(chat.thread_id), str(chat.bot_id)
+    )
+    assert (await chat.thread()).summary is None
+    assert "the summary wasn't updated" in caplog.text
+    assert "sk-secret-0000" not in caplog.text
 
 
 async def test_history_settings_are_for_owners_and_admins(chat: Chat) -> None:

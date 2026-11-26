@@ -47,8 +47,8 @@ class Viewer:
         return record.user_id == org_key(self.org_id) and record.agent_id == str(self.bot_id)
 
 
-def status(memory: MemoryService) -> MemoryStatusOut:
-    reason = memory.off_reason
+async def status(memory: MemoryService, org_id: uuid.UUID) -> MemoryStatusOut:
+    reason = await memory.off_reason_for(org_id)
     return MemoryStatusOut(enabled=reason is None, reason=reason)
 
 
@@ -98,7 +98,7 @@ async def list_memories(memory: MemoryService, viewer: Viewer, *, query: str, li
 async def _changeable(memory: MemoryService, viewer: Viewer, memory_id: str) -> MemoryRecord:
     """The memory, if it's this bot's and this viewer may change it."""
     async with _reaching_memory():
-        record = await memory.get(memory_id)
+        record = await memory.get(viewer.org_id, memory_id)
     if record is None or not viewer.owns_scope_of(record):
         raise NotFound(NOT_FOUND)
     if viewer.is_admin or record.member == str(viewer.user_id):
@@ -111,14 +111,14 @@ async def _changeable(memory: MemoryService, viewer: Viewer, memory_id: str) -> 
 async def forget(memory: MemoryService, viewer: Viewer, memory_id: str) -> None:
     record = await _changeable(memory, viewer, memory_id)
     async with _reaching_memory():
-        await memory.delete(record.id)
+        await memory.delete(viewer.org_id, record.id)
 
 
 async def correct(memory: MemoryService, viewer: Viewer, memory_id: str, text: str) -> MemoryOut:
     record = await _changeable(memory, viewer, memory_id)
     async with _reaching_memory():
-        await memory.update(record.id, text)
-        updated = await memory.get(record.id)
+        await memory.update(viewer.org_id, record.id, text)
+        updated = await memory.get(viewer.org_id, record.id)
     if updated is None:
         raise NotFound(NOT_FOUND)
     return memory_out(updated, viewer)

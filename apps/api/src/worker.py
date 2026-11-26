@@ -16,6 +16,8 @@ from src.core.url_guard import GuardedTransport
 from src.jobs.background import background
 from src.jobs.postgres import ProcrastinateQueue
 from src.runtime.memory import build_memory
+from src.services.credential_vault import CredentialVault
+from src.services.memory_router import OrgMemory
 from src.services.model_catalog import ModelCatalog
 
 OUTBOUND_TIMEOUT = httpx.Timeout(10.0, connect=5.0)  # as in main.py
@@ -26,6 +28,7 @@ async def main() -> None:
     settings = get_settings()
     secrets = build_secret_box(settings)
     engine = create_engine(settings.sqlalchemy_url)
+    sessionmaker = create_sessionmaker(engine)
     allow_private = settings.allow_private_model_urls
     try:
         async with (
@@ -37,8 +40,8 @@ async def main() -> None:
             ) as custom,
             background(
                 settings,
-                create_sessionmaker(engine),
-                build_memory(settings),
+                sessionmaker,
+                OrgMemory(build_memory(settings), sessionmaker, settings, CredentialVault.from_settings(settings)),
                 secrets,
                 ModelCatalog(http, allow_private_urls=allow_private, custom_http=custom),
                 role="worker",

@@ -132,12 +132,12 @@ async def test_a_dm_recalls_shared_memories_and_the_members_own_only(mem0: Spied
 async def test_changing_a_memory_that_is_already_gone_raises_memory_gone(mem0: Spied) -> None:
     await mem0.memory.remember(GROUP, said("Lunch is at noon"))
     [record] = await mem0.memory.list_memories(ORG, BOT, [SHARED], query="lunch", limit=10)
-    assert (await mem0.memory.get(record.id)) is not None
-    await mem0.memory.delete(record.id)
+    assert (await mem0.memory.get(ORG, record.id)) is not None
+    await mem0.memory.delete(ORG, record.id)
     with pytest.raises(MemoryGone):
-        await mem0.memory.delete(record.id)
+        await mem0.memory.delete(ORG, record.id)
     with pytest.raises(MemoryGone):
-        await mem0.memory.update(record.id, "Lunch is at one")
+        await mem0.memory.update(ORG, record.id, "Lunch is at one")
 
 
 # --- newest first, read from mem0's pgvector table ---------------------------------------------

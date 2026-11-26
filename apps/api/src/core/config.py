@@ -107,7 +107,9 @@ class Settings(BaseSettings):
     # An approval nobody answers in this time counts as "no" (approvals fail closed).
     approval_expiry_hours: int = 72
 
-    # Memory (mem0 on pgvector). Needs MEMORY_ENABLED=true, Postgres and OPENAI_API_KEY.
+    # Memory (mem0 on pgvector, needs Postgres). Each organization can add its own memory key in
+    # Settings → Memory (OpenAI or Gemini); MEMORY_ENABLED=true with OPENAI_API_KEY lends the
+    # server's key to organizations without one.
     memory_enabled: bool = False
 
     # Comma-separated origins allowed to call the API with cookies (the web app).

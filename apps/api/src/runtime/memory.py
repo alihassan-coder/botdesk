@@ -24,7 +24,7 @@ import os
 import uuid
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Any, Protocol
+from typing import Any, Literal, Protocol
 
 from psycopg_pool import ConnectionPool
 
@@ -34,6 +34,7 @@ from src.core.database import POOL_MAX_LIFETIME_SECONDS, IdleCheck, postgres_con
 logger = logging.getLogger(__name__)
 
 RECALL_LIMIT = 5
+EMBEDDING_DIMS = 1536  # every provider's embeddings are this long, so all collections match
 SHARED = "shared"  # memories learned in group chats, which any member's chat may recall
 
 
@@ -72,9 +73,8 @@ def org_key(org_id: uuid.UUID) -> str:
 
 
 class MemoryService(Protocol):
-    @property
-    def off_reason(self) -> str | None:
-        """Why memory is off on this server, or None when it's on."""
+    async def off_reason_for(self, org_id: uuid.UUID) -> str | None:
+        """Why this organization's bots can't remember anything, or None when they can."""
         ...
 
     async def recall(self, scope: MemoryScope, query: str) -> list[str]:
@@ -92,15 +92,15 @@ class MemoryService(Protocol):
         `query` first, or without one, the newest first (by when they last changed)."""
         ...
 
-    async def get(self, memory_id: str) -> MemoryRecord | None:
+    async def get(self, org_id: uuid.UUID, memory_id: str) -> MemoryRecord | None:
         """One memory by id, whatever its scope. The caller checks the scope before using it."""
         ...
 
-    async def update(self, memory_id: str, text: str) -> None:
+    async def update(self, org_id: uuid.UUID, memory_id: str, text: str) -> None:
         """Raises `MemoryGone` if it no longer exists."""
         ...
 
-    async def delete(self, memory_id: str) -> None:
+    async def delete(self, org_id: uuid.UUID, memory_id: str) -> None:
         """Raises `MemoryGone` if it no longer exists."""
         ...
 
@@ -115,8 +115,7 @@ class NoMemory:
     def __init__(self, reason: str = "Memory is off on this server.") -> None:
         self._reason = reason
 
-    @property
-    def off_reason(self) -> str | None:
+    async def off_reason_for(self, org_id: uuid.UUID) -> str | None:
         return self._reason
 
     async def recall(self, scope: MemoryScope, query: str) -> list[str]:
@@ -130,13 +129,13 @@ class NoMemory:
     ) -> list[MemoryRecord]:
         return []
 
-    async def get(self, memory_id: str) -> MemoryRecord | None:
+    async def get(self, org_id: uuid.UUID, memory_id: str) -> MemoryRecord | None:
         return None
 
-    async def update(self, memory_id: str, text: str) -> None:
+    async def update(self, org_id: uuid.UUID, memory_id: str, text: str) -> None:
         return None
 
-    async def delete(self, memory_id: str) -> None:
+    async def delete(self, org_id: uuid.UUID, memory_id: str) -> None:
         return None
 
     async def delete_all(self, org_id: uuid.UUID, bot_id: uuid.UUID) -> None:
@@ -199,8 +198,7 @@ class Mem0Memory:
     def __init__(self, memory: Any) -> None:
         self._memory = memory  # mem0.AsyncMemory
 
-    @property
-    def off_reason(self) -> str | None:
+    async def off_reason_for(self, org_id: uuid.UUID) -> str | None:
         return None
 
     @staticmethod
@@ -250,17 +248,17 @@ class Mem0Memory:
                 limit=limit,
             )
 
-    async def get(self, memory_id: str) -> MemoryRecord | None:
+    async def get(self, org_id: uuid.UUID, memory_id: str) -> MemoryRecord | None:
         item = await self._memory.get(memory_id)
         return _record(item) if item else None
 
-    async def update(self, memory_id: str, text: str) -> None:
+    async def update(self, org_id: uuid.UUID, memory_id: str, text: str) -> None:
         try:
             await self._memory.update(memory_id, text=text)
         except ValueError as error:
             raise _gone_if_missing(error) from error
 
-    async def delete(self, memory_id: str) -> None:
+    async def delete(self, org_id: uuid.UUID, memory_id: str) -> None:
         try:
             await self._memory.delete(memory_id)
         except ValueError as error:
@@ -271,14 +269,35 @@ class Mem0Memory:
         await self._memory.delete_all(user_id=org_key(org_id), agent_id=str(bot_id))
 
 
+MemoryProvider = Literal["openai", "gemini"]
+MEMORY_PROVIDERS: tuple[MemoryProvider, ...] = ("openai", "gemini")
+
+# What each provider's memory uses. Each has its own collection: embeddings from two providers
+# aren't comparable, so memories saved with one key are found only with that provider.
+_MEM0: dict[MemoryProvider, dict[str, Any]] = {
+    "openai": {
+        "collection": "bot_memories",
+        "llm": {"provider": "openai", "model": "gpt-4.1-mini"},
+        "embedder": {"provider": "openai", "model": "text-embedding-3-small"},
+    },
+    "gemini": {
+        "collection": "bot_memories_gemini",
+        "llm": {"provider": "gemini", "model": "gemini-3.5-flash-lite"},
+        "embedder": {"provider": "gemini", "model": "models/gemini-embedding-001", "embedding_dims": EMBEDDING_DIMS},
+    },
+}
+
+NO_POSTGRES = "Memory needs the Postgres database: it saves memories next to everything else."
+NO_KEY = "Add a memory key in Settings → Memory (OpenAI or Gemini) to let bots remember."
+
+
 def memory_off_reason(settings: Settings) -> str | None:
-    """Why this server can't remember anything, worded for the memory screen; None when it can."""
-    if not settings.memory_enabled:
-        return "Memory is off on this server. Set MEMORY_ENABLED=true and add OPENAI_API_KEY to turn it on."
+    """Why the server's own key (OPENAI_API_KEY) can't be used for memory; None when it can.
+    An organization's own memory key works without it (`services/memory_router.py`)."""
     if not settings.uses_postgres:
-        return "Memory needs the Postgres database: it saves memories next to everything else."
-    if not settings.openai_api_key.get_secret_value():
-        return "Add OPENAI_API_KEY on the server to turn memory on. Memories are read and searched with OpenAI."
+        return NO_POSTGRES
+    if not settings.memory_enabled or not settings.openai_api_key.get_secret_value():
+        return NO_KEY
     return None
 
 
@@ -302,29 +321,49 @@ def memory_pool(url: str, *, idle_check: IdleCheck | None = None) -> ConnectionP
     return pool
 
 
-def build_memory(settings: Settings) -> MemoryService:
-    """mem0 when it's switched on and can work (Postgres + an OpenAI key for its model and
-    embeddings); otherwise no memory, with the reason."""
-    if reason := memory_off_reason(settings):
-        return NoMemory(reason)
+_shared_pool: ConnectionPool | None = None
+
+
+def shared_memory_pool(settings: Settings) -> ConnectionPool:
+    """One pool for every organization's memory (they only differ in key and collection)."""
+    global _shared_pool
+    if _shared_pool is None:
+        _shared_pool = memory_pool(settings.direct_url)
+    return _shared_pool
+
+
+def build_mem0(settings: Settings, provider: MemoryProvider, api_key: str) -> "Mem0Memory":
+    """mem0 on pgvector with this provider and key, for its model and its embeddings."""
     # mem0 reports usage to its makers unless told not to; this must be set before the import.
     os.environ["MEM0_TELEMETRY"] = "False"
     from mem0 import AsyncMemory
 
-    openai = {"api_key": settings.openai_api_key.get_secret_value()}
+    spec = _MEM0[provider]
+    key = {"api_key": api_key}
     memory = AsyncMemory.from_config(
         {
             "vector_store": {
                 "provider": "pgvector",
                 "config": {
-                    "connection_pool": memory_pool(settings.direct_url),
-                    "collection_name": "bot_memories",
-                    "embedding_model_dims": 1536,
+                    "connection_pool": shared_memory_pool(settings),
+                    "collection_name": spec["collection"],
+                    "embedding_model_dims": EMBEDDING_DIMS,
                     "hnsw": True,
                 },
             },
-            "llm": {"provider": "openai", "config": {**openai, "model": "gpt-4.1-mini"}},
-            "embedder": {"provider": "openai", "config": {**openai, "model": "text-embedding-3-small"}},
+            "llm": {"provider": spec["llm"]["provider"], "config": {**key, "model": spec["llm"]["model"]}},
+            "embedder": {
+                "provider": spec["embedder"]["provider"],
+                "config": {**key, **{k: v for k, v in spec["embedder"].items() if k != "provider"}},
+            },
         }
     )
     return Mem0Memory(memory)
+
+
+def build_memory(settings: Settings) -> MemoryService:
+    """The server's own memory (OPENAI_API_KEY, when MEMORY_ENABLED): what organizations without
+    a memory key of their own use. Otherwise no memory, with the reason."""
+    if reason := memory_off_reason(settings):
+        return NoMemory(reason)
+    return build_mem0(settings, "openai", settings.openai_api_key.get_secret_value())

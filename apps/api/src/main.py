@@ -23,6 +23,7 @@ from src.runtime.memory import build_memory
 from src.services import mcp_server_service
 from src.services.credential_vault import CredentialVault
 from src.services.email_service import build_email_sender
+from src.services.memory_router import OrgMemory
 from src.services.model_catalog import ModelCatalog
 from src.services.oauth_flow import OAuth
 
@@ -70,7 +71,12 @@ def create_app(settings: Settings | None = None, *, outbound: httpx.AsyncBaseTra
             # Runs and other background jobs (ADR 0013): a worker in this process, unless
             # WORKER_MODE=separate on Postgres (then `python -m src.worker` runs them).
             async with background(
-                settings, app.state.sessionmaker, build_memory(settings), secrets, app.state.models
+                settings,
+                app.state.sessionmaker,
+                # Each organization's memory: its own memory key, else the server's (Settings → Memory).
+                OrgMemory(build_memory(settings), app.state.sessionmaker, settings, app.state.vault),
+                secrets,
+                app.state.models,
             ) as jobs:
                 app.state.runs = jobs.runs
                 # Signing in with OAuth apps (ADR 0010 §5): the same plugins and vault as the runs.

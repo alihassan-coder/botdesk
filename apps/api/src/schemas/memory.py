@@ -32,3 +32,16 @@ class MemoryUpdate(ApiModel):
 class MemoryStatusOut(ApiModel):
     enabled: bool
     reason: str | None = None
+
+
+class MemoryKeyIn(ApiModel):
+    """A key used only for memory: OpenAI or Google Gemini."""
+
+    provider: Literal["openai", "gemini"]
+    api_key: str = Field(min_length=8, max_length=400)
+
+
+class MemoryKeyOut(ApiModel):
+    provider: Literal["openai", "gemini"] | None  # None: memory uses the server's key, if any
+    key_hint: str | None  # the key's last 4 characters
+    checked_at: datetime | None

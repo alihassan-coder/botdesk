@@ -10,6 +10,7 @@ from src.models.connection import AuditEntry, Connection
 from src.models.file import File
 from src.models.invitation import Invitation
 from src.models.mcp_server import McpServer
+from src.models.memory_key import MemoryKey
 from src.models.oauth_flow import OAuthFlow
 from src.models.organization import Membership, Organization
 from src.models.provider_credential import ProviderCredential
@@ -33,6 +34,7 @@ __all__ = [
     "Invitation",
     "McpServer",
     "Membership",
+    "MemoryKey",
     "Message",
     "OAuthFlow",
     "Organization",

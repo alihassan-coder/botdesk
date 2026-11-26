@@ -36,8 +36,7 @@ class FakeMemoryStore:
         self.broken = False
         self.vanishing = False  # someone else forgets each memory just after we read it
 
-    @property
-    def off_reason(self) -> str | None:
+    async def off_reason_for(self, org_id: uuid.UUID) -> str | None:
         return None
 
     def add(self, org_id: str, bot_id: str, member: str, text: str) -> str:
@@ -70,11 +69,11 @@ class FakeMemoryStore:
             found = [r for r in found if query.lower() in r.text.lower()]
         return found[:limit]
 
-    async def get(self, memory_id: str) -> MemoryRecord | None:
+    async def get(self, org_id: uuid.UUID, memory_id: str) -> MemoryRecord | None:
         self._check()
         return next((r for r in self.records if r.id == memory_id), None)
 
-    async def update(self, memory_id: str, text: str) -> None:
+    async def update(self, org_id: uuid.UUID, memory_id: str, text: str) -> None:
         self._check()
         if self.vanishing:
             raise MemoryGone(memory_id)
@@ -83,7 +82,7 @@ class FakeMemoryStore:
             for r in self.records
         ]
 
-    async def delete(self, memory_id: str) -> None:
+    async def delete(self, org_id: uuid.UUID, memory_id: str) -> None:
         self._check()
         if self.vanishing:
             raise MemoryGone(memory_id)
@@ -262,7 +261,7 @@ async def test_with_memory_off_everything_is_empty_never_an_error(client: httpx.
 
     status = (await client.get(f"{org}/memory/status")).json()
     assert status["enabled"] is False
-    assert "MEMORY_ENABLED" in status["reason"]
+    assert "Postgres" in status["reason"]  # the tests run on SQLite
     assert (await client.get(f"{org}/bots/{bot}/memories", params={"q": "anything"})).json() == []
     assert (await client.delete(f"{org}/bots/{bot}/memories")).status_code == 204
 
@@ -285,9 +284,10 @@ async def test_bots_have_memory_on_until_someone_turns_it_off(client: httpx.Asyn
 @pytest.mark.parametrize(
     ("changes", "reason"),
     [
-        ({"memory_enabled": False}, "MEMORY_ENABLED"),
         ({"memory_enabled": True}, "Postgres"),
-        ({"memory_enabled": True, "database_url": "postgresql://u:p@db/x"}, "OPENAI_API_KEY"),
+        # No server key: each organization can add its own memory key instead.
+        ({"memory_enabled": False, "database_url": "postgresql://u:p@db/x"}, "Settings → Memory"),
+        ({"memory_enabled": True, "database_url": "postgresql://u:p@db/x"}, "Settings → Memory"),
         ({"memory_enabled": True, "database_url": "postgresql://u:p@db/x", "openai_api_key": SecretStr("sk")}, None),
     ],
 )

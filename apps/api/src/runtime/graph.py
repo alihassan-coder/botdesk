@@ -159,6 +159,9 @@ class RunState(TypedDict, total=False):
     task: dict[str, Any] | None
     teammates: list[dict[str, Any]]  # {"name", "handle", "role"}: the org's other bots, by name
     more_teammates: int  # how many more bots the organization has than `teammates` lists
+    # Messages sent with "send now" that this run has taken into `turns` (ADR 0022; missing in older
+    # checkpoints: none), so one taken just before a restart is read again, never twice.
+    taken_message_ids: list[str]
 
 
 @dataclass(frozen=True)
@@ -345,7 +348,6 @@ async def call_model(state: RunState, runtime: Runtime[RunDeps]) -> RunState:
     if reason := limit_reached(deps.limits, steps_used=step.steps_used, elapsed_seconds=elapsed):
         raise LimitReached(reason)
 
-    news = await _take_new_messages(deps)
     tools_of_run = await _toolset(deps)
     prompt = build_prompt(
         bot_name=state["bot_name"],
@@ -362,9 +364,8 @@ async def call_model(state: RunState, runtime: Runtime[RunDeps]) -> RunState:
         task=_task_brief(state),
         summary=state.get("summary"),
     )
-    turns = [*state.get("turns", []), *news]
-    messages = [*prompt, *messages_from_dict(turns)]
-    prompt_chars = sum(len(str(message.content)) for message in messages)
+    turns = state.get("turns", [])
+    prompt_chars = sum(len(str(message.content)) for message in [*prompt, *messages_from_dict(turns)])
     price = await deps.price_for(state["model_id"])
     remaining_usd = await _check_budget(deps, price, prompt_chars)
     # The reply's id is chosen at the first step, so every streamed piece and the saved message share it.
@@ -374,6 +375,11 @@ async def call_model(state: RunState, runtime: Runtime[RunDeps]) -> RunState:
         chat_model = await deps.model_for(state["model_id"])
     except ModelUnavailable as error:
         raise RunError(str(error)) from error
+    # Messages sent with "send now" join only now, after the checks that could end the run.
+    taken_before = state.get("taken_message_ids", [])
+    news = await _take_new_messages(deps, already=taken_before)
+    turns = [*turns, *(message_to_dict(HumanMessage(content=text)) for text in news.values())]
+    messages = [*prompt, *messages_from_dict(turns)]
     # Each call may pass the budget by at most this many output tokens (budgets are soft, §4.2).
     cap = output_cap(remaining_usd, price.pricing, prompt_chars)
     model = cap_output(_with_tools(chat_model, tools_of_run), chat_model, cap)
@@ -382,6 +388,10 @@ async def call_model(state: RunState, runtime: Runtime[RunDeps]) -> RunState:
         answer = await _stream_reply(
             deps, model, messages, message_id, streamed, separator=STEP_SEPARATOR if earlier else ""
         )
+    except Exception:
+        # The model never read them: their own runs answer them (not on Stop, which cancels instead).
+        await _give_back(deps, list(news))
+        raise
     finally:
         # Recorded however the call ended: tokens a failed or stopped call used are billed too.
         tokens = usage_of(streamed, prompt_chars)
@@ -394,18 +404,22 @@ async def call_model(state: RunState, runtime: Runtime[RunDeps]) -> RunState:
         "reply_message_id": message_id,
         "turns": [*turns, message_to_dict(answer)] if calls else turns,
         "pending_calls": calls,
+        "taken_message_ids": [*taken_before, *(str(message_id) for message_id in news)],
     }
 
 
-async def _take_new_messages(deps: RunDeps) -> list[dict[str, Any]]:
-    """Messages sent with "send now" while this run works (ADR 0022) join its conversation before the
-    model's next step. Their own queued runs are cancelled (and reported finished, so the chat stops
-    showing them as waiting) and each message is reported read."""
+async def _take_new_messages(deps: RunDeps, *, already: list[str]) -> dict[uuid.UUID, str]:
+    """Messages sent with "send now" while this run works (ADR 0022), as {message id: the text the
+    model reads}, oldest first. Ones taken just now have their own queued runs reported finished
+    (the chat stops showing them as waiting) and are reported read; ones taken before a restart
+    come back without new events."""
     async with deps.sessionmaker() as db:
-        taken = await run_service.take_new_messages(db, deps.run_id)
+        taken = await run_service.take_new_messages(db, deps.run_id, already=set(already))
         if not taken:
-            return []
+            return {}
         for new in taken:
+            if not new.fresh:
+                continue
             run_event_service.add_event(
                 db,
                 org_id=deps.org_id,
@@ -417,7 +431,23 @@ async def _take_new_messages(deps: RunDeps) -> list[dict[str, Any]]:
             deps.reporter.add(db, "message_read", {"messageId": str(new.message_id)})
         await db.commit()
     deps.reporter.announce()
-    return [message_to_dict(HumanMessage(content=new_message_text(new.line.author, new.line.text))) for new in taken]
+    return {new.message_id: new_message_text(new.line.author, new.line.text) for new in taken}
+
+
+async def _give_back(deps: RunDeps, message_ids: list[uuid.UUID]) -> None:
+    """The step that took these messages failed: queue their own runs again, so each is answered.
+    Saved first, then the jobs in a transaction of their own: a run that still has its old job
+    waiting refuses a second one, and that refusal mustn't undo the runs being queued again (a run
+    left without a job is picked up by the recovery pass anyway)."""
+    if not message_ids:
+        return
+    async with deps.sessionmaker() as db:
+        runs = await run_service.give_back(db, deps.run_id, message_ids)
+        await db.commit()
+    if runs:
+        async with deps.sessionmaker() as db:
+            await deps.start_runs(db, runs)
+            await db.commit()
 
 
 async def _check_budget(deps: RunDeps, price: ModelPrice, prompt_chars: int) -> float | None:

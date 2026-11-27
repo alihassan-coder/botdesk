@@ -67,6 +67,9 @@ class Run(IdMixin, CreatedAtMixin, Base):
     # Its message was sent with "send now" while a run of the same bot was working (ADR 0022): that
     # run may take the message at its next step, which cancels this one.
     deliver_now: Mapped[bool] = mapped_column(default=False, server_default=false())
+    # The working run that took this run's message (ADR 0022), so it can read it again after a
+    # restart, or give it back if the step that took it failed.
+    taken_by_run_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("runs.id", ondelete="SET NULL"))
     graph_version: Mapped[int] = mapped_column(Integer, default=1)
     error: Mapped[str | None] = mapped_column(Text)
     started_at: Mapped[datetime | None]

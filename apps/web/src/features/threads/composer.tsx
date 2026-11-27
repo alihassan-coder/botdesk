@@ -55,12 +55,26 @@ export function Composer({ thread }: { thread: Thread }) {
     if (draft) setText(draft);
   }
 
+  const browsingRef = useRef(false);
   useEffect(() => {
     textRef.current = text;
+    browsingRef.current = historyAt !== null;
     if (historyAt !== null) return; // a message recalled from history isn't a draft
     const timer = setTimeout(() => saveDraft(thread.id, text), 250);
     return () => clearTimeout(timer);
   }, [text, thread.id, historyAt]);
+
+  // Leaving the chat (or the page) right after typing still keeps the last keystrokes.
+  useEffect(() => {
+    const keep = () => {
+      if (!browsingRef.current) saveDraft(thread.id, textRef.current);
+    };
+    window.addEventListener("pagehide", keep);
+    return () => {
+      window.removeEventListener("pagehide", keep);
+      keep();
+    };
+  }, [thread.id]);
 
   // Asked each time a chat opens (cheap: the API keeps the answer), so a key added meanwhile turns voice on.
   useEffect(() => {
@@ -70,17 +84,24 @@ export function Composer({ thread }: { thread: Thread }) {
   const voice = useVoiceInput({
     hint: useCallback(() => [thread.title, ...options.map((o) => o.name)].join(", "), [thread.title, options]),
     onText: useCallback((words: string) => {
-      const box = boxRef.current;
       const next = insertAtCaret(textRef.current, caretRef.current ?? textRef.current.length, words);
       setText(next.text);
       setHistoryAt(null);
+      // The box is back once the recording bar goes: place the caret after the words then.
       requestAnimationFrame(() => {
+        const box = boxRef.current;
         box?.focus();
         box?.setSelectionRange(next.caret, next.caret);
       });
     }, []),
   });
   const talking = voice.phase !== "idle" || voice.transcribing;
+  // However talking ends (words, nothing heard, an error, Cancel), the keyboard is back in the box.
+  const wasTalking = useRef(false);
+  useEffect(() => {
+    if (wasTalking.current && !talking) requestAnimationFrame(() => boxRef.current?.focus());
+    wasTalking.current = talking;
+  }, [talking]);
 
   const matches = useMemo(() => (mention ? rankMentionables(mention.query, options) : []), [mention, options]);
   const listOpen = matches.length > 0;

@@ -374,7 +374,8 @@ export const voiceApi = {
   /** A recording (at most 25 MB) written down. `hint`: names in the chat, so they're spelled right. Never stored. */
   transcribe: (orgId: string, audio: Blob, hint: string) => {
     const form = new FormData();
-    form.append("audio", audio, audio.type.includes("mp4") ? "voice.mp4" : "voice.webm");
+    const extension = audio.type.includes("mp4") ? "mp4" : audio.type.includes("ogg") ? "ogg" : audio.type.includes("wav") ? "wav" : "webm";
+    form.append("audio", audio, `voice.${extension}`);
     if (hint) form.append("hint", hint);
     return apiFetch<ApiTranscription>(`/api/v1/orgs/${orgId}/voice/transcriptions`, { method: "POST", body: form });
   },

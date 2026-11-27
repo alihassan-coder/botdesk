@@ -116,3 +116,30 @@ async def test_another_members_message_never_steers_a_run_working_for_you(pg: Po
     runs = await _runs(pg)
     assert runs[alis["runIds"][0]].status == "succeeded"
     assert runs[saras["runIds"][0]].status == "succeeded"  # answered by its own run, not taken
+
+
+class FlakyModel(RecordingToolModel):
+    """Fails its first `failures` calls, as a provider that's down would."""
+
+    failures: int = 1
+
+    def _respond(self, messages: list[BaseMessage]) -> tuple[str, dict[str, Any] | None]:
+        if self.failures:
+            self.failures -= 1
+            raise RuntimeError("The provider is down.")
+        return super()._respond(messages)
+
+
+async def test_a_message_taken_by_a_step_that_fails_is_answered_by_its_own_run(pg: Postgres) -> None:
+    use_model(pg, FlakyModel(script=[]))
+    pg.runs.enabled = False
+    _org, thread = await _chat(pg.client)
+    first = await _post(pg, thread, "Hello")
+    later = await _post(pg, thread, "And this too", delivery="now")
+
+    await _go(pg)
+
+    runs = await _runs(pg)
+    assert runs[first["runIds"][0]].status == "failed"  # the step that took the message failed
+    given_back = runs[later["runIds"][0]]
+    assert (given_back.status, given_back.taken_by_run_id) == ("succeeded", None)  # so it was answered itself

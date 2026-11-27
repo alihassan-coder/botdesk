@@ -9,7 +9,7 @@ done) → running again. Every change of state is a single conditional UPDATE, s
 
 import json
 import uuid
-from collections.abc import Sequence
+from collections.abc import Collection, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any
@@ -913,38 +913,53 @@ READ_WHILE_WORKING = "Read by the run that was working."
 
 @dataclass(frozen=True)
 class NewMessage:
-    """A message a working run took (ADR 0022): what it says, and the queued run it cancelled."""
+    """A message a working run took (ADR 0022): what it says, and the queued run it cancelled.
+    `fresh`: taken just now (its events are still to send), not one taken before a restart."""
 
     message_id: uuid.UUID
     run_id: uuid.UUID
     line: ChatLine
+    fresh: bool
 
 
-async def take_new_messages(db: AsyncSession, run_id: uuid.UUID) -> list[NewMessage]:
+async def take_new_messages(db: AsyncSession, run_id: uuid.UUID, *, already: Collection[str]) -> list[NewMessage]:
     """Messages sent with "send now" while this run works (ADR 0022), oldest first: the queued
     `deliver_now` runs of its own bot, in its own chat, from its own requester. Taking them cancels
-    those runs in one `UPDATE … WHERE status = 'queued' RETURNING`, so each message is either taken
-    here or answered by its own run, never both. The caller commits."""
+    those runs and links them to this one (`taken_by_run_id`) in one `UPDATE … WHERE status =
+    'queued' RETURNING`, so each message is either taken here or answered by its own run.
+
+    Returned: every message this run has taken that isn't in `already` (the ids its conversation
+    holds), so one taken just before a restart is read again on the way back. The caller commits."""
     run = await db.get(Run, run_id)
     if run is None or run.requester_id is None:
         return []
+    fresh = {
+        row.id
+        for row in (
+            await db.execute(
+                update(Run)
+                .where(
+                    Run.thread_id == run.thread_id,
+                    Run.bot_id == run.bot_id,
+                    Run.requester_id == run.requester_id,
+                    Run.status == "queued",
+                    Run.deliver_now.is_(True),
+                    Run.hop == 0,
+                    Run.id != run.id,
+                )
+                .values(status="cancelled", error=READ_WHILE_WORKING, finished_at=utcnow(), taken_by_run_id=run.id)
+                .returning(Run.id)
+            )
+        ).all()
+    }
     taken = (
         await db.execute(
-            update(Run)
-            .where(
-                Run.thread_id == run.thread_id,
-                Run.bot_id == run.bot_id,
-                Run.requester_id == run.requester_id,
-                Run.status == "queued",
-                Run.deliver_now.is_(True),
-                Run.hop == 0,
-                Run.id != run.id,
+            select(Run.id, Run.trigger_message_id).where(
+                Run.taken_by_run_id == run.id, Run.trigger_message_id.is_not(None)
             )
-            .values(status="cancelled", error=READ_WHILE_WORKING, finished_at=utcnow())
-            .returning(Run.id, Run.trigger_message_id)
         )
     ).all()
-    run_of = {row.trigger_message_id: row.id for row in taken if row.trigger_message_id is not None}
+    run_of = {row.trigger_message_id: row.id for row in taken if str(row.trigger_message_id) not in already}
     if not run_of:
         return []
     rows = (
@@ -954,6 +969,26 @@ async def take_new_messages(db: AsyncSession, run_id: uuid.UUID) -> list[NewMess
     ).all()
     handles = await _handles_of_cards(db, [row.parts for row in rows])
     return [
-        NewMessage(message_id=row.id, run_id=run_of[row.id], line=_line(row, bot_id=run.bot_id, handles=handles))
+        NewMessage(
+            message_id=row.id,
+            run_id=run_of[row.id],
+            line=_line(row, bot_id=run.bot_id, handles=handles),
+            fresh=run_of[row.id] in fresh,
+        )
         for row in rows
     ]
+
+
+async def give_back(db: AsyncSession, run_id: uuid.UUID, message_ids: Collection[uuid.UUID]) -> list[Run]:
+    """A step that took these messages failed before the model read them: their own runs are queued
+    again (unlinked), so each message is still answered. The caller starts the returned runs and commits."""
+    if not message_ids:
+        return []
+    return list(
+        await db.scalars(
+            update(Run)
+            .where(Run.taken_by_run_id == run_id, Run.trigger_message_id.in_(message_ids), Run.status == "cancelled")
+            .values(status="queued", error=None, finished_at=None, taken_by_run_id=None)
+            .returning(Run)
+        )
+    )

@@ -52,6 +52,7 @@ export function useVoiceRecorder({
   const [analyser, setAnalyser] = useState<AnalyserNode | null>(null);
   const current = useRef<Recording | null>(null);
   const starting = useRef(false);
+  const mounted = useRef(true);
   const callbacks = useRef({ onRecorded, onError });
   useEffect(() => {
     callbacks.current = { onRecorded, onError };
@@ -95,16 +96,34 @@ export function useVoiceRecorder({
       });
     } catch (error) {
       starting.current = false;
+      if (!mounted.current) return;
       setPhase("idle");
       callbacks.current.onError(microphoneError(error));
       return;
     }
+    // Left the chat while the browser asked: let the microphone go at once.
+    if (!mounted.current) {
+      stream.getTracks().forEach((track) => track.stop());
+      starting.current = false;
+      return;
+    }
     const mimeType = pickMimeType((type) => MediaRecorder.isTypeSupported(type));
-    const recorder = new MediaRecorder(stream, mimeType ? { mimeType, audioBitsPerSecond: 48_000 } : undefined);
-    const context = new AudioContext();
-    const node = context.createAnalyser();
-    node.fftSize = 1024;
-    context.createMediaStreamSource(stream).connect(node);
+    let recorder: MediaRecorder;
+    let context: AudioContext;
+    let node: AnalyserNode;
+    try {
+      recorder = new MediaRecorder(stream, mimeType ? { mimeType, audioBitsPerSecond: 48_000 } : undefined);
+      context = new AudioContext();
+      node = context.createAnalyser();
+      node.fftSize = 1024;
+      context.createMediaStreamSource(stream).connect(node);
+    } catch {
+      stream.getTracks().forEach((track) => track.stop());
+      starting.current = false;
+      setPhase("idle");
+      callbacks.current.onError(CANT_RECORD);
+      return;
+    }
     const startedAt = performance.now();
     const recording: Recording = { recorder, stream, context, chunks: [], keep: true, timer: 0 };
     recorder.ondataavailable = (event) => {
@@ -130,6 +149,13 @@ export function useVoiceRecorder({
   }, [finish, release]);
 
   // Leaving the chat mid-recording throws the recording away and frees the microphone.
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+    };
+  }, []);
+
   useEffect(
     () => () => {
       const recording = current.current;

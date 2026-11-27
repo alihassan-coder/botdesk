@@ -163,7 +163,10 @@ model step a working run takes the queued `deliver_now` runs of its own bot, cha
 (`run_service.take_new_messages`: one `UPDATE … WHERE status = 'queued' RETURNING`). Their messages join its
 conversation ("Ali sent a new message while you were working…"), and their runs end `cancelled` with "Read by the run
 that was working." (a `run_finished` event each, and a `message_read` event per message). If the working run ends first,
-the queued run simply answers the message, so it is always answered exactly once.
+the queued run simply answers the message, so it is always answered exactly once. A taken run records the run that took
+it (`taken_by_run_id`): after a restart the working run reads it again (its state lists the ids it already holds), and if the
+model step that took it fails (not Stop), the message's own run is queued again (`run_service.give_back`; the jobs go in a
+transaction of their own, because a refused duplicate job would undo the requeue).
 
 ### Background jobs
 

@@ -4,7 +4,7 @@ import { actions } from "@/data/store";
 import { readOAuthReturn } from "@/lib/connections";
 import { browser } from "@/lib/navigate";
 import { renderUI } from "@/test/render";
-import { apiMe, apiOrg, signInOnApi, withFakeApi } from "@/test/fake-api";
+import { apiMe, apiOrg, apiScout, signInOnApi, withFakeApi } from "@/test/fake-api";
 import { AppsScreen } from "./apps-screen";
 
 
@@ -127,6 +127,31 @@ describe("Connect apps on the API", () => {
 
     expect(await screen.findByText("Try", { exact: false, selector: "span" })).toBeInTheDocument();
     expect(api.sent.at(-1)).toEqual({ key: "POST /api/v1/orgs/o1/connections", body: { connectorId: "demo", ownerKind: "member", accountLabel: "Try", apiKey: "made-up-key" } });
+  });
+
+  it("connects an account as a bot's own, picked from the bots", async () => {
+    serve([demo]);
+    api.routes["GET /api/v1/orgs/o1/bots"] = { status: 200, body: [apiScout, { ...apiScout, id: "b2", name: "Reader", handle: "reader" }] };
+    api.routes["POST /api/v1/orgs/o1/connections"] = { status: 201, body: { ...zaraGmail, id: "c2", connectorId: "demo", authType: "api_key", accountLabel: "Try" } };
+    await signInOnApi();
+    const { user } = renderUI(<AppsScreen />);
+
+    await user.click(await screen.findByRole("button", { name: "Connect Demo" }));
+    await user.click(screen.getByRole("radio", { name: /A bot/ }));
+    const whichBot = screen.getByRole("combobox", { name: "Which bot" });
+    expect(whichBot).toHaveTextContent("Scout"); // the first bot until you pick another
+    await user.click(whichBot);
+    await user.click(screen.getByRole("option", { name: "Reader" }));
+    await user.type(screen.getByLabelText("Account name"), "Try");
+    await user.type(screen.getByLabelText("API key"), "made-up-key");
+    await user.click(screen.getByRole("button", { name: "Connect" }));
+
+    await vi.waitFor(() =>
+      expect(api.sent.at(-1)).toEqual({
+        key: "POST /api/v1/orgs/o1/connections",
+        body: { connectorId: "demo", ownerKind: "bot", botId: "b2", accountLabel: "Try", apiKey: "made-up-key" },
+      }),
+    );
   });
 
   it("lists your connections, offers Reconnect when one broke, and disconnects after a confirm", async () => {

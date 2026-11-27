@@ -1,9 +1,12 @@
 import { Checkbox } from "@/components/ui/checkbox";
 import { Field, FieldDescription, FieldError, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
-import { NativeSelect, NativeSelectOption } from "@/components/ui/native-select";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import type { ArgField } from "@/lib/args-form";
+
+/** Radix Select can't hold an empty value, so an optional choice's "None" has a name of its own. */
+const NONE = "__none__";
 
 interface ArgFieldInputProps {
   field: ArgField;
@@ -41,12 +44,18 @@ export function ArgFieldInput({ field, value, error, idPrefix, onChange }: ArgFi
         {!field.required && <span className="font-normal"> (optional)</span>}
       </FieldLabel>
       {field.kind === "enum" ? (
-        <NativeSelect {...common} className="w-full" onChange={(e) => onChange(e.target.value)}>
-          {!field.required && <NativeSelectOption value="">None</NativeSelectOption>}
-          {field.options?.map((option) => (
-            <NativeSelectOption key={option} value={option}>{option}</NativeSelectOption>
-          ))}
-        </NativeSelect>
+        // A required choice with nothing picked yet shows "Pick one" (an empty value is the placeholder).
+        <Select value={text === "" && !field.required ? NONE : text} required={field.required} onValueChange={(v) => onChange(v === NONE ? "" : v)}>
+          <SelectTrigger id={id} aria-invalid={invalid} aria-describedby={describedBy} className="w-full">
+            <SelectValue placeholder="Pick one" />
+          </SelectTrigger>
+          <SelectContent>
+            {!field.required && <SelectItem value={NONE}>None</SelectItem>}
+            {field.options?.map((option) => (
+              <SelectItem key={option} value={option}>{option}</SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
       ) : field.kind === "textarea" ? (
         <Textarea {...common} rows={5} maxLength={field.maxLength} onChange={(e) => onChange(e.target.value)} />
       ) : (

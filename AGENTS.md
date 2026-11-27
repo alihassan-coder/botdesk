@@ -14,7 +14,7 @@ Open-source (MIT) Grok Bot: a team of always-on AI bots that work in your apps, 
 ## Rules
 
 - **Mock boundary.** Screens read data only through `apps/web/src/data/store.ts` (hooks + actions) and types in `apps/web/src/data/types.ts`. Only `store.ts` imports `data/mock/`, so the API can replace the mock in one file.
-- **Prebuilt first.** Use shadcn/ui components (`apps/web/src/components/ui`, Radix base, Nova preset) and add more with `pnpm dlx shadcn@latest add <name>` before writing custom UI.
+- **Prebuilt first.** Use shadcn/ui components (`apps/web/src/components/ui`, Radix base, Nova preset) and add more with `pnpm dlx shadcn@latest add <name>` before writing custom UI. Every dropdown is `Select` (`ui/select`); Radix holds no empty value, so "none" gets a named value (`const NO_LEAD = "none"` in `group-lead.tsx`).
 - **Licenses.** Dependencies must be MIT-compatible (MIT, Apache-2.0, BSD, ISC). SSPL, Elastic and AGPL need an ADR.
 - **No Grok/xAI assets.** Match Grok Bot's flows and layout; use BotDesk's own name, colours and icons.
 - **Network is slow** on the owner's machine: batch installs, avoid cloning large repos (read them on GitHub instead).

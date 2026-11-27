@@ -34,7 +34,8 @@ describe("Review tools (an MCP server's tools, ADR 0012 §4)", () => {
     const item = screen.getByRole("listitem", { name: "search" });
     expect(within(item).getByText("New")).toBeInTheDocument();
     expect(within(item).getByRole("checkbox", { name: "Offer to bots" })).toBeChecked(); // starts on, so approving offers it
-    await user.selectOptions(within(item).getByRole("combobox", { name: "Risk of search" }), "read");
+    await user.click(within(item).getByRole("combobox", { name: "Risk of search" }));
+    await user.click(screen.getByRole("option", { name: "Reads your data" }));
     expect(within(item).getByText(/This change is recorded in the audit log/)).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Approve and save" }));
 

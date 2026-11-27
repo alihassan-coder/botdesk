@@ -3,13 +3,16 @@ import Link from "next/link";
 import { ConnectorLogo } from "@/components/connector-logo";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { NativeSelect, NativeSelectOption } from "@/components/ui/native-select";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Switch } from "@/components/ui/switch";
 import { actions, useAccountConnections, useBotTools, useCurrentUser } from "@/data/store";
 import type { AccountConnection, Bot, BotToolPlugin, BotTrigger } from "@/data/types";
 import { ToolList } from "@/features/apps/tool-list";
 import { bindableConnections } from "@/lib/connections";
+
+/** Radix Select can't hold an empty value, so "No account" has a name of its own (account ids never look like it). */
+const NO_ACCOUNT = "none";
 
 /**
  * A bot's Tools tab: which plugins it may use, and which connected account each works through.
@@ -111,15 +114,18 @@ function PluginCard({
       {p.authType && (
         <div className="flex flex-col gap-1.5">
           <label htmlFor={selectId} className="text-xs font-medium text-muted-foreground">Account</label>
-          <NativeSelect id={selectId} size="sm" className="w-full" value={p.connectionId ?? ""} onChange={(e) => onChange({ connectionId: e.target.value || null })}>
-            <NativeSelectOption value="">No account</NativeSelectOption>
-            {current && <NativeSelectOption value={current}>Someone else&apos;s account</NativeSelectOption>}
-            {choices.map((c) => (
-              <NativeSelectOption key={c.id} value={c.id}>
-                {c.accountLabel} ({c.ownerKind === "member" ? "yours" : c.ownerKind === "bot" ? "this bot's" : "organization"})
-              </NativeSelectOption>
-            ))}
-          </NativeSelect>
+          <Select value={p.connectionId ?? NO_ACCOUNT} onValueChange={(value) => onChange({ connectionId: value === NO_ACCOUNT ? null : value })}>
+            <SelectTrigger id={selectId} size="sm" className="w-full"><SelectValue /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value={NO_ACCOUNT}>No account</SelectItem>
+              {current && <SelectItem value={current}>Someone else&apos;s account</SelectItem>}
+              {choices.map((c) => (
+                <SelectItem key={c.id} value={c.id}>
+                  {c.accountLabel} ({c.ownerKind === "member" ? "yours" : c.ownerKind === "bot" ? "this bot's" : "organization"})
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
           {choices.length === 0 && (
             <p className="text-xs text-muted-foreground">
               No account connected yet. <Link href="/apps" className="font-medium text-foreground underline underline-offset-4">Connect one</Link>

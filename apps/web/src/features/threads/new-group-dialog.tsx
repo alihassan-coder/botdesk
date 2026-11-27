@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Field, FieldError, FieldGroup, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
-import { NativeSelect, NativeSelectOption } from "@/components/ui/native-select";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { actions, useBots, useCurrentUser, useUsers } from "@/data/store";
 import { BotAvatar, MemberAvatar } from "@/features/bots/bot-avatar";
 import { GroupPickList } from "./group-pick-list";
@@ -92,11 +92,14 @@ function NewGroupForm({ onCancel, onCreated }: { onCancel: () => void; onCreated
       {botIds.length > 1 && (
         <Field>
           <FieldLabel htmlFor="group-lead">Lead</FieldLabel>
-          <NativeSelect id="group-lead" className="w-full" value={leadBotId} onChange={(e) => setChosenLead(e.target.value)}>
-            {botIds.map((botId) => (
-              <NativeSelectOption key={botId} value={botId}>{bots.find((b) => b.id === botId)?.name}</NativeSelectOption>
-            ))}
-          </NativeSelect>
+          <Select value={leadBotId} onValueChange={setChosenLead}>
+            <SelectTrigger id="group-lead" className="w-full"><SelectValue /></SelectTrigger>
+            <SelectContent>
+              {botIds.map((botId) => (
+                <SelectItem key={botId} value={botId}>{bots.find((b) => b.id === botId)?.name}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
         </Field>
       )}
       {error && <FieldError>{error}</FieldError>}

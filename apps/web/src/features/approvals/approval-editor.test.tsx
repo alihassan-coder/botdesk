@@ -36,7 +36,7 @@ describe("ApprovalEditor", () => {
     expect(screen.getByRole("textbox", { name: "To" })).toHaveValue("billing@globex.com");
     expect(screen.getByRole("spinbutton", { name: "Amount" })).toHaveValue(120);
     expect(screen.getByRole("checkbox", { name: "Rush" })).not.toBeChecked();
-    expect(screen.getByRole("combobox", { name: "Method" })).toHaveValue("card");
+    expect(screen.getByRole("combobox", { name: "Method" })).toHaveTextContent("card");
     // A long allowed length means a body of text.
     expect(screen.getByRole("textbox", { name: /Note/ }).tagName).toBe("TEXTAREA");
   });
@@ -48,7 +48,8 @@ describe("ApprovalEditor", () => {
     await user.clear(amount);
     await user.type(amount, "95");
     await user.click(screen.getByRole("checkbox", { name: "Rush" }));
-    await user.selectOptions(screen.getByRole("combobox", { name: "Method" }), "transfer");
+    await user.click(screen.getByRole("combobox", { name: "Method" }));
+    await user.click(screen.getByRole("option", { name: "transfer" }));
     await user.click(screen.getByRole("button", { name: "Approve edited version" }));
 
     expect(decide).toHaveBeenCalledWith("a_9", "approve", { to: "billing@globex.com", amount: 95, rush: true, method: "transfer", note: "" });

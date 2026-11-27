@@ -23,7 +23,9 @@ import { securityLabel } from "@/features/bots/security-levels";
 export function BotDetails({ bot }: { bot: Bot }) {
   return (
     <Tabs defaultValue="details" className="flex h-full flex-col gap-0">
-      <TabsList className="mx-4 mt-3 grid grid-cols-5">
+      {/* Five tabs in a narrow pane: small type so all of them fit, each as wide as its name (never squeezed
+          under it), and a pane narrower still scrolls them sideways. */}
+      <TabsList className="mx-4 mt-3 flex w-auto shrink-0 justify-start overflow-x-auto scroll-fade-x scrollbar-none *:text-xs">
         <TabsTrigger value="details">Details</TabsTrigger>
         <TabsTrigger value="tools">Tools</TabsTrigger>
         <TabsTrigger value="routines">Routines</TabsTrigger>

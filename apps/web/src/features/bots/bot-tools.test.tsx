@@ -16,6 +16,7 @@ describe("A bot's Tools tab in the demo", () => {
     expect(gmail).not.toBeChecked();
     await user.click(gmail);
     expect(gmail).toBeChecked();
+    await user.click(screen.getByRole("combobox", { name: "Account" }));
     expect(screen.getByRole("option", { name: "ali@acme.dev (yours)" })).toBeInTheDocument();
   });
 });
@@ -45,12 +46,12 @@ describe("A bot's Tools tab on the API", () => {
       status: 200,
       body: [account({}), account({ id: "c2", ownerUserId: "u2", accountLabel: "sara@example.com" }), account({ id: "c3", ownerKind: "org", ownerUserId: null, accountLabel: "team@example.com" })],
     };
-    await open();
+    const { user } = await open();
 
     expect(await screen.findByRole("switch", { name: "Use Demo" })).toBeChecked();
     const card = screen.getByRole("article", { name: "Gmail" });
-    const select = within(card).getByLabelText("Account");
-    expect(within(select).getAllByRole("option").map((o) => o.textContent)).toEqual([
+    await user.click(within(card).getByRole("combobox", { name: "Account" }));
+    expect(screen.getAllByRole("option").map((o) => o.textContent)).toEqual([
       "No account", "zara@example.com (yours)", "team@example.com (organization)",
     ]);
   });
@@ -69,9 +70,10 @@ describe("A bot's Tools tab on the API", () => {
     });
 
     api.routes["PUT /api/v1/orgs/o1/bots/b1/tools"] = { status: 200, body: { plugins: [plugin({}), { ...gmail, enabled: true, connectionId: "c1" }] } };
-    await user.selectOptions(screen.getByLabelText("Account"), "c1");
+    await user.click(screen.getByRole("combobox", { name: "Account" }));
+    await user.click(screen.getByRole("option", { name: "zara@example.com (yours)" }));
     await vi.waitFor(() => expect(api.sent.at(-1)?.body).toEqual({ plugins: [{ pluginId: "gmail", enabled: true, connectionId: "c1" }] }));
-    expect(screen.getByLabelText("Account")).toHaveValue("c1");
+    expect(screen.getByRole("combobox", { name: "Account" })).toHaveTextContent("zara@example.com (yours)");
   });
 
   it("'React to new email' shows under a connected Gmail and switching it saves only the trigger", async () => {
@@ -115,7 +117,8 @@ describe("A bot's Tools tab on the API", () => {
     api.routes["PUT /api/v1/orgs/o1/bots/b1/tools"] = { status: 403, body: { detail: "Only that member can turn on their own account for a bot." } };
     const { user } = await open();
 
-    await user.selectOptions(await screen.findByLabelText("Account"), "c1");
+    await user.click(await screen.findByRole("combobox", { name: "Account" }));
+    await user.click(screen.getByRole("option", { name: "zara@example.com (yours)" }));
     expect(await screen.findByRole("alert")).toHaveTextContent("Only that member can turn on their own account for a bot.");
   });
 

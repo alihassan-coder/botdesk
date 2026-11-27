@@ -39,8 +39,9 @@ describe("NewGroupDialog", () => {
 
     await user.click(screen.getByRole("checkbox", { name: /Chief of staff/ }));
     const lead = screen.getByRole("combobox", { name: "Lead" });
-    expect(lead).toHaveValue("b_talent");
-    await user.selectOptions(lead, "Chief");
+    expect(lead).toHaveTextContent("Talent Scout");
+    await user.click(lead);
+    await user.click(screen.getByRole("option", { name: "Chief" }));
     await user.click(screen.getByRole("button", { name: "Create" }));
 
     expect(getStoreSnapshot().threads[0]).toMatchObject({ title: "Hiring", leadBotId: "b_chief" });

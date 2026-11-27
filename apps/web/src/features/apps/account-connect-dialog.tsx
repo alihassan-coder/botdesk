@@ -7,7 +7,7 @@ import { ConnectorLogo } from "@/components/connector-logo";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Field, FieldDescription, FieldLabel, FieldLegend, FieldSet } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
-import { NativeSelect, NativeSelectOption } from "@/components/ui/native-select";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { actions, useBots, useCurrentUser } from "@/data/store";
 import type { ConnectionOwner, ServerConnector } from "@/data/types";
@@ -77,9 +77,12 @@ function ConnectForm({ connector: c, onClose, returnTo }: { connector: ServerCon
           {isAdmin && <OwnerOption value="org" label="The organization" hint="Shared: any bot it's turned on for can use it." />}
         </RadioGroup>
         {ownerKind === "bot" && (
-          <NativeSelect aria-label="Which bot" value={botId} onChange={(e) => setBotId(e.target.value)} className="w-full">
-            {bots.map((b) => <NativeSelectOption key={b.id} value={b.id}>{b.name}</NativeSelectOption>)}
-          </NativeSelect>
+          <Select value={botId} onValueChange={setBotId}>
+            <SelectTrigger aria-label="Which bot" className="w-full"><SelectValue /></SelectTrigger>
+            <SelectContent>
+              {bots.map((b) => <SelectItem key={b.id} value={b.id}>{b.name}</SelectItem>)}
+            </SelectContent>
+          </Select>
         )}
       </FieldSet>
 

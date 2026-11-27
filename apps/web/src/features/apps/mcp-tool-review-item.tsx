@@ -2,7 +2,7 @@ import { TriangleAlert } from "lucide-react";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Checkbox } from "@/components/ui/checkbox";
-import { NativeSelect, NativeSelectOption } from "@/components/ui/native-select";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import type { McpTool, McpToolChoice, McpToolRisk } from "@/data/types";
 import { RISK } from "@/features/approvals/risk";
 import { MCP_TOOL_RISKS, isLowered } from "@/lib/mcp-review";
@@ -57,10 +57,12 @@ export function McpToolReviewItem({
           </label>
           <label className="flex items-center gap-2 text-sm">
             Risk
-            <NativeSelect size="sm" value={choice.risk} disabled={!canEdit} aria-label={`Risk of ${title}`}
-              onChange={(e) => onChange({ ...choice, risk: e.target.value as McpToolRisk })}>
-              {MCP_TOOL_RISKS.map((risk) => <NativeSelectOption key={risk} value={risk}>{RISK[risk].label}</NativeSelectOption>)}
-            </NativeSelect>
+            <Select value={choice.risk} disabled={!canEdit} onValueChange={(risk) => onChange({ ...choice, risk: risk as McpToolRisk })}>
+              <SelectTrigger size="sm" aria-label={`Risk of ${title}`}><SelectValue /></SelectTrigger>
+              <SelectContent>
+                {MCP_TOOL_RISKS.map((risk) => <SelectItem key={risk} value={risk}>{RISK[risk].label}</SelectItem>)}
+              </SelectContent>
+            </Select>
           </label>
         </div>
       )}

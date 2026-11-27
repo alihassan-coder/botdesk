@@ -304,8 +304,14 @@ def _denied_by_a_person(execution: ToolExecution, approval_status: str | None) -
     return approval_status in ("denied", "expired") and execution.status == "denied"
 
 
+# Tools whose saved card keeps what was run and what came back (a command and its output), so
+# the chat still shows them after a reload (ADR 0020). Their results are already cut short.
+_KEEPS_ARGS_AND_RESULT = ("computer.",)
+
+
 def tool_call_part(execution: ToolExecution) -> dict[str, Any]:
-    """A `tool-call` message part. Same fields as the `tool_finished` event the web shows live."""
+    """A `tool-call` message part. Same fields as the `tool_finished` event the web shows live;
+    a computer tool's also keeps its arguments and its result."""
     part: dict[str, Any] = {
         "type": "tool-call",
         "toolExecutionId": str(execution.id),
@@ -314,6 +320,10 @@ def tool_call_part(execution: ToolExecution) -> dict[str, Any]:
     }
     if execution.error and execution.status != "succeeded":
         part["error"] = execution.error
+    if execution.tool_name.startswith(_KEEPS_ARGS_AND_RESULT):
+        part["args"] = execution.args
+        if execution.status == "succeeded" and execution.result is not None:
+            part["result"] = execution.result
     return part
 
 

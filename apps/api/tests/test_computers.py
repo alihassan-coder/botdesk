@@ -15,6 +15,7 @@ from typing import Any, cast
 import httpx
 import pytest
 from fastapi import FastAPI
+from pydantic import ValidationError
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
@@ -26,6 +27,7 @@ from src.computers.base import (
     MayHaveRun,
     NoRoom,
     NotAllowed,
+    NotThere,
     OutOfCredit,
     RateLimited,
     Unreachable,
@@ -593,3 +595,118 @@ def test_settings_default_to_orgos_list_price_and_a_fake_only_outside_production
     assert Settings(environment="development", orgo_base_url=fake, _env_file=None).orgo_api_url == fake
     production = Settings(environment="production", orgo_base_url=fake, _env_file=None)
     assert production.orgo_api_url == "https://www.orgo.ai/api"
+
+
+# Never losing track of a computer that runs
+
+
+async def test_a_404_on_an_app_or_link_is_not_a_missing_computer() -> None:
+    def missing(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(404, json={"error": "Not found"})
+
+    orgo = OrgoComputers(KEY, base_url=API, transport=httpx.MockTransport(missing))
+    with pytest.raises(NotThere, match="can't make preview links"):
+        await orgo.add_preview("pc-1", 3000)
+    with pytest.raises(NotThere, match="no such app"):
+        await orgo.app_logs("pc-1", "app-1", lines=10)
+    with pytest.raises(Gone):  # only the computer's own calls mean it's gone
+        await orgo.bash("pc-1", "ls", seconds=10)
+
+
+async def test_the_key_stays_while_a_computer_cant_be_stopped(desk: Desk) -> None:
+    await desk.add_key()
+    bot_id = await desk.cloud_bot()
+    await desk.computers.ensure_running(desk.org_id, uuid.UUID(bot_id))
+    desk.orgo.refuse[("POST", "/stop")] = (409, {"error": "Busy", "code": "COMPUTER_BUSY"})
+
+    refused = await desk.client.delete(f"{desk.org}/computer-provider")
+
+    assert refused.status_code == 409
+    assert refused.json()["detail"].startswith("These computers are still on at Orgo, so the key stays: botdesk-coder.")
+    assert (await desk.client.get(f"{desk.org}/computer-provider")).json()["provider"] == "orgo"
+    row = await desk.row(bot_id)
+    assert row is not None and row.status == "running" and row.started_at is not None  # still counted
+
+    del desk.orgo.refuse[("POST", "/stop")]
+    assert (await desk.client.delete(f"{desk.org}/computer-provider")).status_code == 204
+
+
+async def test_a_removed_bots_computer_is_deleted_until_orgo_confirms(desk: Desk) -> None:
+    await desk.add_key()
+    bot_id = await desk.cloud_bot()
+    await desk.computers.ensure_running(desk.org_id, uuid.UUID(bot_id))
+    desk.orgo.refuse[("DELETE", "/computers/pc-1")] = (500, {"error": "Try later"})
+
+    assert (await desk.client.delete(f"{desk.org}/bots/{bot_id}")).status_code == 204
+
+    async with desk.app.state.sessionmaker() as db:
+        (tombstone,) = list(await db.scalars(select(BotComputer)))
+    assert (tombstone.bot_id, tombstone.status, tombstone.remote_id) == (None, "deleting", "pc-1")
+    assert "pc-1" in desk.orgo.computers and await desk.usage() == []  # its time counts until it's gone
+    assert (await desk.client.delete(f"{desk.org}/computer-provider")).status_code == 409  # still on
+
+    del desk.orgo.refuse[("DELETE", "/computers/pc-1")]
+    env = cast("JobEnv", type("Env", (), {"runs": desk.app.state.runs})())
+    await tasks.stop_idle_computers(env, int(utcnow().timestamp()))
+
+    assert "pc-1" not in desk.orgo.computers
+    async with desk.app.state.sessionmaker() as db:
+        assert list(await db.scalars(select(BotComputer))) == []
+    (usage,) = await desk.usage()
+    assert usage.bot_id is None and usage.kind == "computer"
+
+
+async def test_two_idle_stops_at_once_stop_a_computer_once(own_db: OwnDb) -> None:
+    await own_db.computers.ensure_running(own_db.org_id, own_db.bot_id)
+    async with own_db.sessionmaker() as db:
+        await db.execute(update(BotComputer).values(last_used_at=utcnow() - timedelta(minutes=30)))
+        await db.commit()
+
+    first, second = await asyncio.gather(own_db.computers.stop_idle(utcnow()), own_db.computers.stop_idle(utcnow()))
+
+    assert first + second == 1
+    assert own_db.orgo.called("POST", "/computers/pc-1/stop") == 1
+    async with own_db.sessionmaker() as db:
+        usage = list(await db.scalars(select(UsageRecord)))
+    assert len(usage) == 1
+
+
+async def test_a_computer_used_since_the_idle_stop_looked_keeps_running(desk: Desk) -> None:
+    await desk.add_key()
+    bot_id = await desk.cloud_bot()
+    await desk.computers.ensure_running(desk.org_id, uuid.UUID(bot_id))
+    async with desk.app.state.sessionmaker() as db:
+        await db.execute(update(BotComputer).values(last_used_at=utcnow() - timedelta(minutes=30)))
+        await db.commit()
+    await desk.computers.touch(uuid.UUID(bot_id), force=True)  # a tool call starts
+
+    assert await desk.computers.stop_idle(utcnow()) == 0
+    assert desk.orgo.called("POST", "/computers/pc-1/stop") == 0
+
+
+def test_the_idle_stop_is_never_shorter_than_ten_minutes() -> None:
+    with pytest.raises(ValidationError):
+        Settings(environment="test", computer_idle_minutes=5, _env_file=None)
+    assert Settings(environment="test", computer_idle_minutes=10, _env_file=None).computer_idle_minutes == 10
+
+
+async def test_another_accounts_key_stops_the_old_computers_first(desk: Desk) -> None:
+    await desk.add_key()
+    bot_id = await desk.cloud_bot()
+    await desk.computers.ensure_running(desk.org_id, uuid.UUID(bot_id))
+    new_key = "sk_live_another_account_5555"
+    desk.orgo.key, desk.orgo.workspaces = new_key, []  # another account: the old key no longer works here
+
+    refused = await desk.add_key(new_key)
+
+    assert refused.status_code == 409 and "botdesk-coder" in refused.json()["detail"]
+    assert (await desk.client.get(f"{desk.org}/computer-provider")).json()["keyHint"] == KEY[-4:]
+
+    desk.orgo.key = KEY  # the old account answers again: stop it there, then switch
+    async with desk.app.state.sessionmaker() as db:
+        await db.execute(update(BotComputer).values(status="stopped", started_at=None))
+        await db.commit()
+    desk.orgo.key = new_key
+    switched = await desk.add_key(new_key)
+    assert switched.status_code == 200 and switched.json()["keyHint"] == new_key[-4:]
+    assert await desk.row(bot_id) is None  # the old account's computer is forgotten

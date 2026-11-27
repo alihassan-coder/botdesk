@@ -9,6 +9,7 @@ refusal, with the key scrubbed out in case it was ever echoed.
 
 import base64
 import contextlib
+import re
 from typing import Any, Literal
 
 import httpx
@@ -26,6 +27,7 @@ from src.computers.base import (
     NoRoom,
     NotAllowed,
     NotRunning,
+    NotThere,
     OutOfCredit,
     Preview,
     RateLimited,
@@ -45,6 +47,9 @@ RATE_LIMITED = "Orgo says that's too many requests for now. Try again in a minut
 UNREACHABLE = "BotDesk couldn't reach Orgo. Try again in a moment."
 NOT_REACHABLE_NOW = "Orgo couldn't reach the computer just now. Try again in a moment."
 NOT_RUNNING = "The computer isn't running."
+NO_APPS = "Orgo can't keep apps on this computer."
+NO_SUCH_APP = "Orgo has no such app on the computer (it may have been removed)."
+NO_LINKS = "Orgo says this account can't make preview links for this computer."
 ANSWER_LOST = (
     "The command was sent to the computer, but its answer was lost ({why}), so it may have run. "
     "Check on the computer before running it again."
@@ -183,7 +188,7 @@ class OrgoComputers:
     # Apps (Orgo's services) and preview links (its public URLs)
 
     async def apps(self, remote_id: str) -> list[App]:
-        answer = await self._json("GET", f"/computers/{remote_id}/services")
+        answer = await self._json("GET", f"/computers/{remote_id}/services", missing=NO_APPS)
         items = answer.get("services") if isinstance(answer, dict) else None
         return [app for item in items or [] if (app := _app(item)) is not None]
 
@@ -195,25 +200,29 @@ class OrgoComputers:
             body["cwd"] = cwd
         if port is not None:
             body["port"] = port
-        app = _app(await self._json("POST", f"/computers/{remote_id}/services", body=body))
+        app = _app(await self._json("POST", f"/computers/{remote_id}/services", body=body, missing=NO_APPS))
         if app is None:
             raise ComputerError("Orgo added the app but didn't describe it. List the apps to check.")
         return app
 
     async def app_logs(self, remote_id: str, app_id: str, *, lines: int) -> str:
-        answer = await self._json("GET", f"/computers/{remote_id}/services/{app_id}/logs", params={"lines": lines})
+        answer = await self._json(
+            "GET", f"/computers/{remote_id}/services/{app_id}/logs", params={"lines": lines}, missing=NO_SUCH_APP
+        )
         return _text(answer, "log")
 
     async def delete_app(self, remote_id: str, app_id: str) -> None:
-        await self._call("DELETE", f"/computers/{remote_id}/services/{app_id}")
+        await self._call("DELETE", f"/computers/{remote_id}/services/{app_id}", missing=NO_SUCH_APP)
 
     async def previews(self, remote_id: str) -> list[Preview]:
-        answer = await self._json("GET", f"/computers/{remote_id}/public-urls")
+        answer = await self._json("GET", f"/computers/{remote_id}/public-urls", missing=NO_LINKS)
         items = answer.get("public_urls") if isinstance(answer, dict) else None
         return [preview for item in items or [] if (preview := _preview(item)) is not None]
 
     async def add_preview(self, remote_id: str, port: int) -> Preview:
-        preview = _preview(await self._json("POST", f"/computers/{remote_id}/public-urls", body={"port": port}))
+        preview = _preview(
+            await self._json("POST", f"/computers/{remote_id}/public-urls", body={"port": port}, missing=NO_LINKS)
+        )
         if preview is None:
             raise ComputerError("Orgo made the link but didn't say its address. Try again.")
         return preview
@@ -230,8 +239,11 @@ class OrgoComputers:
         headers: dict[str, str] | None = None,
         limits: httpx.Timeout = TIMEOUT,
         doing: Doing = "act",
+        missing: str = "",
     ) -> Any:
-        response = await self._call(method, path, body=body, params=params, headers=headers, limits=limits, doing=doing)
+        response = await self._call(
+            method, path, body=body, params=params, headers=headers, limits=limits, doing=doing, missing=missing
+        )
         return _json_of(response)
 
     async def _call(
@@ -244,7 +256,10 @@ class OrgoComputers:
         headers: dict[str, str] | None = None,
         limits: httpx.Timeout = TIMEOUT,
         doing: Doing = "act",
+        missing: str = "",
     ) -> httpx.Response:
+        """`missing`: what a 404 means for something on the computer (an app, a link). Without it
+        the call is about the computer itself, and a 404 means the computer is gone."""
         try:
             async with httpx.AsyncClient(
                 base_url=self._base,
@@ -263,42 +278,42 @@ class OrgoComputers:
             raise Unreachable(UNREACHABLE) from None
         if response.is_success:
             return response
-        raise self._refusal(response, doing)
+        raise _refusal(response, doing, missing)
 
-    def _refusal(self, response: httpx.Response, doing: Doing) -> Exception:
-        status = response.status_code
-        said = self._said(response)
-        code = _code(response)
-        if status == 401:
-            return KeyRefused(KEY_REFUSED)
-        if status == 402:
-            return OutOfCredit(OUT_OF_CREDIT)
-        if status == 403:
-            return NotAllowed(f"Orgo didn't allow that{': ' + said if said else '.'}")
-        if status == 404:
-            return Gone(GONE)
-        if status == 409:
-            if code in _NOT_RUNNING_CODES:
-                return NotRunning(NOT_RUNNING)
-            if code == "NAME_TAKEN":
-                return NameTaken(said or "That name is taken at Orgo.")
-            return Busy(f"Orgo says the computer is busy{' (' + said + ')' if said else ''}. Try again in a moment.")
-        if status == 429:
-            return RateLimited(RATE_LIMITED)
-        if status == 503:
-            return NoRoom(NO_ROOM) if doing in ("create", "make") else Unreachable(NOT_REACHABLE_NOW)
-        if status == 400:
-            if "not available" in said.lower() or "no vm" in said.lower():
-                return NotRunning(NOT_RUNNING)
-            return ComputerError(f"Orgo refused that{': ' + said if said else '.'}")
-        if doing in ("run", "create"):  # it may have been done before failing
-            return MayHaveRun(ANSWER_LOST.format(why=f"Orgo answered {status}"))
-        return ComputerError(f"Orgo couldn't do that (it answered {status}).")
 
-    def _said(self, response: httpx.Response) -> str:
-        """Orgo's own short explanation (its `error` field), never the key."""
-        text = _text(_json_of(response, quiet=True), "error")[:300]
-        return text.replace(self._key, "…") if self._key else text
+def _refusal(response: httpx.Response, doing: Doing, missing: str) -> Exception:
+    """BotDesk's own words, plus Orgo's error code when it has one (a fixed name like
+    workspace_read_only). Never Orgo's free text: it could repeat what was sent (a command), and a
+    tool's failure reaches the model as BotDesk's own words."""
+    status = response.status_code
+    code = _code(response)
+    because = f" ({code})" if code else ""
+    if status == 401:
+        return KeyRefused(KEY_REFUSED)
+    if status == 402:
+        return OutOfCredit(OUT_OF_CREDIT)
+    if status == 403:
+        return NotAllowed(f"Orgo didn't allow that{because}.")
+    if status == 404:
+        return NotThere(missing) if missing else Gone(GONE)
+    if status == 409:
+        if code in _NOT_RUNNING_CODES:
+            return NotRunning(NOT_RUNNING)
+        if code == "NAME_TAKEN":
+            return NameTaken("That name is taken at Orgo.")
+        return Busy(f"Orgo says the computer is busy{because}. Try again in a moment.")
+    if status == 429:
+        return RateLimited(RATE_LIMITED)
+    if status == 503:
+        return NoRoom(NO_ROOM) if doing in ("create", "make") else Unreachable(NOT_REACHABLE_NOW)
+    if status == 400:
+        said = _text(_json_of(response, quiet=True), "error").lower()
+        if "not available" in said or "no vm" in said:
+            return NotRunning(NOT_RUNNING)
+        return ComputerError(f"Orgo refused that{because}.")
+    if doing in ("run", "create"):  # it may have been done before failing
+        return MayHaveRun(ANSWER_LOST.format(why=f"Orgo answered {status}"))
+    return ComputerError(f"Orgo couldn't do that (it answered {status}).")
 
 
 def _json_of(response: httpx.Response, *, quiet: bool = False) -> Any:
@@ -311,7 +326,9 @@ def _json_of(response: httpx.Response, *, quiet: bool = False) -> Any:
 
 
 def _code(response: httpx.Response) -> str:
-    return _text(_json_of(response, quiet=True), "code")
+    """Orgo's error code, when it is one (letters, digits and _ only, at most 60)."""
+    code = _text(_json_of(response, quiet=True), "code")
+    return code if re.fullmatch(r"[A-Za-z0-9_]{1,60}", code) else ""
 
 
 def _why(error: httpx.HTTPError) -> str:

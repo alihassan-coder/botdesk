@@ -34,6 +34,37 @@ def _app_port(port: int | None) -> int | None:
     return port
 
 
+HOME_ONLY = "Copy files into your home folder, like ~/app/data.csv."
+NO_HIDDEN = (
+    "Not into a hidden file or folder (a name starting with .): those are settings, and some make "
+    "programs run (.git/config, .bashrc). Change those with computer.run, which a person approves."
+)
+
+
+def home_path(path: str) -> str:
+    """Where a copy may go on the computer: inside the home folder (~/…, a relative path, or
+    /root/…), with no hidden file or folder on the way, as ~/<path>. Raises ValueError saying why."""
+    path = path.strip()
+    if path.startswith("~/"):
+        inside = path[2:]
+    elif path.startswith("/root/"):
+        inside = path[len("/root/") :]
+    elif path.startswith(("/", "~")):
+        raise ValueError(HOME_ONLY)
+    else:
+        inside = path
+    names = inside.split("/")
+    if not inside or any(not name or name == ".." for name in names):
+        raise ValueError(HOME_ONLY)
+    if any(name.startswith(".") for name in names):
+        raise ValueError(NO_HIDDEN)
+    return f"~/{inside}"
+
+
+def _upload_to(path: str) -> str:
+    return home_path(path) if path.strip() else ""
+
+
 class ComputerAccess(Protocol):
     async def inspect(self, ctx: ToolContext, *, command: str, cwd: str) -> ToolResult: ...
     async def run(self, ctx: ToolContext, *, command: str, cwd: str, seconds: int) -> ToolResult: ...
@@ -117,8 +148,10 @@ class NoArgs(BaseModel):
 class UploadArgs(BaseModel):
     path: str = Field(min_length=1, max_length=300, description="The file in your Files, like reports/data.csv.")
     shared: bool = Field(default=False, description="True for the organization's shared folder; false for yours.")
-    to: str = Field(
-        default="", max_length=500, description="Where on the computer, like ~/app/data.csv. Empty: ~/<its name>."
+    to: Annotated[str, AfterValidator(_upload_to)] = Field(
+        default="",
+        max_length=500,
+        description="Where in your home folder on the computer, like ~/app/data.csv. Empty: ~/<its name>.",
     )
 
 
@@ -280,13 +313,16 @@ def manifest(access: ComputerAccess | None = None) -> PluginManifest:
             ToolSpec(
                 name="upload",
                 title="Copy a file to the computer",
-                description="Copy a file from your Files (or the shared folder) to your computer (up to 10 MB).",
+                description=(
+                    "Copy a file from your Files (or the shared folder) into your computer's home folder (up to "
+                    "10 MB; not into hidden files or folders). A person may be asked first."
+                ),
                 args_model=UploadArgs,
-                risk="write-internal",
+                risk="write-external",  # what lands on the computer can change what its programs do
                 handler=upload,
                 idempotent=True,
                 untrusted_output=True,
-                summarize=lambda args: f"Copy {args.path} to the computer",
+                summarize=lambda args: f"Copy {args.path} to {args.to or '~/'} on the bot's computer",
             ),
             ToolSpec(
                 name="download",

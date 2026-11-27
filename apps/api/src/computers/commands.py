@@ -37,7 +37,7 @@ _READERS: dict[str, tuple[str, tuple[str, ...]]] = {
     "grep": ("", ()),
     "egrep": ("", ()),
     "fgrep": ("", ()),
-    "rg": ("", ("--pre", "--pre-glob")),
+    "rg": ("z", ("--pre", "--pre-glob", "--hostname-bin", "--search-zip")),  # these run other programs
     "file": ("C", ("--compile",)),
     "stat": ("", ()),
     "du": ("", ()),
@@ -77,7 +77,9 @@ _READERS: dict[str, tuple[str, tuple[str, ...]]] = {
     "md5sum": ("", ()),
     "base64": ("", ()),
 }
-# Programs allowed only to say their version (`node --version`).
+# Programs allowed only to say their version (`node --version`). Not those whose project files can
+# make them run other code first: yarn (yarnPath), pnpm (packageManager), go (toolchain), cargo and
+# rustc (rust-toolchain.toml). And never `version` alone: `npm version` changes package.json.
 _VERSION_ONLY = frozenset(
     {
         "python",
@@ -85,15 +87,10 @@ _VERSION_ONLY = frozenset(
         "node",
         "npm",
         "npx",
-        "pnpm",
-        "yarn",
         "bun",
         "deno",
-        "go",
         "java",
         "javac",
-        "rustc",
-        "cargo",
         "pip",
         "pip3",
         "uv",
@@ -101,13 +98,31 @@ _VERSION_ONLY = frozenset(
         "gcc",
         "make",
         "ruby",
-        "php",
     }
 )
-_VERSION_ARGS = frozenset({"--version", "-V", "-v", "version", "-version"})
+_VERSION_ARGS = frozenset({"--version", "-V", "-v", "-version"})
 _FIND_REFUSED = frozenset({"-exec", "-execdir", "-ok", "-okdir", "-delete", "-fprint", "-fprint0", "-fprintf", "-fls"})
 _GIT_SUBCOMMANDS = frozenset({"status", "diff", "log", "show", "branch", "ls-files", "rev-parse", "blame", "remote"})
-_GIT_OUTPUT = ("--output", "--ext-diff", "--textconv")
+_GIT_OUTPUT = ("--output", "--ext-diff", "--textconv", "--show-signature")
+# Every inspect `git` runs with these first, whatever the repository's config says: no fsmonitor
+# program, no hooks, no external diff or signature program (`hardened`).
+GIT_SAFE_CONFIG = (
+    "-c",
+    "core.fsmonitor=false",
+    "-c",
+    "core.hooksPath=/dev/null",
+    "-c",
+    "diff.external=",
+    "-c",
+    "log.showSignature=false",
+)
+# ...and these right after the subcommand: no external diff or textconv program for files.
+_GIT_SAFE_OPTIONS = {
+    "diff": ("--no-ext-diff", "--no-textconv"),
+    "show": ("--no-ext-diff", "--no-textconv"),
+    "log": ("--no-ext-diff", "--no-textconv"),
+    "blame": ("--no-textconv",),
+}
 # `git branch`: only flags that list. A name without one of the list flags would make a branch.
 _BRANCH_LISTS = frozenset(
     {"-a", "--all", "-r", "--remotes", "-l", "--list", "-v", "-vv", "--verbose", "--show-current", "--no-color"}
@@ -145,6 +160,38 @@ def check(command: str) -> str | None:
         if refusal:
             return f"{refusal} {USE_RUN}"
     return None
+
+
+def hardened(command: str) -> str:
+    """The command as it is sent, once `check` allowed it: each `git` in it gets BotDesk's own
+    config and options first (`GIT_SAFE_CONFIG`), so a repository's config can't make a read run
+    a program. Everything else is sent as written."""
+    parts = []
+    for part in _scan(command).parts:
+        argv = shlex.split(part, posix=True)
+        parts.append(_hardened_git(argv) if argv[0] == "git" else part.strip())
+    return " | ".join(parts)
+
+
+def _hardened_git(argv: list[str]) -> str:
+    rest, before = list(argv[1:]), []
+    while rest and rest[0].startswith("-"):
+        flag = rest.pop(0)
+        before.append(flag)
+        if flag == "-C" and rest:
+            before.append(rest.pop(0))
+    subcommand, options = rest[0], rest[1:]
+    words = ["git", *GIT_SAFE_CONFIG, *before, subcommand, *_GIT_SAFE_OPTIONS.get(subcommand, ()), *options]
+    return " ".join(_quote(word) for word in words)
+
+
+def _quote(word: str) -> str:
+    """Quoted for the shell, with ~ still meaning the home folder."""
+    if word == "~":
+        return "~"
+    if word.startswith("~/"):
+        return "~/" + shlex.quote(word[2:])
+    return shlex.quote(word)
 
 
 def _scan(command: str) -> _Scan:

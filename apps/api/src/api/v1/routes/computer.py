@@ -18,19 +18,26 @@ async def get_computer_provider(access: OrgAccess, db: Db) -> ComputerProviderOu
 
 @provider_router.put("/computer-provider")
 async def choose_computer_provider(
-    body: ComputerProviderIn, access: OrgAccess, db: Db, settings: AppSettings, vault: Vault, outbound: Outbound
+    body: ComputerProviderIn,
+    access: OrgAccess,
+    db: Db,
+    runs: Runs,
+    settings: AppSettings,
+    vault: Vault,
+    outbound: Outbound,
 ) -> ComputerProviderOut:
     """Owners and admins: `{provider: "orgo", apiKey}`. The key is checked live at Orgo and the
     bots' computers go in its workspace "BotDesk" (made if missing). Leave `apiKey` out to check
     the saved key again."""
     return await computer_controller.choose_provider(
-        db, access, body, settings=settings, vault=vault, transport=outbound
+        db, access, body, runs=runs, settings=settings, vault=vault, transport=outbound
     )
 
 
 @provider_router.delete("/computer-provider", status_code=status.HTTP_204_NO_CONTENT)
 async def remove_computer_provider(access: OrgAccess, db: Db, runs: Runs) -> None:
-    """Owners and admins: stop the bots' computers (best effort), then forget the key."""
+    """Owners and admins: stop the bots' computers, then forget the key. 409 (the key stays) while
+    any is still on at Orgo."""
     await computer_controller.remove_provider(db, access, runs)
 
 

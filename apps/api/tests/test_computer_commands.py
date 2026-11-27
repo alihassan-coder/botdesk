@@ -3,7 +3,7 @@ tricky ways a "read" could still write a file or run something else refused."""
 
 import pytest
 
-from src.computers.commands import USE_RUN, check
+from src.computers.commands import GIT_SAFE_CONFIG, USE_RUN, check, hardened
 
 
 @pytest.mark.parametrize(
@@ -48,7 +48,7 @@ from src.computers.commands import USE_RUN, check
         "hostname -I",
         "node --version",
         "python3 -V",
-        "go version",
+        "npm --version",
         "uname -a",
         "which node",
         "tree -L 2",
@@ -134,6 +134,21 @@ def test_reading_commands_run(command: str) -> None:
         ("| ls", "both sides"),
         ("cat 'unclosed", "quote isn't closed"),
         ("", "no command"),
+        # Programs that would run other code first, and `version` that changes package.json.
+        ("go version", "isn't one of the programs"),
+        ("yarn --version", "isn't one of the programs"),
+        ("pnpm --version", "isn't one of the programs"),
+        ("cargo --version", "isn't one of the programs"),
+        ("npm version", "only shows its version"),
+        ("npm version patch", "only shows its version"),
+        # rg flags that run other programs.
+        ("rg --pre ./x.sh foo", "rg --pre"),
+        ("rg --pre-glob '*.pdf' --pre ./x.sh foo", "rg --pre-glob"),
+        ("rg --hostname-bin=./evil foo", "rg --hostname-bin"),
+        ("rg --hostname-b=./evil foo", "rg --hostname-b"),
+        ("rg -z foo", "rg -z"),
+        ("rg --search-zip foo", "rg --search-zip"),
+        ("git log --show-signature", "git log --show-signature"),
     ],
 )
 def test_anything_else_is_refused_saying_why(command: str, why: str) -> None:
@@ -151,3 +166,26 @@ def test_quotes_keep_operators_literal() -> None:
     assert check("grep 'a|b' notes.txt | wc -l") is None
     assert check('grep "x > y" notes.txt') is None
     assert check("grep \\; notes.txt") is None
+
+
+SAFE = " ".join(GIT_SAFE_CONFIG)
+
+
+def test_every_git_runs_with_botdesks_own_config_and_options_first() -> None:
+    """A repository's config (written by an upload, or cloned) can't make a read run a program:
+    no fsmonitor, no hooks, no external diff, textconv or signature program."""
+    assert SAFE == ("-c core.fsmonitor=false -c core.hooksPath=/dev/null -c diff.external= -c log.showSignature=false")
+    assert hardened("git status") == f"git {SAFE} status"
+    assert hardened("git -C ~/p status --short") == f"git {SAFE} -C ~/p status --short"
+    assert hardened("git --no-pager diff HEAD -- src | wc -l") == (
+        f"git {SAFE} --no-pager diff --no-ext-diff --no-textconv HEAD -- src | wc -l"
+    )
+    assert hardened("git show HEAD:package.json") == f"git {SAFE} show --no-ext-diff --no-textconv HEAD:package.json"
+    assert hardened("git log --oneline -n 5") == f"git {SAFE} log --no-ext-diff --no-textconv --oneline -n 5"
+    assert hardened("git blame src/app.py") == f"git {SAFE} blame --no-textconv src/app.py"
+    assert hardened("git log --format='%h %s'") == f"git {SAFE} log --no-ext-diff --no-textconv '--format=%h %s'"
+
+
+def test_other_commands_are_sent_as_written() -> None:
+    for command in ("ls ./*.py | wc -l", "grep -rn 'a|b' src", "cat package.json | jq '.scripts'"):
+        assert hardened(command) == command

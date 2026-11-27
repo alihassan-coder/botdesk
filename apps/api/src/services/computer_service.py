@@ -28,7 +28,7 @@ from datetime import datetime, timedelta
 from typing import Any
 
 import httpx
-from sqlalchemy import delete, or_, select, update
+from sqlalchemy import ColumnElement, and_, delete, or_, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
@@ -72,6 +72,7 @@ KEY_DIDNT_WORK = "That key didn't work: {why}"
 REFUSED_KEY = "Orgo refused it. Copy it again from orgo.ai/api-keys."
 NOT_RUNNING = "The computer isn't running. Start it first."
 OLD_ONE_GONE = "Your old computer was gone at Orgo, so this is a new one: the files and apps from before aren't on it."
+NOT_FOUND_NOW = "Orgo couldn't find that on the computer. Try again in a moment."
 GONE_NOW = (
     "Your computer was gone at Orgo, with its files. Try again: a new one will be made, and anything "
     "you need on it must be set up again."
@@ -103,40 +104,43 @@ def provider_for(key: str, settings: Settings, transport: httpx.AsyncBaseTranspo
     return OrgoComputers(key, base_url=settings.orgo_api_url, transport=transport)
 
 
-def _key_of(row: ProviderRow, vault: CredentialVault) -> str:
+def key_of(row: ProviderRow, vault: CredentialVault) -> str:
     key: str = json.loads(vault.unseal(row.encrypted_secret))["api_key"]
     return key
 
 
-async def choose_provider(
-    db: AsyncSession,
-    *,
-    org_id: uuid.UUID,
-    user_id: uuid.UUID,
-    body: ComputerProviderIn,
-    settings: Settings,
-    vault: CredentialVault,
-    transport: httpx.AsyncBaseTransport | None = None,
-) -> ProviderRow:
-    """Check the key live (`GET /api/me`), find or make the "BotDesk" workspace, and keep the key
-    sealed. The caller commits. Another account or workspace than before: the bots' computers
-    there are stopped (best effort, with the old key) and forgotten."""
-    existing = await find_provider(db, org_id)
+def key_to_check(existing: ProviderRow | None, body: ComputerProviderIn, vault: CredentialVault) -> str:
+    """The key sent, else the saved one (checking it again)."""
     if body.api_key:
-        key = body.api_key.strip()
-    elif existing is not None:
-        key = _key_of(existing, vault)
-    else:
-        raise BadRequest(NEEDS_KEY)
+        return body.api_key.strip()
+    if existing is not None:
+        return key_of(existing, vault)
+    raise BadRequest(NEEDS_KEY)
+
+
+async def check_key(key: str, settings: Settings, transport: httpx.AsyncBaseTransport | None) -> str:
+    """Network only, so call it with no transaction open: the key works (`GET /api/me`), and the id
+    of the "BotDesk" workspace (made if missing)."""
     orgo = provider_for(key, settings, transport)
     try:
         await orgo.check()
-        workspace_id = await orgo.workspace(WORKSPACE)
+        return await orgo.workspace(WORKSPACE)
     except ComputerError as error:
         why = REFUSED_KEY if isinstance(error, KeyRefused) else str(error)
         raise BadRequest(KEY_DIDNT_WORK.format(why=why)) from None
-    if existing is not None and existing.config.get("workspace_id") != workspace_id:
-        await _leave_workspace(db, org_id, provider_for(_key_of(existing, vault), settings, transport), settings)
+
+
+def save_provider(
+    db: AsyncSession,
+    *,
+    existing: ProviderRow | None,
+    org_id: uuid.UUID,
+    user_id: uuid.UUID,
+    key: str,
+    workspace_id: str,
+    vault: CredentialVault,
+) -> ProviderRow:
+    """Keep the checked key, sealed. The caller commits."""
     row = existing or ProviderRow(org_id=org_id, kind=KIND, created_by=user_id)
     row.provider = ORGO
     row.config = {"workspace_id": workspace_id, "status": "ok"}
@@ -147,34 +151,44 @@ async def choose_provider(
     return row
 
 
-async def _leave_workspace(db: AsyncSession, org_id: uuid.UUID, old: ComputerProvider, settings: Settings) -> None:
-    rows = list(await db.scalars(select(BotComputer).where(BotComputer.org_id == org_id)))
-    for row in rows:
-        if row.remote_id and row.status not in ("stopped", "stopping"):
-            try:
-                await old.stop(row.remote_id)
-            except (ComputerError, MayHaveRun) as error:
-                logger.warning("Computer %s at the old Orgo account wasn't stopped: %s", row.id, error)
-        bill(db, row, utcnow(), settings)
-    await db.execute(delete(BotComputer).where(BotComputer.org_id == org_id))
+def record_time(
+    db: AsyncSession,
+    *,
+    org_id: uuid.UUID,
+    bot_id: uuid.UUID | None,
+    provider: str,
+    since: datetime,
+    now: datetime,
+    settings: Settings,
+) -> None:
+    """A computer's running time from `since` to `now` as usage. The caller commits."""
+    hours = max((now - since).total_seconds(), 0.0) / 3600
+    usage_service.record(
+        db,
+        org_id=org_id,
+        bot_id=bot_id,
+        run_id=None,
+        provider=provider,
+        model_id=MODEL_ID,
+        input_tokens=0,
+        output_tokens=0,
+        cost_usd=round(hours * settings.orgo_price_per_hour, 6),
+        kind="computer",
+    )
 
 
 def bill(db: AsyncSession, row: BotComputer, now: datetime, settings: Settings) -> None:
     """Record the computer's running time since it started as usage, once. The caller commits."""
     if row.started_at is None:
         return
-    hours = max((now - row.started_at).total_seconds(), 0.0) / 3600
-    usage_service.record(
+    record_time(
         db,
         org_id=row.org_id,
         bot_id=row.bot_id,
-        run_id=None,
         provider=row.provider,
-        model_id=MODEL_ID,
-        input_tokens=0,
-        output_tokens=0,
-        cost_usd=round(hours * settings.orgo_price_per_hour, 6),
-        kind="computer",
+        since=row.started_at,
+        now=now,
+        settings=settings,
     )
     row.started_at = None
 
@@ -192,7 +206,7 @@ class Seen:
 
     id: uuid.UUID
     org_id: uuid.UUID
-    bot_id: uuid.UUID
+    bot_id: uuid.UUID | None
     remote_id: str
     name: str
     status: str
@@ -253,7 +267,7 @@ class Computers:
             row = await find_provider(db, org_id)
         if row is None:
             raise ComputerError(NO_PROVIDER)
-        provider = provider_for(_key_of(row, self.vault), self.settings, self.transport)
+        provider = provider_for(key_of(row, self.vault), self.settings, self.transport)
         return _Account(provider, str(row.config.get("workspace_id", "")))
 
     async def provider(self, org_id: uuid.UUID) -> ComputerProvider:
@@ -445,6 +459,19 @@ class Computers:
         if row_id is not None:
             await self._forget(row_id)
 
+    async def confirm_gone(self, bot_id: uuid.UUID, provider: ComputerProvider, remote_id: str) -> bool:
+        """After a 404: is the computer itself gone? Orgo is asked, and it's forgotten only then."""
+        try:
+            remote = await provider.get(remote_id)
+        except Gone:
+            remote = None
+        except (ComputerError, MayHaveRun):
+            return False  # can't tell: keep it
+        if remote is not None and remote.status != "gone":
+            return False
+        await self.forget_gone(bot_id)
+        return True
+
     async def mark_stopped(self, bot_id: uuid.UUID) -> None:
         """Orgo says it isn't running (stopped outside BotDesk): bill it and say so."""
         async with self.sessionmaker() as db:
@@ -487,27 +514,63 @@ class Computers:
         except Exception:
             logger.exception("Bot %s's computer didn't start.", bot_id)
 
-    async def stop(self, org_id: uuid.UUID, bot_id: uuid.UUID, *, idle_since: datetime | None = None) -> bool:
-        """Stop the bot's computer (its disk stays) and record its running time. `idle_since`: only
-        if nobody used it since then (the idle stop). True when a stop was asked for."""
+    async def stop(self, org_id: uuid.UUID, bot_id: uuid.UUID) -> bool:
+        """Stop the bot's computer (its disk stays) and record its running time. True when a stop
+        was asked for (False: it wasn't on)."""
+        claimed = await self._claim_stops(BotComputer.bot_id == bot_id)
+        for row_id, owner, remote_id in claimed:
+            await self._stop_at_orgo(owner, row_id, remote_id)
+        return bool(claimed)
+
+    async def _claim_stops(self, *which: ColumnElement[bool]) -> list[tuple[uuid.UUID, uuid.UUID, str]]:
+        """One atomic UPDATE marks these computers `stopping` (each is claimed by one caller only,
+        so a stop never races a tool call or another stop), and their running time is recorded in
+        the same transaction. Returns (row id, organization, Orgo's id) of each claimed."""
+        now = utcnow()
+        claim = (
+            update(BotComputer)
+            .where(BotComputer.remote_id != "", BotComputer.status.not_in(("stopped", "stopping", "deleting")), *which)
+            .values(status="stopping", error=None)
+            .returning(
+                BotComputer.id,
+                BotComputer.org_id,
+                BotComputer.bot_id,
+                BotComputer.provider,
+                BotComputer.remote_id,
+                BotComputer.started_at,
+            )
+            .execution_options(synchronize_session=False)
+        )
         async with self.sessionmaker() as db:
-            row = await db.scalar(select(BotComputer).where(BotComputer.bot_id == bot_id))
-            if row is None or not row.remote_id or row.status in ("stopped", "stopping"):
-                return False
-            if idle_since is not None:
-                used = row.last_used_at or row.started_at
-                if row.status != "running" or (used is not None and used >= idle_since):
-                    return False  # used since the idle stop looked
-            bill(db, row, utcnow(), self.settings)
-            row.status = "stopping"
-            row_id, remote_id = row.id, row.remote_id
+            claimed = (await db.execute(claim)).all()
+            for row in claimed:
+                if row.started_at is not None:
+                    record_time(
+                        db,
+                        org_id=row.org_id,
+                        bot_id=row.bot_id,
+                        provider=row.provider,
+                        since=row.started_at,
+                        now=now,
+                        settings=self.settings,
+                    )
+            if claimed:
+                await db.execute(
+                    update(BotComputer)
+                    .where(BotComputer.id.in_([row.id for row in claimed]))
+                    .values(started_at=None)
+                    .execution_options(synchronize_session=False)
+                )
             await db.commit()
+        return [(row.id, row.org_id, row.remote_id) for row in claimed]
+
+    async def _stop_at_orgo(self, org_id: uuid.UUID, row_id: uuid.UUID, remote_id: str) -> None:
         try:
             async with self.watching(org_id):
                 await (await self.provider(org_id)).stop(remote_id)
         except Gone:
             await self._forget(row_id)
-            return True
+            return
         except (ComputerError, MayHaveRun) as error:
             # Still running at Orgo: counted from now, and the idle stop tries again.
             async with self.sessionmaker() as db:
@@ -519,17 +582,65 @@ class Computers:
                 await db.commit()
             raise
         await self._set_status(row_id, "stopped")
-        return True
 
-    async def stop_all(self, org_id: uuid.UUID) -> None:
-        """Every running computer of the organization, best effort (removing its key)."""
-        async with self.sessionmaker() as db:
-            bots = list(await db.scalars(select(BotComputer.bot_id).where(BotComputer.org_id == org_id)))
-        for bot_id in bots:
+    async def release_all(self, org_id: uuid.UUID) -> list[str]:
+        """Before the organization's key goes: stop each of its computers and finish deleting its
+        removed bots'. The names of those still on at Orgo (empty: the key may go)."""
+        for row_id, owner, remote_id in await self._claim_stops(BotComputer.org_id == org_id):
             try:
-                await self.stop(org_id, bot_id)
-            except Exception as error:
-                logger.warning("Bot %s's computer wasn't stopped: %s", bot_id, error)
+                await self._stop_at_orgo(owner, row_id, remote_id)
+            except (ComputerError, MayHaveRun) as error:
+                logger.warning("Computer %s wasn't stopped: %s", row_id, error)
+        await self.retry_deletions(org_id)
+        being_made = and_(BotComputer.status == "creating", BotComputer.created_at > utcnow() - CREATOR_STALE)
+        async with self.sessionmaker() as db:
+            on = await db.scalars(
+                select(BotComputer.name)
+                .where(
+                    BotComputer.org_id == org_id,
+                    or_(
+                        being_made,
+                        BotComputer.status.in_(("running", "starting", "stopping", "deleting")),
+                        and_(BotComputer.status == "error", BotComputer.remote_id != ""),
+                    ),
+                )
+                .order_by(BotComputer.name)
+            )
+            return list(on)
+
+    async def leave_workspace(self, org_id: uuid.UUID, old: ComputerProvider) -> list[str]:
+        """The organization saves another Orgo account's key: its computers at the old one are
+        stopped (and removed bots' deleted) with the old key, then forgotten. The names of those
+        that couldn't be (then nothing is forgotten)."""
+        async with self.sessionmaker() as db:
+            rows = (
+                await db.execute(
+                    select(BotComputer.name, BotComputer.status, BotComputer.remote_id).where(
+                        BotComputer.org_id == org_id, BotComputer.remote_id != ""
+                    )
+                )
+            ).all()
+        still_on = []
+        for name, status, remote_id in rows:
+            try:
+                if status == "deleting":
+                    await old.delete(remote_id)
+                elif status != "stopped":
+                    await old.stop(remote_id)
+            except Gone:
+                continue
+            except (ComputerError, MayHaveRun) as error:
+                logger.warning("Computer %s at the old Orgo account wasn't stopped: %s", name, error)
+                still_on.append(name)
+        if still_on:
+            return still_on
+        now = utcnow()
+        async with self.sessionmaker() as db:
+            for row in await db.scalars(select(BotComputer).where(BotComputer.org_id == org_id)):
+                bill(db, row, now, self.settings)
+            await db.execute(delete(BotComputer).where(BotComputer.org_id == org_id))
+            await db.commit()
+        return []
 
     async def stop_soon(self, org_id: uuid.UUID, bot_id: uuid.UUID) -> None:
         """Stop it in the background, best effort (the bot was switched back to its browser)."""
@@ -555,22 +666,56 @@ class Computers:
         await self._forget(row_id)
 
     async def leaving(self, db: AsyncSession, org_id: uuid.UUID, bot_id: uuid.UUID) -> Callable[[], Awaitable[None]]:
-        """In the transaction that removes the bot: its running time is recorded; after the commit,
-        call what this returns to delete its computer at Orgo (best effort)."""
+        """In the transaction that removes the bot: its computer's row stays, as a tombstone
+        (`deleting`; the bot's id goes with the bot). After the commit, call what this returns: it
+        deletes the computer at Orgo. Until Orgo confirms, the idle job tries again every minute
+        (`retry_deletions`); its running time, up to the confirmed deletion, is recorded then."""
         row = await db.scalar(select(BotComputer).where(BotComputer.bot_id == bot_id))
-        if row is None or not row.remote_id:
+        if row is None:
             return _nothing
-        bill(db, row, utcnow(), self.settings)
-        provider_row = await find_provider(db, org_id)
-        remote_id = row.remote_id
-        if provider_row is None:
+        if not row.remote_id:  # nothing at Orgo
+            await db.delete(row)
             return _nothing
-        provider = provider_for(_key_of(provider_row, self.vault), self.settings, self.transport)
+        row.status = "deleting"
+        row_id = row.id
 
         async def delete_there() -> None:
-            await _quietly(provider.delete(remote_id))
+            await self.finish_deleting(row_id)
 
         return delete_there
+
+    async def finish_deleting(self, row_id: uuid.UUID) -> bool:
+        """Delete a removed bot's computer at Orgo; forget it once Orgo confirms (or has none)."""
+        async with self.sessionmaker() as db:
+            row = await db.get(BotComputer, row_id)
+            if row is None or row.status != "deleting":
+                return True
+            org_id, remote_id = row.org_id, row.remote_id
+        try:
+            async with self.watching(org_id):
+                await (await self.provider(org_id)).delete(remote_id)
+        except (ComputerError, MayHaveRun) as error:
+            logger.warning("A removed bot's computer %s isn't deleted yet: %s", remote_id, error)
+            return False
+        async with self.sessionmaker() as db:
+            row = await db.get(BotComputer, row_id)
+            if row is not None:
+                bill(db, row, utcnow(), self.settings)
+                await db.delete(row)
+            await db.commit()
+        return True
+
+    async def retry_deletions(self, org_id: uuid.UUID | None = None) -> int:
+        """Removed bots' computers Orgo hasn't confirmed deleting yet (all, or one organization's)."""
+        query = select(BotComputer.id).where(BotComputer.status == "deleting")
+        if org_id is not None:
+            query = query.where(BotComputer.org_id == org_id)
+        async with self.sessionmaker() as db:
+            waiting = list(await db.scalars(query))
+        done = 0
+        for row_id in waiting:
+            done += await self.finish_deleting(row_id)
+        return done
 
     async def view(self, org_id: uuid.UUID, bot_id: uuid.UUID) -> ComputerOut:
         """The Computer tab: the row, plus its apps and links when it runs (asked of Orgo)."""
@@ -602,23 +747,20 @@ class Computers:
         return await self.provider(org_id), remote_id
 
     async def stop_idle(self, now: datetime) -> int:
-        """The idle stop (every minute): running computers nobody used for COMPUTER_IDLE_MINUTES."""
+        """The idle stop (every minute): running computers nobody used for COMPUTER_IDLE_MINUTES,
+        claimed in one atomic UPDATE (a tool call that touched it first keeps it running)."""
         cutoff = now - timedelta(minutes=self.settings.computer_idle_minutes)
-        async with self.sessionmaker() as db:
-            idle = (
-                await db.execute(
-                    select(BotComputer.org_id, BotComputer.bot_id).where(
-                        BotComputer.status == "running",
-                        or_(BotComputer.last_used_at.is_(None), BotComputer.last_used_at < cutoff),
-                    )
-                )
-            ).all()
+        idle = await self._claim_stops(
+            BotComputer.status == "running",
+            or_(BotComputer.last_used_at.is_(None), BotComputer.last_used_at < cutoff),
+        )
         stopped = 0
-        for org_id, bot_id in idle:
+        for row_id, org_id, remote_id in idle:
             try:
-                stopped += await self.stop(org_id, bot_id, idle_since=cutoff)
+                await self._stop_at_orgo(org_id, row_id, remote_id)
+                stopped += 1
             except Exception as error:
-                logger.warning("Bot %s's idle computer wasn't stopped: %s", bot_id, error)
+                logger.warning("Idle computer %s wasn't stopped: %s", row_id, error)
         return stopped
 
     # Background work

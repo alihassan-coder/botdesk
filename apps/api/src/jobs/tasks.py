@@ -20,7 +20,8 @@
 - `prune_messages` (daily): organizations that keep messages for a limited time lose the older
   ones (ADR 0019, `history_service.prune`).
 - `stop_idle_computers` (every minute): bots' cloud computers nobody used for
-  COMPUTER_IDLE_MINUTES are stopped, and their running time recorded as usage (ADR 0020 §3).
+  COMPUTER_IDLE_MINUTES are stopped, and their running time recorded as usage; removed bots'
+  computers Orgo hasn't confirmed deleting yet are deleted again (ADR 0020 §3).
 
 To add a job (routines, Gmail polling…), declare it on `JOBS` in a module this one imports, then
 defer it with `queue.defer(Job("name", {...}))`, or give it a `cron` to run on a schedule. See the
@@ -220,7 +221,8 @@ async def prune_messages(env: JobEnv, timestamp: int) -> None:
 
 @JOBS.task("stop_idle_computers", cron="* * * * *")
 async def stop_idle_computers(env: JobEnv, timestamp: int) -> None:
-    """Each idle computer on its own: one Orgo refuses to stop is tried again next minute."""
+    """Each idle computer on its own: one Orgo refuses to stop (or to delete) is tried again next minute."""
     stopped = await env.runs.computers.stop_idle(datetime.fromtimestamp(timestamp, UTC))
-    if stopped:
-        log.info("Stopped %d idle cloud computer(s).", stopped)
+    deleted = await env.runs.computers.retry_deletions()
+    if stopped or deleted:
+        log.info("Cloud computers: %d idle one(s) stopped, %d removed bot(s)' deleted.", stopped, deleted)

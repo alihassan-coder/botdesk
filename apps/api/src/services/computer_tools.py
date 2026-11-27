@@ -24,8 +24,9 @@ from src.computers.base import App, ComputerError, Gone, NotRunning
 from src.core.config import Settings
 from src.core.errors import AppError
 from src.models import Bot
+from src.plugins.computer import home_path
 from src.services import file_service, storage_service
-from src.services.computer_service import GONE_NOW, Computers, Ready
+from src.services.computer_service import GONE_NOW, NOT_FOUND_NOW, Computers, Ready
 from src.services.credential_vault import CredentialVault
 
 OUTPUT_PART = 8 * 1024  # bytes of a command's output kept from its start, and from its end
@@ -57,7 +58,7 @@ class ComputerTools:
         refusal = commands.check(command)
         if refusal:
             raise NotDone(refusal)
-        return await self._shell(ctx, command, cwd, INSPECT_TIMEOUT)
+        return await self._shell(ctx, commands.hardened(command), cwd, INSPECT_TIMEOUT)
 
     async def run(self, ctx: ToolContext, *, command: str, cwd: str, seconds: int) -> ToolResult:
         return await self._shell(ctx, command, cwd, seconds)
@@ -138,8 +139,8 @@ class ComputerTools:
 
         async def work(ready: Ready) -> ToolResult:
             done = await ready.provider.bash(ready.remote_id, script, seconds=QUICK_TIMEOUT)
-            if done.exit_code != 0:
-                raise NotDone(f"The browser didn't open: {cut(done.output, 500)}")
+            if done.exit_code != 0:  # its output stays out: a failure reads as BotDesk's own words
+                raise NotDone(f"The browser didn't open (exit {done.exit_code}).")
             return {"opened": url.strip(), "note": "People watching your screen see it. Its page isn't read back."}
 
         return await self._on(ctx, work)
@@ -157,7 +158,10 @@ class ComputerTools:
 
     async def upload(self, ctx: ToolContext, *, path: str, shared: bool, to: str) -> ToolResult:
         data, clean = await self._read_file(ctx, path, shared)
-        target = to.strip() or f"~/{posixpath.basename(clean)}"
+        try:
+            target = home_path(to.strip() or posixpath.basename(clean))
+        except ValueError as refused:
+            raise NotDone(str(refused)) from None
         encoded = base64.b64encode(data).decode("ascii")
         spool = f"/tmp/botdesk-upload-{uuid.uuid4().hex}.b64"  # noqa: S108  # on the bot's own computer
         place = _shell_path(target)
@@ -211,9 +215,12 @@ class ComputerTools:
         tries once more; a computer gone at Orgo is forgotten."""
         computers = self._computers
         for attempt in (1, 2):
+            ready: Ready | None = None
             try:
                 async with computers.watching(ctx.org_id):
                     ready = await computers.ensure_running(ctx.org_id, ctx.bot_id)
+                    # The idle stop counts from the start and from the end of every call.
+                    await computers.touch(ctx.bot_id, force=True)
                     try:
                         result = await work(ready)
                     finally:
@@ -223,9 +230,13 @@ class ComputerTools:
                 if attempt == 2:
                     raise
                 await computers.mark_stopped(ctx.bot_id)
-            except Gone:
-                await computers.forget_gone(ctx.bot_id)
-                raise ComputerError(GONE_NOW) from None
+            except Gone as gone:
+                if ready is None:  # while making it: nothing to forget
+                    raise ComputerError(str(gone)) from None
+                # Only a 404 for the computer itself; still, Orgo is asked before it's forgotten.
+                if await computers.confirm_gone(ctx.bot_id, ready.provider, ready.remote_id):
+                    raise ComputerError(GONE_NOW) from None
+                raise ComputerError(NOT_FOUND_NOW) from None
         raise AssertionError("unreachable")  # pragma: no cover
 
     async def _bash_ok(self, ready: Ready, script: str, *, missing: str = "") -> str:
@@ -234,7 +245,7 @@ class ComputerTools:
         if done.exit_code != 0:
             if missing:
                 return ""
-            raise NotDone(f"The copy failed on the computer: {cut(done.output, 500) or f'exit {done.exit_code}'}")
+            raise NotDone(f"The copy failed on the computer (exit {done.exit_code}).")
         return done.output
 
     async def _app(self, ready: Ready, name: str) -> App:

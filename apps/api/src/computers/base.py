@@ -43,6 +43,13 @@ class Gone(ComputerError):
     code = "gone"
 
 
+class NotThere(ComputerError):
+    """Something on the computer (an app, a link) isn't at the provider. The computer itself may
+    well be: only a 404 for the computer means it's gone (`Gone`)."""
+
+    code = "not_found"
+
+
 class Busy(ComputerError):
     """Another operation holds the computer (starting, stopping, waking): try again shortly."""
 

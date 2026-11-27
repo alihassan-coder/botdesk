@@ -7,7 +7,7 @@ Every setting has a safe local default, so `pnpm dev:api` starts before you fill
 from functools import lru_cache
 from typing import Literal
 
-from pydantic import SecretStr
+from pydantic import Field, SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 # Who may create an account (SIGNUP_MODE); see `Settings.signup_mode`.
@@ -89,7 +89,7 @@ class Settings(BaseSettings):
     # Bots' cloud computers (ADR 0020): Orgo, with each organization's own key (Settings →
     # Computers). A running computer stops after COMPUTER_IDLE_MINUTES without a tool call, a
     # take-over or someone watching; its time is recorded as usage at ORGO_PRICE_PER_HOUR (USD).
-    computer_idle_minutes: int = 20
+    computer_idle_minutes: int = Field(default=20, ge=10)  # at least 10: one command may take 5
     orgo_price_per_hour: float = 0.055
     # Development and tests only (ignored unless ENVIRONMENT is development or test): a fake Orgo.
     orgo_base_url: str = ""

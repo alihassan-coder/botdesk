@@ -52,13 +52,14 @@ The steps use the API's docs page (<http://localhost:8000/api/docs>, signed in a
 
 ## 7. Files both ways
 
-- [ ] Attach a small text file in the chat and ask the bot to copy it to its computer and `cat` it (`computer.upload`, then `computer.inspect`).
+- [ ] Attach a small text file in the chat and ask the bot to copy it to its computer and `cat` it (`computer.upload` asks first and shows where it goes, then `computer.inspect`).
+- [ ] Ask it to copy a file to `~/.bashrc` or into a `.git` folder: it's refused (no hidden files or folders), before anyone is asked.
 - [ ] Ask it to save a screenshot (`computer.screenshot`): a PNG appears in its Files under `screenshots/`.
 - [ ] Ask it to copy `/etc/os-release` from the computer to its Files (`computer.download`): it appears under `downloads/`.
 
 ## 8. Idle stop and usage
 
-- [ ] Leave the computer alone (no chat, no Computer tab open) for `COMPUTER_IDLE_MINUTES` (20; set it to 2 in `apps/api/.env` and restart to wait less). Within a minute after that, `GET …/computer` says `stopped`, and orgo.ai shows the computer stopped.
+- [ ] Leave the computer alone (no chat, no Computer tab open) for `COMPUTER_IDLE_MINUTES` (20; set it to 10, the least, in `apps/api/.env` and restart to wait less). Within a minute after that, `GET …/computer` says `stopped`, and orgo.ai shows the computer stopped.
 - [ ] Settings → Usage (or `GET /api/v1/orgs/{org}/usage`) shows the computer's time for the bot, at $0.055 an hour.
 - [ ] Ask the bot to run something again: the computer starts by itself (it can take a minute), with your files still there (`ls ~`).
 - [ ] `POST …/computer/stop` stops it at once; `POST …/computer/start` starts it again.
@@ -69,4 +70,5 @@ The steps use the API's docs page (<http://localhost:8000/api/docs>, signed in a
 - [ ] Revoke the key at orgo.ai, then ask the bot to run `ls`: it says Orgo refused the key, and `GET …/computer-provider` shows `status: "key_refused"`. Add a new key to fix it.
 - [ ] Set the bot back to Browser (`{"computer": "browser"}`): its computer stops; its Browser tools are back.
 - [ ] `DELETE …/computer` deletes the computer at Orgo (everything on it).
-- [ ] `DELETE …/computer-provider` (owner): the bots' computers stop first, then the key is forgotten. Delete the leftover computers and the BotDesk workspace at orgo.ai if you're done.
+- [ ] Delete a bot whose computer runs: the computer disappears at orgo.ai within a minute or two (BotDesk tries again until Orgo confirms).
+- [ ] `DELETE …/computer-provider` (owner): the bots' computers stop first, then the key is forgotten (409, and the key stays, if one can't be stopped). Delete the leftover computers and the BotDesk workspace at orgo.ai if you're done.

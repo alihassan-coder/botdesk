@@ -1,6 +1,7 @@
 import { useEffect, useId } from "react";
 import Link from "next/link";
 import { Globe, Monitor } from "lucide-react";
+import { Button } from "@/components/ui/button";
 import { Field, FieldContent, FieldDescription, FieldLabel, FieldTitle } from "@/components/ui/field";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { actions, useAuthStatus, useComputerProvider, useOrg } from "@/data/store";
@@ -16,7 +17,7 @@ interface ComputerChoiceProps {
 /**
  * What a bot works on besides apps (ADR 0020): Files and a browser (the default), or Files and its own
  * cloud computer. The cloud computer needs the organization's Orgo key, so without one it stays visible
- * but unavailable, with where to add the key.
+ * but unavailable, with where to add the key. If the check fails, it stays available, with Try again.
  */
 export function ComputerChoice({ value, saved, onChange }: ComputerChoiceProps) {
   const load = useComputerProvider();
@@ -24,6 +25,9 @@ export function ComputerChoice({ value, saved, onChange }: ComputerChoiceProps) 
   const orgId = useOrg().id;
   const hintId = useId();
   const hasProvider = load.current?.provider !== undefined;
+  // Not known (the check failed): the option stays open, and the API says if there's no key after all.
+  const unknown = load.current === undefined && load.status === "error";
+  const unavailable = !hasProvider && !unknown;
 
   useEffect(() => {
     if (authStatus === "signed-in") void actions.loadComputerProvider();
@@ -33,10 +37,16 @@ export function ComputerChoice({ value, saved, onChange }: ComputerChoiceProps) 
     <div className="flex flex-col gap-2">
       <RadioGroup value={value} onValueChange={(v) => onChange(v as BotComputer)} aria-label="Computer" className="gap-2">
         <Option value="browser" icon={Globe} title="Files and a browser" description="Keeps files and browses websites that have no app." />
-        <Option value="cloud" icon={Monitor} title="Files and a cloud computer" disabled={!hasProvider} describedBy={hasProvider ? undefined : hintId}
+        <Option value="cloud" icon={Monitor} title="Files and a cloud computer" disabled={unavailable} describedBy={hasProvider ? undefined : hintId}
           description="Its own Linux computer: runs commands, tests and apps, with a screen you can watch. Orgo bills your organization while it runs." />
       </RadioGroup>
-      {!hasProvider && (
+      {unknown && (
+        <FieldDescription id={hintId} className="flex flex-wrap items-center gap-2 text-xs">
+          Couldn&apos;t check for an Orgo key.
+          <Button type="button" size="xs" variant="outline" onClick={() => void actions.loadComputerProvider()}>Try again</Button>
+        </FieldDescription>
+      )}
+      {unavailable && (
         <FieldDescription id={hintId} className="text-xs">
           {load.status === "loading" ? "Checking for an Orgo key…" : (
             <>A cloud computer needs an Orgo key. An owner or admin adds one in{" "}

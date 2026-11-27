@@ -1,6 +1,6 @@
 import { act, fireEvent, screen, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { getStoreSnapshot } from "@/data/store";
+import { actions, getStoreSnapshot } from "@/data/store";
 import { renderUI } from "@/test/render";
 import { signInOnApi, withFakeApi } from "@/test/fake-api";
 import { BotCloudComputer } from "./bot-cloud-computer";
@@ -116,6 +116,61 @@ describe("BotCloudComputer on the API", () => {
     expect(screen.queryByRole("switch", { name: "Take over" })).not.toBeInTheDocument();
   });
 
+  it("a screen that keeps failing is asked for less often, and one that can't be had isn't asked for again", async () => {
+    await show(running);
+    api.routes[`GET ${base}/screen`] = { status: 500, body: { detail: "Orgo didn't answer." } };
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    await vi.waitFor(() => expect(screens()).toBe(1));
+    await act(() => vi.advanceTimersByTimeAsync(3000));
+    await act(() => vi.advanceTimersByTimeAsync(3000));
+    expect(screens()).toBe(3);
+    // Three in a row: the next try waits 30 s.
+    await act(() => vi.advanceTimersByTimeAsync(20_000));
+    expect(screens()).toBe(3);
+    await act(() => vi.advanceTimersByTimeAsync(10_000));
+    expect(screens()).toBe(4);
+
+    api.routes[`GET ${base}/screen`] = { status: 404, body: { detail: "That bot has no computer." } };
+    await act(() => vi.advanceTimersByTimeAsync(30_000));
+    expect(screens()).toBe(5);
+    expect(screen.getByText("That bot has no computer. Reopen the Computer tab to try again.")).toBeInTheDocument();
+    await act(() => vi.advanceTimersByTimeAsync(120_000));
+    expect(screens()).toBe(5);
+  });
+
+  it("a 409 asks for the computer's state once, not on every retry", async () => {
+    await show(running);
+    api.routes[`GET ${base}/screen`] = { status: 409, body: { detail: "The computer isn't running." } };
+    const states = () => api.sent.filter((s) => s.key === `GET ${base}`).length;
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    await vi.waitFor(() => expect(screens()).toBe(1));
+    await vi.waitFor(() => expect(states()).toBe(2)); // the tab's first check, and the 409's
+    await act(() => vi.advanceTimersByTimeAsync(3000));
+    expect(screens()).toBe(2);
+    expect(states()).toBe(2);
+  });
+
+  it("checks the computer one request at a time, and an older answer never replaces a newer one", async () => {
+    let answer = () => {};
+    api.routes[`GET ${base}`] = { status: 200, body: { ...running, status: "starting" }, wait: new Promise<void>((resolve) => { answer = resolve; }) };
+    api.routes[`GET ${base}/screen`] = { status: 200, body: jpeg };
+    await signInOnApi();
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    renderUI(<BotCloudComputer bot={scout()} />);
+    const states = () => api.sent.filter((s) => s.key === `GET ${base}`).length;
+    await act(() => vi.advanceTimersByTimeAsync(10_000));
+    expect(states()).toBe(1); // still waiting for the first answer
+
+    // A newer check (the tab coming back into view) says it's running; then the old "starting" lands.
+    api.routes[`GET ${base}`] = { status: 200, body: running };
+    await act(() => actions.loadComputer("b1"));
+    expect(screen.getByText("Running")).toBeInTheDocument();
+    answer();
+    await act(() => vi.advanceTimersByTimeAsync(0));
+    expect(screen.getByText("Running")).toBeInTheDocument();
+    expect(screen.queryByText("Starting…")).not.toBeInTheDocument();
+  });
+
   it("asks for no screen while the computer isn't running", async () => {
     await show(stopped);
     expect(await screen.findByText("Stopped", { selector: "p" })).toBeInTheDocument();
@@ -124,29 +179,75 @@ describe("BotCloudComputer on the API", () => {
     expect(screen.queryByRole("switch", { name: "Take over" })).not.toBeInTheDocument();
   });
 
-  it("taking over: clicks land at the screen's own pixels, a double click and a right click too", async () => {
-    const { user } = await show(running);
+  /** Taking over a 1920×1200 screen shown at a quarter of its width, 100px in. */
+  async function takeOver() {
+    const rendered = await show(running);
     await screen.findByRole("img", { name: "Scout's computer screen" });
-    await user.click(screen.getByRole("switch", { name: "Take over" }));
+    await rendered.user.click(screen.getByRole("switch", { name: "Take over" }));
     const frame = screen.getByRole("application", { name: "Scout's computer, taking over" });
-    expect(frame).toHaveFocus();
-
-    // A 1920×1200 screen shown at a quarter of its width, 100px in.
     const picture = within(frame).getByRole("img");
     Object.defineProperties(picture, { naturalWidth: { value: 1920 }, naturalHeight: { value: 1200 } });
     vi.spyOn(picture, "getBoundingClientRect").mockReturnValue(DOMRect.fromRect({ x: 100, y: 20, width: 480, height: 300 }));
+    return { ...rendered, frame, picture };
+  }
+  const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
-    fireEvent.click(picture, { clientX: 340, clientY: 170, detail: 1 });
+  it("taking over: clicks land at the screen's own pixels, a double click and a right click too", async () => {
+    const { frame, picture } = await takeOver();
+    expect(frame).toHaveFocus();
+
+    fireEvent.click(picture, { clientX: 340, clientY: 170 });
     await vi.waitFor(() => expect(inputs()).toEqual([{ kind: "click", x: 960, y: 600 }]));
 
-    fireEvent.click(picture, { clientX: 100, clientY: 20, detail: 1 });
-    fireEvent.click(picture, { clientX: 100, clientY: 20, detail: 2 });
+    fireEvent.click(picture, { clientX: 100, clientY: 20 });
+    fireEvent.click(picture, { clientX: 101, clientY: 21 });
     fireEvent.contextMenu(picture, { clientX: 580, clientY: 320 });
     await vi.waitFor(() => expect(inputs()).toEqual([
       { kind: "click", x: 960, y: 600 },
       { kind: "double_click", x: 0, y: 0 },
       { kind: "right_click", x: 1919, y: 1199 },
     ]));
+  });
+
+  it("taking over: a slow double click is still one, a third click starts afresh, and a click elsewhere is its own", async () => {
+    const { picture } = await takeOver();
+    fireEvent.click(picture, { clientX: 340, clientY: 170 });
+    await wait(300);
+    fireEvent.click(picture, { clientX: 340, clientY: 170 });
+    fireEvent.click(picture, { clientX: 340, clientY: 170 });
+    await vi.waitFor(() => expect(inputs()).toEqual([{ kind: "double_click", x: 960, y: 600 }, { kind: "click", x: 960, y: 600 }]));
+
+    fireEvent.click(picture, { clientX: 100, clientY: 20 });
+    fireEvent.click(picture, { clientX: 340, clientY: 170 });
+    await vi.waitFor(() => expect(inputs().slice(2)).toEqual([{ kind: "click", x: 0, y: 0 }, { kind: "click", x: 960, y: 600 }]));
+  });
+
+  it("taking over: a click goes before typing, a key or a scroll that came after it", async () => {
+    const { user, picture, frame } = await takeOver();
+    fireEvent.click(picture, { clientX: 340, clientY: 170 });
+    await user.keyboard("hi");
+    fireEvent.click(picture, { clientX: 100, clientY: 20 });
+    await user.keyboard("{Enter}");
+    fireEvent.click(picture, { clientX: 340, clientY: 170 });
+    fireEvent.wheel(frame, { deltaY: -120, clientX: 340, clientY: 170 });
+    await vi.waitFor(() => expect(inputs()).toEqual([
+      { kind: "click", x: 960, y: 600 },
+      { kind: "type", text: "hi" },
+      { kind: "click", x: 0, y: 0 },
+      { kind: "key", key: "Enter" },
+      { kind: "click", x: 960, y: 600 },
+      { kind: "scroll", direction: "up", x: 960, y: 600 },
+    ]));
+  });
+
+  it("taking over: turning it off drops a click still waiting, and Ctrl+Shift+C stays with this browser", async () => {
+    const { user, picture, frame } = await takeOver();
+    frame.focus();
+    await user.keyboard("{Control>}{Shift>}C{/Shift}{/Control}");
+    fireEvent.click(picture, { clientX: 340, clientY: 170 });
+    await user.click(screen.getByRole("switch", { name: "Take over" }));
+    await wait(500);
+    expect(inputs()).toEqual([]);
   });
 
   it("taking over: typing goes in batches, shortcuts and key buttons as keys, and the field types its text", async () => {

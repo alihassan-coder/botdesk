@@ -49,6 +49,8 @@ export function ComputerScreen({ bot }: { bot: Bot }) {
   }, [takingOver]);
 
   const switchTakeOver = (on: boolean) => {
+    // Off: a click still held (waiting for a double click) never reaches the computer.
+    if (!on) takeOver.stop();
     flushSync(() => setTakingOver(on));
     if (on) frame.current?.focus();
   };
@@ -85,7 +87,7 @@ export function ComputerScreen({ bot }: { bot: Bot }) {
           }}
           onClick={(e) => {
             const at = pointAt(e.clientX, e.clientY);
-            if (at) takeOver.click(at, e.detail);
+            if (at) takeOver.click(at, { x: e.clientX, y: e.clientY });
           }}
           onContextMenu={(e) => {
             e.preventDefault();

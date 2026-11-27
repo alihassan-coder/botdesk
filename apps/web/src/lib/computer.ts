@@ -54,14 +54,14 @@ export type ComputerKeyMeaning = { kind: "text"; text: string } | { kind: "key";
 /** What a key press means on the computer: text to type, a key, or nothing (it stays this browser's). */
 export function computerKeyOf(e: { key: string; shiftKey: boolean; ctrlKey: boolean; metaKey: boolean; altKey: boolean }): ComputerKeyMeaning {
   if (e.metaKey) return null;
+  // Only the exact shortcut: Ctrl+Shift+C (copy in a terminal, or this browser's tools) stays here.
   // Ctrl with Alt is AltGr on Windows keyboards, which types characters like @ and €.
   if (e.ctrlKey && !e.altKey) {
-    const key = CTRL_KEYS[e.key.toLowerCase()];
+    const key = e.shiftKey ? undefined : CTRL_KEYS[e.key.toLowerCase()];
     return key ? { kind: "key", key } : null;
   }
-  // The computer has no Shift+Tab: leave it to this browser, which moves focus back out.
-  if (e.key === "Tab" && e.shiftKey) return null;
-  if (KEYS[e.key]) return { kind: "key", key: KEYS[e.key] };
+  // A special key goes only on its own: the computer has no Shift+Tab, Shift+arrow or Alt+key.
+  if (KEYS[e.key]) return e.shiftKey || e.altKey ? null : { kind: "key", key: KEYS[e.key] };
   if ([...e.key].length === 1) return { kind: "text", text: e.key };
   return null;
 }

@@ -89,6 +89,21 @@ describe("EditBotDialog's computer on the API", () => {
     expect(patches()[0]).toMatchObject({ computer: "cloud" });
   });
 
+  it("when the key can't be checked, a cloud computer stays available, with Try again", async () => {
+    api.routes["GET /api/v1/orgs/o1/computer-provider"] = { status: 500, body: { detail: "Something broke." } };
+    await signInOnApi();
+    const { user } = renderUI(<EditBotDialog bot={scout()} />);
+    await user.click(screen.getByRole("button", { name: "Edit" }));
+    expect(await screen.findByText("Couldn't check for an Orgo key.")).toBeInTheDocument();
+    expect(screen.getByRole("radio", { name: /^Files and a cloud computer/ })).toBeEnabled();
+    expect(screen.queryByText(/needs an Orgo key/)).not.toBeInTheDocument();
+
+    api.routes["GET /api/v1/orgs/o1/computer-provider"] = { status: 200, body: { provider: null, keyHint: null, checkedAt: null, status: null } };
+    await user.click(screen.getByRole("button", { name: "Try again" }));
+    expect(await screen.findByText(/A cloud computer needs an Orgo key/)).toBeInTheDocument();
+    expect(screen.getByRole("radio", { name: /^Files and a cloud computer/ })).toBeDisabled();
+  });
+
   it("sends the computer only when it changed, and shows a refusal in the form", async () => {
     api.routes["PATCH /api/v1/orgs/o1/bots/b1"] = { status: 400, body: { detail: "An owner or admin can add an Orgo key in Settings → Computers." } };
     const user = await open();

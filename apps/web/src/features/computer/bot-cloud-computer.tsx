@@ -27,16 +27,31 @@ export function BotCloudComputer({ bot }: { bot: Bot }) {
   const computer = load?.current;
   const changing = computer ? isChanging(computer.status) : false;
 
+  // One check at a time: the next is planned only once the last has answered (and the store drops
+  // any answer older than one it already shows).
   useEffect(() => {
-    void actions.loadComputer(bot.id);
-    const check = () => {
-      if (document.visibilityState === "visible") void actions.loadComputer(bot.id);
+    let alive = true;
+    let checking = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const check = async () => {
+      clearTimeout(timer);
+      if (!alive || checking) return;
+      if (document.visibilityState === "visible") {
+        checking = true;
+        await actions.loadComputer(bot.id);
+        checking = false;
+      }
+      if (alive) timer = setTimeout(check, changing ? CHANGING_CHECK_MS : COMPUTER_CHECK_MS);
     };
-    const timer = setInterval(check, changing ? CHANGING_CHECK_MS : COMPUTER_CHECK_MS);
-    document.addEventListener("visibilitychange", check);
+    const onVisibility = () => {
+      if (document.visibilityState === "visible") void check();
+    };
+    void check();
+    document.addEventListener("visibilitychange", onVisibility);
     return () => {
-      clearInterval(timer);
-      document.removeEventListener("visibilitychange", check);
+      alive = false;
+      clearTimeout(timer);
+      document.removeEventListener("visibilitychange", onVisibility);
     };
   }, [bot.id, changing]);
 

@@ -15,7 +15,9 @@ describe("computerKeyOf", () => {
 
   it("sends Ctrl+C, A and L to the computer, but leaves paste and other shortcuts here", () => {
     expect(press("c", { ctrlKey: true })).toEqual({ kind: "key", key: "ctrl+c" });
-    expect(press("L", { ctrlKey: true, shiftKey: true })).toEqual({ kind: "key", key: "ctrl+l" });
+    expect(press("L", { ctrlKey: true })).toEqual({ kind: "key", key: "ctrl+l" });
+    // Only the exact shortcut: Ctrl+Shift+C is a terminal's copy (or this browser's tools).
+    expect(press("C", { ctrlKey: true, shiftKey: true })).toBeNull();
     expect(press("v", { ctrlKey: true })).toBeNull();
     expect(press("r", { ctrlKey: true })).toBeNull();
     expect(press("c", { metaKey: true })).toBeNull();
@@ -23,8 +25,11 @@ describe("computerKeyOf", () => {
     expect(press("@", { ctrlKey: true, altKey: true })).toEqual({ kind: "text", text: "@" });
   });
 
-  it("leaves Shift+Tab and keys the computer doesn't take to this browser", () => {
+  it("leaves Shift+Tab, other modified special keys and keys the computer doesn't take to this browser", () => {
     expect(press("Tab", { shiftKey: true })).toBeNull();
+    expect(press("ArrowUp", { shiftKey: true })).toBeNull();
+    expect(press("Enter", { altKey: true })).toBeNull();
+    expect(press("A", { shiftKey: true })).toEqual({ kind: "text", text: "A" });
     expect(press("Shift", { shiftKey: true })).toBeNull();
     expect(press("F5")).toBeNull();
   });

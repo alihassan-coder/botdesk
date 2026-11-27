@@ -2147,6 +2147,29 @@ const NO_COMPUTER: CloudComputer = { status: "none", apps: [], previews: [] };
 /** A picture of a bot's computer screen, or why there isn't one (`status` 409: it isn't running). */
 export type ScreenResult = { ok: true; picture: Blob } | { ok: false; status: number; error: string };
 
+/*
+ * Answers about a bot's computer can arrive out of order (a slow check, then Start's answer). Every
+ * request takes a number; an answer is shown only if no later one has been shown already, and a
+ * check's answer isn't shown while Start, Stop or Delete is on its way (it may be from before it).
+ */
+const computerAsked = new Map<string, number>();
+const computerShown = new Map<string, number>();
+const computerChanging = new Map<string, number>();
+let computerTicket = 0;
+
+function askComputer(botId: string): number {
+  computerAsked.set(botId, ++computerTicket);
+  return computerTicket;
+}
+
+/** True when this answer is the newest one to show (and marks it shown). */
+function showsComputer(botId: string, ticket: number, isCheck: boolean): boolean {
+  if (ticket <= (computerShown.get(botId) ?? 0)) return false;
+  if (isCheck && (computerChanging.get(botId) ?? 0) > 0) return false;
+  computerShown.set(botId, ticket);
+  return true;
+}
+
 function putComputer(orgId: string, botId: string, seen: CloudComputer) {
   set((st) => {
     if (st.org.id !== orgId) return st;
@@ -2161,11 +2184,16 @@ function putComputer(orgId: string, botId: string, seen: CloudComputer) {
 async function changeComputer(botId: string, change: (orgId: string) => Promise<CloudComputer>): Promise<ActionResult> {
   if (isDemoMode()) return { ok: false, error: COMPUTERS_NEED_AN_ACCOUNT };
   const orgId = state.org.id;
+  const ticket = askComputer(botId);
+  computerChanging.set(botId, (computerChanging.get(botId) ?? 0) + 1);
   try {
-    putComputer(orgId, botId, await change(orgId));
+    const seen = await change(orgId);
+    if (showsComputer(botId, ticket, false)) putComputer(orgId, botId, seen);
     return { ok: true };
   } catch (error) {
     return failure(error);
+  } finally {
+    computerChanging.set(botId, (computerChanging.get(botId) ?? 1) - 1);
   }
 }
 
@@ -2213,9 +2241,12 @@ const computerActions = {
     if (isDemoMode()) return putComputer(state.org.id, botId, NO_COMPUTER);
     const orgId = state.org.id;
     if (!state.computers[botId]) set((st) => ({ ...st, computers: { ...st.computers, [botId]: { status: "loading" } } }));
+    const ticket = askComputer(botId);
     try {
-      putComputer(orgId, botId, toCloudComputer(await computerApi.state(orgId, botId)));
+      const seen = toCloudComputer(await computerApi.state(orgId, botId));
+      if (showsComputer(botId, ticket, true)) putComputer(orgId, botId, seen);
     } catch (error) {
+      if (!showsComputer(botId, ticket, true)) return;
       set((st) => {
         if (st.org.id !== orgId) return st;
         return { ...st, computers: { ...st.computers, [botId]: { ...st.computers[botId], status: "error", error: failure(error).error } } };
@@ -2233,15 +2264,13 @@ const computerActions = {
       return NO_COMPUTER;
     }),
 
-  /** The screen now. A 409 means it isn't running any more: its state loads again, so the tab says so. */
+  /** The screen now. A 409 means it isn't running any more (the screen asks for the state once, see use-computer-screen). */
   async computerScreen(botId: string, signal?: AbortSignal): Promise<ScreenResult> {
     if (isDemoMode()) return { ok: false, status: 0, error: COMPUTERS_NEED_AN_ACCOUNT };
     try {
       return { ok: true, picture: await computerApi.screen(state.org.id, botId, signal) };
     } catch (error) {
-      const status = error instanceof ApiError ? error.status : 0;
-      if (status === 409 && !signal?.aborted) void computerActions.loadComputer(botId);
-      return { ok: false, status, error: failure(error).error };
+      return { ok: false, status: error instanceof ApiError ? error.status : 0, error: failure(error).error };
     }
   },
 

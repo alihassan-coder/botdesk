@@ -10,24 +10,28 @@ const TYPE_PAUSE_MS = 150;
 const TYPED_PIECE = 200;
 /** Wheel turns are sent at most this often, one scroll each. */
 const SCROLL_EVERY_MS = 150;
-/** A second click this soon makes a double click instead of two. */
-export const DOUBLE_CLICK_MS = 250;
+/** A second click this soon, this close (in pixels on the page here), makes a double click instead of two. */
+export const DOUBLE_CLICK_MS = 400;
+const DOUBLE_CLICK_PX = 4;
 
 type Point = { x: number; y: number };
+/** A click waiting to see whether a second one makes it a double click. */
+type HeldClick = { at: Point; client: Point; time: number; timer: ReturnType<typeof setTimeout> };
 
 /**
  * Taking over a bot's cloud computer: what a person does to the live picture goes to the computer, in
- * order, one request at a time. Points are already in the picture's own pixels. Typing waits a moment
- * and goes as one `type`; a key, a click or a scroll sends what was typed first. A click waits a moment
- * too, in case a second click makes it a double click. `onSent` runs after each (to refresh the picture).
- * The API's refusal (`error`) shows until something works.
+ * the order it was done, one request at a time. Points are already in the picture's own pixels.
+ * A click is held for a moment: a second one close by makes it a double click; anything else done
+ * meanwhile (typing, a key, a scroll, a click elsewhere) sends it first. Typing waits a moment and goes
+ * as one `type`. `onSent` runs after each (to refresh the picture). `stop()` (Take over off) drops a
+ * held click. The API's refusal (`error`) shows until something works.
  */
 export function useComputerTakeOver(botId: string, onSent: () => void) {
   const [error, setError] = useState("");
   const queue = useRef(Promise.resolve());
   const typed = useRef("");
   const typingTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
-  const clickTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
+  const held = useRef<HeldClick | null>(null);
   const scroll = useRef<{ dy: number; at: Point } | null>(null);
   const scrollTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
 
@@ -39,6 +43,15 @@ export function useComputerTakeOver(botId: string, onSent: () => void) {
     });
   }, [botId, onSent]);
 
+  /** A held click goes now, before whatever came after it. */
+  const flushClick = useCallback(() => {
+    const click = held.current;
+    if (!click) return;
+    clearTimeout(click.timer);
+    held.current = null;
+    send({ kind: "click", ...click.at });
+  }, [send]);
+
   const flushTyping = useCallback(() => {
     clearTimeout(typingTimer.current);
     const text = typed.current;
@@ -46,23 +59,42 @@ export function useComputerTakeOver(botId: string, onSent: () => void) {
     for (const piece of textPieces(text, TYPED_PIECE)) send({ kind: "type", text: piece });
   }, [send]);
 
+  /** Wheel turns gathered so far go now, before a click that came after them. */
+  const flushScroll = useCallback(() => {
+    clearTimeout(scrollTimer.current);
+    scrollTimer.current = undefined;
+    const turned = scroll.current;
+    scroll.current = null;
+    if (turned && turned.dy !== 0) send({ kind: "scroll", direction: turned.dy < 0 ? "up" : "down", ...turned.at });
+  }, [send]);
+
+  // At most one of typing and scrolling waits at a time, so each sends the other first: the order holds.
   const type = useCallback((text: string) => {
+    flushClick();
+    flushScroll();
     typed.current += text;
     clearTimeout(typingTimer.current);
     typingTimer.current = setTimeout(flushTyping, TYPE_PAUSE_MS);
-  }, [flushTyping]);
+  }, [flushClick, flushScroll, flushTyping]);
 
   const press = useCallback((key: ComputerKey) => {
+    flushClick();
+    flushScroll();
     flushTyping();
     send({ kind: "key", key });
-  }, [flushTyping, send]);
+  }, [flushClick, flushScroll, flushTyping, send]);
 
-  // Leaving (or turning Take over off) still sends what was typed; a click still waiting is dropped.
-  useEffect(() => () => {
-    clearTimeout(clickTimer.current);
+  const stop = useCallback(() => {
+    if (held.current) clearTimeout(held.current.timer);
+    held.current = null;
     clearTimeout(scrollTimer.current);
+    scrollTimer.current = undefined;
+    scroll.current = null;
     flushTyping();
   }, [flushTyping]);
+
+  // Leaving still sends what was typed; a held click or scroll is dropped.
+  useEffect(() => stop, [stop]);
 
   return {
     error,
@@ -78,29 +110,34 @@ export function useComputerTakeOver(botId: string, onSent: () => void) {
     press,
     /** Pasted or typed in the text field: typed on the computer. */
     type,
-    /** `count` is the event's click count (`detail`): 2 turns the waiting click into a double click. */
-    click(at: Point, count: number) {
+    stop,
+    /** `client` is where it was clicked on the page here (to tell a double click from two clicks apart). */
+    click(at: Point, client: Point, time = performance.now()) {
       flushTyping();
-      clearTimeout(clickTimer.current);
-      if (count >= 2) return send({ kind: "double_click", ...at });
-      clickTimer.current = setTimeout(() => send({ kind: "click", ...at }), DOUBLE_CLICK_MS);
+      flushScroll();
+      const first = held.current;
+      if (first && time - first.time <= DOUBLE_CLICK_MS && near(first.client, client)) {
+        clearTimeout(first.timer);
+        held.current = null; // a third click starts afresh
+        return send({ kind: "double_click", ...first.at });
+      }
+      flushClick();
+      const timer = setTimeout(flushClick, DOUBLE_CLICK_MS);
+      held.current = { at, client, time, timer };
     },
     rightClick(at: Point) {
+      flushClick();
       flushTyping();
-      clearTimeout(clickTimer.current);
+      flushScroll();
       send({ kind: "right_click", ...at });
     },
     wheel(deltaY: number, at: Point) {
+      flushClick();
+      flushTyping();
       scroll.current = { dy: (scroll.current?.dy ?? 0) + deltaY, at };
-      if (scrollTimer.current) return;
-      scrollTimer.current = setTimeout(() => {
-        scrollTimer.current = undefined;
-        const turned = scroll.current;
-        scroll.current = null;
-        if (!turned || turned.dy === 0) return;
-        flushTyping();
-        send({ kind: "scroll", direction: turned.dy < 0 ? "up" : "down", ...turned.at });
-      }, SCROLL_EVERY_MS);
+      if (!scrollTimer.current) scrollTimer.current = setTimeout(flushScroll, SCROLL_EVERY_MS);
     },
   };
 }
+
+const near = (a: Point, b: Point) => Math.abs(a.x - b.x) <= DOUBLE_CLICK_PX && Math.abs(a.y - b.y) <= DOUBLE_CLICK_PX;

@@ -263,6 +263,22 @@ def test_cloud_bots_get_the_computer_tools_and_browser_bots_the_browser() -> Non
     assert plugins("cloud") == {"files", "computer"}
 
 
+async def test_a_bots_tools_tab_lists_only_the_plugins_its_computer_can_use(desk: Desk) -> None:
+    """A browser bot's Tools tab has no Computer plugin, a cloud bot's no Browser plugin."""
+    await desk.add_key()
+    browser_bot = (await desk.client.post(f"{desk.org}/bots", json={"name": "Reader"})).json()["id"]
+    cloud_bot = await desk.cloud_bot()
+
+    def ids(response: httpx.Response) -> set[str]:
+        assert response.status_code == 200, response.text
+        return {plugin["pluginId"] for plugin in response.json()["plugins"]}
+
+    on_browser = ids(await desk.client.get(f"{desk.org}/bots/{browser_bot}/tools"))
+    on_cloud = ids(await desk.client.get(f"{desk.org}/bots/{cloud_bot}/tools"))
+    assert "browser" in on_browser and "computer" not in on_browser
+    assert "computer" in on_cloud and "browser" not in on_cloud
+
+
 # A computer's life
 
 

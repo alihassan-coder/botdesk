@@ -36,8 +36,6 @@ from botdesk_plugin_sdk import Auth, OAuth2Auth
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.models import Connection
-from src.plugins.browser import BROWSER_PLUGIN_ID
-from src.plugins.computer import COMPUTER_PLUGIN_ID
 from src.plugins.registry import RegisteredTool, ToolRegistry
 from src.services import binding_service, mcp_server_service
 from src.services.mcp_server_service import McpRuntime, is_mcp_plugin
@@ -141,13 +139,7 @@ def resolve(registry: ToolRegistry, bindings: Iterable[BindingRow], scope: RunSc
     return Toolset(_tools=tools, _registry=registry, connections=connections)
 
 
-def _fits_computer(plugin_id: str, computer: str) -> bool:
-    """The browser for bots on their browser, the cloud computer for bots on theirs."""
-    if plugin_id == BROWSER_PLUGIN_ID:
-        return computer != "cloud"
-    if plugin_id == COMPUTER_PLUGIN_ID:
-        return computer == "cloud"
-    return True
+_fits_computer = binding_service.fits_computer  # the browser or the cloud computer, by the bot's mode
 
 
 def _effective_scopes(auth: Auth | None, granted: Iterable[str]) -> frozenset[str]:

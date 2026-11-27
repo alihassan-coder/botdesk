@@ -205,10 +205,11 @@ async def _days(
     query = (
         select(
             day,
-            func.sum(UsageRecord.cost_usd),
+            func.sum(case((UsageRecord.kind == "computer", 0.0), else_=UsageRecord.cost_usd)),
             func.sum(UsageRecord.input_tokens),
             func.sum(UsageRecord.output_tokens),
             func.sum(_UNPRICED),
+            func.sum(case((UsageRecord.kind == "computer", UsageRecord.cost_usd), else_=0.0)),
         )
         .where(
             UsageRecord.org_id == org_id,
@@ -230,6 +231,8 @@ async def _days(
                 input_tokens=int(row[2] or 0) if row else 0,
                 output_tokens=int(row[3] or 0) if row else 0,
                 unpriced_tokens=int(row[4] or 0) if row else 0,
+                # Cloud computers' running time (ADR 0020), kept apart from the models' tokens.
+                computers_usd=_money(row[5]) if row else 0.0,
             )
         )
     return out

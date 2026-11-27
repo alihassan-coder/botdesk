@@ -194,6 +194,33 @@ async def test_only_owners_and_admins_change_the_organization_budget(acme: Org) 
         assert (await sara.patch(acme.path, json={"monthlyBudgetUsd": 1})).status_code == 403
 
 
+async def test_cloud_computer_time_is_its_own_line_and_counts_toward_the_budget(acme: Org) -> None:
+    """ADR 0020: a computer's running time is usage of kind "computer": shown as computersUsd, not
+    as the models' cost, and in the bot's month like any other spend."""
+    today = datetime.now(UTC).replace(hour=0, minute=0, second=0, microsecond=0)
+    await acme.add_usage("Scout", 1.5, today + timedelta(minutes=1))
+    async with acme.app.state.sessionmaker() as db:
+        db.add(
+            UsageRecord(
+                org_id=acme.id,
+                bot_id=uuid.UUID(acme.bots["Scout"]),
+                kind="computer",
+                provider="orgo",
+                model_id="orgo:linux-2cpu-8gb",
+                cost_usd=0.11,
+                created_at=today + timedelta(minutes=2),
+            )
+        )
+        await db.commit()
+
+    usage = (await acme.client.get(f"{acme.path}/usage", params={"days": 1})).json()
+
+    assert usage["days"][0]["modelsUsd"] == pytest.approx(1.5)
+    assert usage["days"][0]["computersUsd"] == pytest.approx(0.11)
+    scout = next(bot for bot in usage["bots"] if bot["name"] == "Scout")
+    assert scout["spentUsd"] == pytest.approx(1.61)
+
+
 async def test_usage_shows_daily_totals_this_month_and_each_bots_budget(acme: Org) -> None:
     now = datetime.now(UTC)
     today = now.replace(hour=0, minute=0, second=0, microsecond=0)

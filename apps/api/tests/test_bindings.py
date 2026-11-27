@@ -85,18 +85,19 @@ async def test_oauth_plugins_start_off_and_are_listed_off_for_bots_without_a_bin
 async def test_any_member_switches_plugins_and_only_the_plugins_sent_change(team: Team) -> None:
     await team.sign_in("sara@acme.dev")  # a member, not Scout's creator
     off = await team.bind(None, enabled=False)
-    # The core plugins are listed first, on by default (ADR 0014, 0017, 0020); only demo was sent.
+    # The core plugins are listed first, on by default (ADR 0014, 0017); only demo was sent. Scout
+    # is on its browser, so the cloud computer's plugin isn't listed (ADR 0020).
     assert [(p["pluginId"], p["enabled"]) for p in off["plugins"]] == [
         ("team", True),
         ("files", True),
         ("browser", True),
-        ("computer", True),
         ("demo", False),
     ]
     assert (await _tools(team))["demo"]["enabled"] is False
     response = await team.client.put(_tools_url(team), json={"plugins": []})
-    assert response.status_code == 200 and response.json()["plugins"][4]["enabled"] is False
-    assert (await team.bind(None))["plugins"][4]["enabled"] is True
+    demo = [p["pluginId"] for p in response.json()["plugins"]].index("demo")
+    assert response.status_code == 200 and response.json()["plugins"][demo]["enabled"] is False
+    assert (await team.bind(None))["plugins"][demo]["enabled"] is True
 
 
 async def test_bad_bindings_are_refused(team: Team) -> None:

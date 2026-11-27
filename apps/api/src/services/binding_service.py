@@ -19,6 +19,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.core.errors import BadRequest, Conflict, Forbidden, NotFound
 from src.models import Bot, BotTool, Connection, Run, Thread, TriggerSubscription
+from src.plugins.browser import BROWSER_PLUGIN_ID
+from src.plugins.computer import COMPUTER_PLUGIN_ID
 from src.plugins.registry import ToolRegistry
 from src.schemas.bot_tool import BotToolChange, BotToolMcpOut, BotToolOut, BotToolsOut, BotTriggerOut
 from src.schemas.plugin import PluginToolOut
@@ -39,11 +41,22 @@ async def bindings_of(db: AsyncSession, bot_id: uuid.UUID) -> dict[str, BotTool]
     return {row.plugin_id: row for row in await db.scalars(select(BotTool).where(BotTool.bot_id == bot_id))}
 
 
+def fits_computer(plugin_id: str, computer: str) -> bool:
+    """ADR 0020: the browser for bots on their browser, the cloud computer for bots on theirs.
+    The run's toolset and the bot's Tools tab both go by it."""
+    if plugin_id == BROWSER_PLUGIN_ID:
+        return computer != "cloud"
+    if plugin_id == COMPUTER_PLUGIN_ID:
+        return computer == "cloud"
+    return True
+
+
 def tools_out(
     registry: ToolRegistry,
     bindings: dict[str, BotTool],
     subscriptions: Iterable[TriggerSubscription] = (),
     mcp: Mapping[str, ToolsTabEntry] | None = None,
+    computer: str = "browser",
 ) -> BotToolsOut:
     """One entry per loaded plugin. A plugin with no binding is off, with no connection. Each
     plugin's triggers say whether this bot reacts to them (`subscriptions`, slice 6.3).
@@ -54,7 +67,9 @@ def tools_out(
     on = {(row.binding_id, row.trigger): row for row in subscriptions}
     servers = mcp or {}
     plugins = [
-        _plugin_out(plugin, bindings.get(plugin.id), on, servers.get(plugin.id)) for plugin in registry.plugins()
+        _plugin_out(plugin, bindings.get(plugin.id), on, servers.get(plugin.id))
+        for plugin in registry.plugins()
+        if fits_computer(plugin.id, computer)  # a bot sees only the plugins it can use (`computer`)
     ]
     for entry in servers.values():
         if registry.plugin(entry.plugin_id) is None:

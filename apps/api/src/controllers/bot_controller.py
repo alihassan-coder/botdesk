@@ -129,7 +129,9 @@ async def get_tools(
 ) -> BotToolsOut:
     bot = await bot_service.get_bot(db, access.org.id, bot_id)
     registry = await mcp_server_service.org_registry(db, registry, access.org.id, mcp)  # + the org's MCP servers
-    return await _tools_out(db, registry, await binding_service.bindings_of(db, bot.id), access.org.id, mcp)
+    return await _tools_out(
+        db, registry, await binding_service.bindings_of(db, bot.id), access.org.id, mcp, bot.computer
+    )
 
 
 async def _tools_out(
@@ -138,10 +140,11 @@ async def _tools_out(
     bindings: dict[str, BotTool],
     org_id: uuid.UUID,
     mcp: McpRuntime | None,
+    computer: str,
 ) -> BotToolsOut:
     subscriptions = await trigger_service.subscriptions_of(db, [binding.id for binding in bindings.values()])
     servers = await mcp_server_service.tools_tab(db, org_id) if mcp is not None else {}
-    return binding_service.tools_out(registry, bindings, subscriptions, servers)
+    return binding_service.tools_out(registry, bindings, subscriptions, servers, computer)
 
 
 async def set_tools(
@@ -166,7 +169,7 @@ async def set_tools(
         check_switch=mcp_server_service.bind_check(servers),
     )
     await db.commit()
-    return await _tools_out(db, registry, bindings, access.org.id, mcp)
+    return await _tools_out(db, registry, bindings, access.org.id, mcp, bot.computer)
 
 
 async def set_trigger(
@@ -185,4 +188,6 @@ async def set_trigger(
     actor = Actor(org_id=access.org.id, user_id=access.user.id, role=access.role)
     await trigger_service.set_trigger(db, actor, bot, registry, plugin_id, trigger, enabled=body.enabled)
     await db.commit()
-    return await _tools_out(db, registry, await binding_service.bindings_of(db, bot.id), access.org.id, mcp)
+    return await _tools_out(
+        db, registry, await binding_service.bindings_of(db, bot.id), access.org.id, mcp, bot.computer
+    )

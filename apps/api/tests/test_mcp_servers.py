@@ -62,6 +62,7 @@ class Live:
     server: MCPServer
     port: int
     headers: list[dict[str, str]] = field(default_factory=list)
+    icon_works: bool = True  # with `serving(icon=True)`: False answers /icon.png with a 503
 
     @property
     def url(self) -> str:
@@ -98,7 +99,8 @@ def serving(*, icon: bool = False) -> Iterator[Live]:
             if scope["type"] == "http":
                 state.headers.append({k.decode().lower(): v.decode() for k, v in scope["headers"]})
                 if scope["path"] == "/icon.png":
-                    await Response(PNG, media_type="image/png")(scope, receive, send)
+                    answer = Response(PNG, media_type="image/png") if state.icon_works else Response(status_code=503)
+                    await answer(scope, receive, send)
                     return
             await inner(scope, receive, send)
 
@@ -494,6 +496,11 @@ async def test_a_server_shows_its_own_icon() -> None:
             assert added["iconUrl"] == PNG_URI
             listed = (await team.client.get(f"{team.org}/mcp-servers")).json()
             assert [server["iconUrl"] for server in listed] == [PNG_URI]
+
+            # A refresh whose icon doesn't load keeps the one it had.
+            live.icon_works = False
+            refreshed = await team.client.post(f"{team.org}/mcp-servers/{added['id']}/refresh")
+            assert refreshed.json()["iconUrl"] == PNG_URI
 
 
 async def test_a_server_without_an_icon_has_none(live: Live) -> None:

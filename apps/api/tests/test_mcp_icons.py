@@ -2,6 +2,7 @@
 only from the server's own site, only small images, never failing anything."""
 
 import base64
+from urllib.parse import quote
 
 import pytest
 
@@ -32,6 +33,7 @@ async def test_skips_what_isnt_a_small_image_and_tries_the_next(live_server: Liv
     assert await fetch_icon([icon(url(path="/big.png"))], url(), TEST_NETWORK) is None  # over 64 KB
     assert await fetch_icon([icon(url(path="/page"))], url(), TEST_NETWORK) is None  # text/html
     assert await fetch_icon([icon(url(path="/missing.png"))], url(), TEST_NETWORK) is None  # 404
+    assert await fetch_icon([icon(url(path="/gzipped.png"))], url(), TEST_NETWORK) is None  # compressed
     tries = [icon(url(path="/page"), sizes=("128x128",)), icon(url(path="/icon.png"), sizes=("16x16",))]
     assert await fetch_icon(tries, url(), TEST_NETWORK) == PNG_URI
 
@@ -42,11 +44,10 @@ async def test_takes_an_inline_icon_without_a_fetch() -> None:
 
 def test_inline_icons_are_small_images_only() -> None:
     assert inline(PNG_URI) == PNG_URI
-    svg = 'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg"/>'
-    assert (
-        inline(svg)
-        == "data:image/svg+xml;base64," + base64.b64encode(b'<svg xmlns="http://www.w3.org/2000/svg"/>').decode()
-    )
+    svg = b'<svg xmlns="http://www.w3.org/2000/svg"/>'
+    expected = "data:image/svg+xml;base64," + base64.b64encode(svg).decode()
+    assert inline("data:image/svg+xml," + svg.decode()) == expected
+    assert inline("data:image/svg+xml," + quote(svg.decode())) == expected  # percent-encoded
     assert inline("data:text/html;base64," + base64.b64encode(b"<script>x</script>").decode()) is None
     assert inline("data:image/png;base64,not base64!") is None
     big = base64.b64encode(PNG + b"0" * MAX_ICON_BYTES).decode()
@@ -57,10 +58,13 @@ def test_inline_icons_are_small_images_only() -> None:
     ("icon_url", "server_url", "same"),
     [
         ("https://mcp.notion.com/icon.png", "https://mcp.notion.com/mcp", True),
-        ("https://www.notion.com/favicon.png", "https://mcp.notion.com/mcp", True),  # the same parent domain
+        ("https://notion.com/favicon.png", "https://mcp.notion.com/mcp", True),  # its parent domain
+        ("https://www.notion.com/favicon.png", "https://mcp.notion.com/mcp", True),  # or www. of it
+        ("https://cdn.notion.com/x.png", "https://mcp.notion.com/mcp", False),  # a sibling: not taken
+        ("https://other.vercel.app/i.png", "https://evil.vercel.app/mcp", False),  # another tenant's site
         ("https://github.com/favicon.ico", "https://api.githubcopilot.com/mcp/", False),
         ("https://cdn.evil.example/x.png", "https://mcp.notion.com/mcp", False),
-        ("https://static.example.co.uk/i.png", "https://mcp.example.co.uk/mcp", True),
+        ("https://example.co.uk/i.png", "https://mcp.example.co.uk/mcp", True),
         ("https://other.co.uk/i.png", "https://mcp.example.co.uk/mcp", False),  # co.uk isn't a site
         ("https://10.0.0.5/i.png", "https://10.0.0.6/mcp", False),
     ],

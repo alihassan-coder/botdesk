@@ -29,6 +29,9 @@ class AuthOptionsOut(ApiModel):
     """What the sign-up screen needs to know before anyone signs in."""
 
     sign_up_mode: SignUpMode
+    # Where providers send people back after signing in (`{API_PUBLIC_URL}/api/v1/oauth/callback`):
+    # what an admin registers as the redirect URI when an app needs its own OAuth client.
+    oauth_callback_url: str
 
 
 class SignInIn(ApiModel):

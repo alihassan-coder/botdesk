@@ -386,7 +386,7 @@ async def refresh(db: AsyncSession, runtime: McpRuntime, actor: Actor, server_id
         return server
     assert listing is not None
     _save_snapshot(server, listing.tools)
-    server.icon = icon
+    server.icon = _icon_now(server.icon, listing, icon)
     _audit(db, actor, "mcp_server.refreshed", server)
     return server
 
@@ -631,12 +631,20 @@ async def finish_sign_in(
     if row is not None:
         if listed is not None:
             _save_snapshot(row, listed.tools)
-            row.icon = icon
+            row.icon = _icon_now(row.icon, listed, icon)
         else:
             row.status, row.status_reason, row.last_checked_at = "unreachable", unreachable, utcnow()
     await db.commit()
     logger.info("Signed in to the MCP server %s.", plugin_id)
     return connection
+
+
+def _icon_now(kept: str | None, listing: mcp.McpListing, fetched: str | None) -> str | None:
+    """A server that names no icon any more has none; one whose icon didn't load this time keeps
+    the one it had (a slow CDN shouldn't blank it)."""
+    if not listing.icons:
+        return None
+    return fetched or kept
 
 
 def _save_tokens(oauth: OAuth, row: Connection, tokens: Tokens) -> None:

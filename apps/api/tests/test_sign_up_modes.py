@@ -49,7 +49,8 @@ def _new(email: str = "sara@acme.dev", invite_token: str | None = None) -> dict[
 async def test_the_web_can_ask_which_mode_is_on() -> None:
     for mode in ("open", "invite-only", "closed"):
         async with server(mode) as (_, http):
-            assert (await http.get(f"{AUTH}/options")).json() == {"signUpMode": mode}
+            options = (await http.get(f"{AUTH}/options")).json()
+            assert options == {"signUpMode": mode, "oauthCallbackUrl": "http://localhost:8000/api/v1/oauth/callback"}
 
 
 async def test_open_sign_up_creates_your_own_organization(client: httpx.AsyncClient) -> None:

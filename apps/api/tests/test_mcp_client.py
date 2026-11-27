@@ -8,6 +8,7 @@ policy (private addresses and plain http allowed); the safety tests use the prod
 
 import asyncio
 import base64
+import gzip
 import json
 import socket
 import threading
@@ -133,6 +134,11 @@ def live_server() -> Iterator[LiveServer]:
     async def big_icon(_request: Request) -> Response:
         return Response(PNG + b"0" * (70 * 1024), media_type="image/png")
 
+    async def gzipped(_request: Request) -> Response:
+        # Small on the wire, much bigger unpacked: refused on its headers, never unpacked.
+        packed = gzip.compress(PNG + bytes(1024 * 1024))
+        return Response(packed, media_type="image/png", headers={"Content-Encoding": "gzip"})
+
     async def page(_request: Request) -> Response:
         return Response("<html>not an icon</html>", media_type="text/html")
 
@@ -160,6 +166,7 @@ def live_server() -> Iterator[LiveServer]:
             Route("/icon.png", icon),
             Route("/big.png", big_icon),
             Route("/page", page),
+            Route("/gzipped.png", gzipped),
             Mount("/mcp", app=mcp_app),
             Mount("/legacy", app=handshake_era),
         ],

@@ -1,10 +1,12 @@
 """A server's own icon (MCP 2025-11-25: the `icons` in its handshake's `serverInfo`), kept as a small
 data: URI, so the web shows it without anyone's browser ever calling the server's site.
 
-- **Only from the server's own site:** the same host, or the same parent domain (mcp.notion.com may
-  use notion.com). Any other address is skipped: the spec asks clients to check where icons come from.
+- **Only from the server's own site:** its own host, its parent domain or www. of it (mcp.notion.com
+  may use notion.com and www.notion.com). Never a sibling: on shared hosting (x.vercel.app) that's
+  someone else's site. Any other address is skipped: the spec asks clients to check where icons come from.
 - **Through the MCP guard** (`_guard.py`): https only (unless the network allows http, in tests), no
-  private addresses, no redirects, at most `MAX_ICON_BYTES`.
+  private addresses, no redirects, at most `MAX_ICON_BYTES`, uncompressed (the cap counts the bytes
+  that arrive, so a small gzip can't unpack into a large icon).
 - **Images only:** PNG, JPEG, WebP, GIF or SVG, by the type the server answers with. The web draws
   it in an <img>, where an SVG's scripts never run.
 - A data: URI the server sends inline is checked the same way, without a fetch.
@@ -15,6 +17,7 @@ import base64
 import binascii
 import ipaddress
 import logging
+from urllib.parse import unquote_to_bytes
 
 import httpx2
 
@@ -55,15 +58,17 @@ def ranked(icons: list[McpIcon]) -> list[McpIcon]:
 
 
 def same_site(icon_url: str, server_url: str) -> bool:
-    """The icon is on the server's own site: the same host, or the same parent domain."""
-    icon_host, server_host = httpx2.URL(icon_url).host.lower(), httpx2.URL(server_url).host.lower()
+    """The icon is on the server's own site: its own host, its parent domain, or www. of that."""
+    icon_host = httpx2.URL(icon_url).host.lower().rstrip(".")
+    server_host = httpx2.URL(server_url).host.lower().rstrip(".")
     if not icon_host or not server_host:
         return False
     if icon_host == server_host:
         return True
     if _is_ip(icon_host) or _is_ip(server_host):
         return False
-    return _site(icon_host) == _site(server_host)
+    parent = _site(server_host)
+    return icon_host in (parent, f"www.{parent}")
 
 
 def inline(uri: str) -> str | None:
@@ -73,10 +78,10 @@ def inline(uri: str) -> str | None:
         return None
     parts = header.removeprefix("data:").split(";")
     mime, is_base64 = parts[0].lower(), "base64" in parts[1:]
-    if mime not in IMAGE_TYPES:
+    if mime not in IMAGE_TYPES or len(payload) > MAX_ICON_BYTES * 3:  # too big before decoding it
         return None
     try:
-        body = base64.b64decode(payload, validate=True) if is_base64 else payload.encode()
+        body = base64.b64decode(payload, validate=True) if is_base64 else unquote_to_bytes(payload)
     except (binascii.Error, ValueError):
         return None
     return _data_uri(mime, body)
@@ -93,14 +98,17 @@ async def _fetch(src: str, server_url: str, network: McpNetwork) -> str | None:
         resolve=network.resolve,
         max_bytes=MAX_ICON_BYTES,
     )
-    async with httpx2.AsyncClient(
-        transport=transport, timeout=FETCH_SECONDS, follow_redirects=False, trust_env=False
-    ) as http:
-        response = await http.get(url, headers={"Accept": ", ".join(sorted(IMAGE_TYPES))})
-    mime = response.headers.get("content-type", "").split(";")[0].strip().lower()
-    if response.status_code != 200 or mime not in IMAGE_TYPES:
-        return None
-    return _data_uri(mime, response.content)
+    headers = {"Accept": ", ".join(sorted(IMAGE_TYPES)), "Accept-Encoding": "identity"}
+    async with (
+        httpx2.AsyncClient(transport=transport, timeout=FETCH_SECONDS, follow_redirects=False, trust_env=False) as http,
+        http.stream("GET", url, headers=headers) as response,
+    ):
+        mime = response.headers.get("content-type", "").split(";")[0].strip().lower()
+        encoding = response.headers.get("content-encoding", "identity").strip().lower()
+        if response.status_code != 200 or mime not in IMAGE_TYPES or encoding != "identity":
+            return None  # decided on the headers: the body is never read
+        body = await response.aread()
+    return _data_uri(mime, body)
 
 
 def _data_uri(mime: str, body: bytes) -> str | None:
@@ -127,8 +135,9 @@ def _is_ip(host: str) -> bool:
 
 
 def _site(host: str) -> str:
-    """The registrable part of a host, by a simple rule: the last two labels, or three when the
-    second-to-last is a short country suffix part (example.co.uk)."""
+    """The parent domain of a host, by a simple rule: the last two labels, or three when the
+    second-to-last is a short country suffix part (example.co.uk). Only ever compared with the
+    icon's host as a whole (see `same_site`), so the rule never has to know who owns a sibling."""
     labels = host.rstrip(".").split(".")
     keep = 3 if len(labels) >= 3 and len(labels[-1]) == 2 and len(labels[-2]) <= 3 else 2
     return ".".join(labels[-keep:])

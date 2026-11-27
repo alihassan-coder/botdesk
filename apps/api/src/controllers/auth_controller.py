@@ -23,6 +23,7 @@ from src.schemas.auth import (
 )
 from src.services import auth_limits, auth_service, email_service, organization_service
 from src.services.email_service import EmailMessage, EmailSender
+from src.services.oauth_flow import CALLBACK_PATH
 
 
 def _set_session_cookie(response: Response, settings: Settings, token: str) -> None:
@@ -38,7 +39,10 @@ def _set_session_cookie(response: Response, settings: Settings, token: str) -> N
 
 
 def options(settings: Settings) -> AuthOptionsOut:
-    return AuthOptionsOut(sign_up_mode=settings.signup_mode)
+    return AuthOptionsOut(
+        sign_up_mode=settings.signup_mode,
+        oauth_callback_url=settings.api_public_url.rstrip("/") + CALLBACK_PATH,
+    )
 
 
 async def me(db: AsyncSession, user: User) -> MeOut:

@@ -62,3 +62,12 @@ A cloud bot's instructions get a short working method, from how strong coding ag
 - The live view is screenshots, not video: no VNC library (noVNC is MPL-2.0) and no root password in browsers, at about one frame a second.
 - Orgo is a young company: one provider interface, so another can be added.
 - Model clicking waits for ADR 0018.
+
+## As built (2026-11-27)
+
+- The key lives in the existing `computer_providers` table (kind `computer`); the workspace id and the key's status are in its `config`. Removing it stops the bots' computers first and refuses (409) if one won't stop.
+- Keys and scrolling for take over use Orgo's own `/key` and `/scroll` endpoints, not `xdotool`.
+- After review: `computer.upload` asks (write-external) and writes only inside the home folder, never into hidden files or folders; `computer.inspect` runs git with BotDesk's own safe settings (`core.fsmonitor=false`, no hooks, no external diff or textconv) and refuses `rg` flags that run programs; only a 404 on the computer itself means it's gone; a removed bot's computer stays as a tombstone until Orgo confirms the delete; the idle stop claims a computer atomically (at least 10 minutes).
+- `computer.*` chat cards keep their command and output after a reload. Computer time is its own usage line (`computersUsd`), still in the bot's budget. A bot's Tools tab lists only the plugins its mode can use.
+- Checked end to end against a local fake of Orgo's API (settings, bot mode, start, live screen, take over, inspect without asking, run with an edited approval, screenshot to Files, an app and its preview, a computer gone at Orgo, removing the key). Not yet tried with a real Orgo account: [docs/testing/computers.md](../testing/computers.md) is the owner's manual test.
+

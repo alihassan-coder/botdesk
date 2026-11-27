@@ -4,6 +4,7 @@ import { ClockTime } from "@/components/time-ago";
 import { Button } from "@/components/ui/button";
 import type { Message } from "@/data/types";
 import { cn } from "@/lib/utils";
+import { ReadAloudButton } from "@/features/voice/read-aloud";
 
 /** The words of a message, as written (markdown included), for copying. */
 export function messageText(message: Message): string {
@@ -13,8 +14,8 @@ export function messageText(message: Message): string {
 }
 
 /**
- * Under a finished message: Copy, and the time it was sent (group chats already show the time
- * by the author's name). Shown on hover or keyboard focus, always on touch screens.
+ * Under a finished message: Copy, Read aloud (a bot's), and the time it was sent (group chats
+ * already show the time by the author's name). Shown on hover or keyboard focus, always on touch screens.
  */
 export function MessageActions({ message, isOwn, showTime }: { message: Message; isOwn: boolean; showTime: boolean }) {
   const text = messageText(message);
@@ -28,6 +29,7 @@ export function MessageActions({ message, isOwn, showTime }: { message: Message;
       )}
     >
       <CopyMessageButton text={text} />
+      {message.author.type === "bot" && <ReadAloudButton id={message.id} text={text} />}
       {showTime && <ClockTime iso={message.createdAt} />}
     </div>
   );

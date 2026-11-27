@@ -93,6 +93,16 @@ def task_line(task: TaskBrief) -> str:
     )
 
 
+def new_message_text(author: str, text: str) -> str:
+    """A message a person sent with "send now" while the bot was working (ADR 0022), as the run's
+    next input: read before its next step, so it can change course without starting over."""
+    who = author or "The person you're working for"
+    return (
+        f"{who} sent a new message while you were working. Read it now and take it into account in "
+        f"what you do next (it may change the plan):\n\n{text}"
+    )
+
+
 def handoff_prompt(task: TaskBrief) -> str:
     """A child run's trigger, as its request (an assignment, not untrusted bot output)."""
     text = f"Task from {task.from_bot_name} (@{task.from_bot_handle}): {task.task}"

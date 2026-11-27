@@ -258,6 +258,9 @@ async def test_a_run_stops_at_its_step_limit(pg: Postgres) -> None:
     run = (await pg.client.get(f"{org}/runs/{run_id}")).json()
     assert run["status"] == "failed"
     assert run["error"] == "This run reached its limit of 0 model steps."
+    # Coded "limit", so the chat can offer to carry on with a fresh run.
+    failed = [e for e in await _events(pg.client, thread) if e["event"] == "run_failed"]
+    assert failed[-1]["data"]["data"]["code"] == "limit"
 
 
 async def test_a_run_that_lost_its_job_is_picked_up_again(pg: Postgres) -> None:

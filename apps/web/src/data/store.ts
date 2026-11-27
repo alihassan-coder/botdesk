@@ -32,7 +32,7 @@ import { previewFromArgs } from "@/lib/args-form";
 import { strictestLevel } from "@/lib/security-ceiling";
 import { rememberOAuthReturn } from "@/lib/connections";
 import { browser } from "@/lib/navigate";
-import { approvalApi, authApi, botApi, browserApi, computerApi, connectionApi, fileApi, inviteApi, mcpApi, memoryApi, modelApi, orgApi, pluginApi, routineApi, runApi, templateApi, threadApi, usageApi } from "./api/botdesk";
+import { approvalApi, authApi, botApi, browserApi, computerApi, connectionApi, fileApi, inviteApi, mcpApi, memoryApi, modelApi, orgApi, pluginApi, routineApi, runApi, templateApi, threadApi, usageApi, voiceApi } from "./api/botdesk";
 import { ApiError, apiBaseUrl } from "./api/client";
 import { messageCache } from "./message-cache";
 import { toAccountConnection, toApiBot, toApproval, toBot, toBotBrowser, toBotFile, toBrowserProvider, toCloudComputer, toComputerProvider, toFileStorage, toInvitation, toMcpServer, toMemory, toMembership, toMemoryKey, toMemoryStatus, toMessage, toModel, toModelProvider, toOrg, toRoutine, toTemplate, toThread, toUsage, toUser } from "./api/map";
@@ -42,7 +42,7 @@ import { isTaskOpen, taskPreview, withTaskChangeIn, type TaskChange } from "@/li
 import * as chiefDemo from "./mock/chief-demo";
 import * as mock from "./mock/fixtures";
 import type {
-  AccountConnection, AccountConnectionList, Approval, ApprovalStatus, Bot, BotBrowser, BotFile, BotFileList, BrowserInput, BrowserLoad, BrowserProviderLoad, BotToolChange, BotTools, CloudComputer, CloudComputerLoad, ComputerInput, ComputerProviderLoad, ConnectionOwner, FilePart, HistoryRetentionDays, Invitation, McpServerInput, McpServerList, McpToolChoice, MemoryItem, MemoryKeyLoad, MemoryKeyProvider, MemoryList, MemoryStatus, Membership, Message, MessagePart, Model, ModelListProblem, ModelProvider, Org,
+  AccountConnection, AccountConnectionList, Approval, ApprovalStatus, Bot, BotBrowser, BotFile, BotFileList, BrowserInput, BrowserLoad, BrowserProviderLoad, BotToolChange, BotTools, CloudComputer, CloudComputerLoad, ComputerInput, ComputerProviderLoad, Delivery, VoiceLoad, ConnectionOwner, FilePart, HistoryRetentionDays, Invitation, McpServerInput, McpServerList, McpToolChoice, MemoryItem, MemoryKeyLoad, MemoryKeyProvider, MemoryList, MemoryStatus, Membership, Message, MessagePart, Model, ModelListProblem, ModelProvider, Org,
   Participant, PluginList, Routine, SecurityLevel, ServerConnectorList, StorageLoad, TemplateList, Thread, UsageSummary, User,
 } from "./types";
 
@@ -95,6 +95,8 @@ export type DecideResult =
 /** True when the mock data is in use: there's no API to talk to, or you're a guest. */
 const isDemo = (s: Pick<State, "guest">) => apiBaseUrl() === "" || s.guest;
 export const isDemoMode = () => isDemo(state);
+
+const VOICE_NEEDS_AN_ACCOUNT = "Voice works with an account: it uses your organization's OpenAI or Groq key.";
 
 interface State {
   /** The current organization: everything below belongs to it. */
@@ -176,6 +178,8 @@ interface State {
   computerProvider: ComputerProviderLoad;
   /** Each cloud bot's computer as last seen, by bot id (the bot details' Computer tab). */
   computers: Record<string, CloudComputerLoad>;
+  /** Whether the composer's microphone works for you, and with which model (ADR 0021). */
+  voice: VoiceLoad;
 }
 
 /** No usage yet (API mode, before the report arrives). Defined here: the seeds below run at import. */
@@ -231,6 +235,8 @@ function seed(): State {
     // MOCK: no provider; cloud computers need an account (the Orgo key is the organization's own).
     computerProvider: { status: "ready", current: {} },
     computers: {},
+    // MOCK: voice is written down by a speech model on the API with your own key.
+    voice: { status: "ready", current: { available: false, message: VOICE_NEEDS_AN_ACCOUNT } },
   };
 }
 
@@ -274,6 +280,7 @@ function apiSeed(): State {
     browserProvider: { status: "loading" },
     computerProvider: { status: "loading" },
     computers: {},
+    voice: { status: "loading" },
   };
 }
 
@@ -440,6 +447,7 @@ function enterOrg(org: Membership) {
     browserProvider: { status: "loading" },
     computerProvider: { status: "loading" },
     computers: {},
+    voice: { status: "loading" },
   }));
   void loadOrgPeople(org);
   void loadBotsAndChats(org);
@@ -1376,7 +1384,7 @@ async function saveGroup(save: () => Promise<ApiThread>): Promise<ActionResult> 
  * Shows your message at once, then sends it. The API answers with the saved message and the
  * runs it started; the replies themselves arrive on the chat's event stream.
  */
-async function sendApiMessage(threadId: string, text: string, mentions: Participant[], attachments: BotFile[]) {
+async function sendApiMessage(threadId: string, text: string, mentions: Participant[], attachments: BotFile[], delivery?: Delivery) {
   const orgId = state.org.id;
   const local: Message = {
     id: `local-${id()}`, threadId, author: { type: "user", id: state.currentUserId },
@@ -1385,7 +1393,7 @@ async function sendApiMessage(threadId: string, text: string, mentions: Particip
   set((st) => ({ ...st, messages: [...st.messages, local], threads: withPreview(st.threads, local) }));
 
   try {
-    const sent = await threadApi.send(orgId, threadId, text, attachments.map((f) => f.id));
+    const sent = await threadApi.send(orgId, threadId, text, attachments.map((f) => f.id), delivery);
     const saved = { ...toMessage(sent), mentions };
     set((st) => {
       if (st.org.id !== orgId) return st;
@@ -2141,6 +2149,33 @@ const browserActions = {
 
 /** What a bot set to a cloud computer is told when the organization has no provider (ADR 0020 §6). */
 const NO_COMPUTER_PROVIDER = "An owner or admin can add an Orgo key in Settings → Computers.";
+/** Voice input (ADR 0021): the best speech model your keys reach writes down what you say. */
+const voiceActions = {
+  /** Whether the microphone works for you. Asked again each time a chat opens (the API keeps the answer a few minutes), so a key added meanwhile turns it on. */
+  async loadVoice(): Promise<void> {
+    if (isDemoMode()) return;
+    const orgId = state.org.id;
+    const loaded = await voiceApi.status(orgId).catch(() => null);
+    set((st) => {
+      if (st.org.id !== orgId) return st;
+      if (!loaded) return { ...st, voice: { ...st.voice, status: st.voice.current ? "ready" : "error" } };
+      const current = { available: loaded.available, provider: loaded.provider ?? undefined, model: loaded.model ?? undefined, message: loaded.message ?? undefined };
+      return { ...st, voice: { status: "ready", current } };
+    });
+  },
+
+  /** What you said in a recording. `hint`: names in the chat, so they're spelled right. The audio isn't kept. */
+  async transcribe(audio: Blob, hint: string): Promise<{ ok: true; text: string } | { ok: false; error: string }> {
+    if (isDemoMode()) return { ok: false, error: VOICE_NEEDS_AN_ACCOUNT };
+    try {
+      const { text } = await voiceApi.transcribe(state.org.id, audio, hint);
+      return { ok: true, text };
+    } catch (error) {
+      return failure(error);
+    }
+  },
+};
+
 const COMPUTERS_NEED_AN_ACCOUNT = "Cloud computers need an account: they run on your organization's own Orgo key.";
 const NO_COMPUTER: CloudComputer = { status: "none", apps: [], previews: [] };
 
@@ -2469,17 +2504,19 @@ export const actions = {
   ...fileActions,
   ...browserActions,
   ...computerActions,
+  ...voiceActions,
   ...memoryKeyActions,
 
   /**
    * Sends your message, with files you uploaded for it (`uploadFile`: in a DM to its bot, in a group
    * to the shared folder). Bots reply in a moment (ADR 0009): in a DM its bot, or the other bots you
-   * @mention as guests; in a group the bots you @mention, or else its lead.
+   * @mention as guests; in a group the bots you @mention, or else its lead. While a bot is working,
+   * `delivery` "now" has it read the message at its next step (ADR 0022); otherwise it waits its turn.
    */
-  sendMessage(threadId: string, text: string, attachments: BotFile[] = []) {
+  sendMessage(threadId: string, text: string, attachments: BotFile[] = [], delivery?: Delivery) {
     const s = state;
     const mentions = parseMentions(text, s.bots, s.users);
-    if (!isDemoMode()) return void sendApiMessage(threadId, text, mentions, attachments);
+    if (!isDemoMode()) return void sendApiMessage(threadId, text, mentions, attachments, delivery);
 
     const msg: Message = {
       id: id(),
@@ -3432,6 +3469,8 @@ export const useMemoryKey = () => useStore(useCallback((s: State) => s.memoryKey
 export const useFileStorage = () => useStore(useCallback((s: State) => s.storage, []));
 /** Where the org's bots' browsers run (Settings → Computers). */
 export const useBrowserProvider = () => useStore(useCallback((s: State) => s.browserProvider, []));
+/** Whether voice input works for you (ADR 0021); `actions.loadVoice` fills it. */
+export const useVoice = () => useStore(useCallback((s: State) => s.voice, []));
 /** Who rents the org's cloud computers (Settings → Computers). */
 export const useComputerProvider = () => useStore(useCallback((s: State) => s.computerProvider, []));
 /** A cloud bot's computer as last seen; undefined until `actions.loadComputer` has started. */

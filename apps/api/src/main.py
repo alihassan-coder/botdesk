@@ -26,6 +26,7 @@ from src.services.email_service import build_email_sender
 from src.services.memory_router import OrgMemory
 from src.services.model_catalog import ModelCatalog
 from src.services.oauth_flow import OAuth
+from src.services.voice_service import SpeechToText
 
 # Calls to outside services (email, model lists) give up quickly; model lists set shorter timeouts.
 OUTBOUND_TIMEOUT = httpx.Timeout(10.0, connect=5.0)
@@ -68,6 +69,7 @@ def create_app(settings: Settings | None = None, *, outbound: httpx.AsyncBaseTra
             app.state.email = build_email_sender(settings, http)
             # One catalog: Models & keys and runs (OpenRouter's prices) share its cache.
             app.state.models = ModelCatalog(http, allow_private_urls=allow_private, custom_http=custom)
+            app.state.voice = SpeechToText(http)  # voice input (ADR 0021): built-in providers only
             # Runs and other background jobs (ADR 0013): a worker in this process, unless
             # WORKER_MODE=separate on Postgres (then `python -m src.worker` runs them).
             async with background(

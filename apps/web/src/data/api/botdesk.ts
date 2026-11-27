@@ -1,4 +1,4 @@
-import type { BrowserInput, ComputerInput } from "../types";
+import type { BrowserInput, ComputerInput, Delivery } from "../types";
 import { apiBaseUrl, apiFetch, apiFetchBlob } from "./client";
 import {
   RUN_EVENT_KINDS,
@@ -48,6 +48,8 @@ import {
   type ApiTemplate,
   type ApiThread,
   type ApiThreadRuns,
+  type ApiTranscription,
+  type ApiVoice,
 } from "./types";
 
 /** Every API route the web app uses, one plain function each. Only store.ts calls these. */
@@ -165,9 +167,14 @@ export const threadApi = {
    * Who replies: see ADR 0009 (a DM's bot and guests, a group's mentioned bots or lead). Replies arrive on the event stream.
    * `attachments`: up to 10 uploaded files by id (a DM: the bot's own or shared ones; a group: shared ones); text may then be empty.
    */
-  send: (orgId: string, threadId: string, text: string, attachments: string[] = []) =>
+  /**
+   * `delivery` while a bot is working (ADR 0022): "now", it reads the message at its next step;
+   * "queue" (the default), it answers after it finishes.
+   */
+  send: (orgId: string, threadId: string, text: string, attachments: string[] = [], delivery?: Delivery) =>
     apiFetch<ApiSentMessage>(`/api/v1/orgs/${orgId}/threads/${threadId}/messages`, {
-      method: "POST", body: attachments.length > 0 ? { text, attachments } : { text },
+      method: "POST",
+      body: { text, ...(attachments.length > 0 ? { attachments } : {}), ...(delivery === "now" ? { delivery } : {}) },
     }),
 
   /** The chat's runs that haven't finished (queued, running or paused), and where its event stream is. */
@@ -359,6 +366,18 @@ export const computerApi = {
   /** A click (screen pixels), text, a key or a scroll. */
   input: (orgId: string, botId: string, input: ComputerInput) =>
     apiFetch<void>(`/api/v1/orgs/${orgId}/bots/${botId}/computer/input`, { method: "POST", body: input }),
+};
+
+/** Voice input (ADR 0021): the best speech model your keys reach (your own key first). Any member. */
+export const voiceApi = {
+  status: (orgId: string) => apiFetch<ApiVoice>(`/api/v1/orgs/${orgId}/voice`),
+  /** A recording (at most 25 MB) written down. `hint`: names in the chat, so they're spelled right. Never stored. */
+  transcribe: (orgId: string, audio: Blob, hint: string) => {
+    const form = new FormData();
+    form.append("audio", audio, audio.type.includes("mp4") ? "voice.mp4" : "voice.webm");
+    if (hint) form.append("hint", hint);
+    return apiFetch<ApiTranscription>(`/api/v1/orgs/${orgId}/voice/transcriptions`, { method: "POST", body: form });
+  },
 };
 
 /** What a bot remembers. Members see the bot's shared memories and their own DM ones. */

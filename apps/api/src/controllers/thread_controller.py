@@ -184,7 +184,9 @@ async def post_message(
     message = await thread_service.post_message(
         db, thread=thread, user_id=access.user.id, text=body.text, attachments=attachments
     )
-    new_runs = await run_service.create_runs(db, thread=thread, message=message, settings=runs.settings, text=body.text)
+    new_runs = await run_service.create_runs(
+        db, thread=thread, message=message, settings=runs.settings, text=body.text, deliver_now=body.delivery == "now"
+    )
     out = thread_service.message_out(message)
     run_event_service.add_event(
         db,

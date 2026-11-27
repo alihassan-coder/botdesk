@@ -206,6 +206,12 @@ function reduce(chat: ChatSlice, event: ApiRunEvent): ChatSlice {
       return { ...chat, messages: withTaskChangeIn(chat.messages, change), taskChanges: { ...chat.taskChanges, [change.taskId]: change } };
     }
 
+    case "message_read": {
+      const { messageId } = event.data;
+      if (!chat.messages.some((m) => m.id === messageId)) return chat;
+      return { ...chat, messages: chat.messages.map((m) => (m.id === messageId ? { ...m, readWhileWorking: true } : m)) };
+    }
+
     case "thread_updated": {
       // A group's name or members changed. The count of what you haven't read is yours, so it stays.
       const changed = toThread(event.data.thread);
@@ -218,8 +224,8 @@ function reduce(chat: ChatSlice, event: ApiRunEvent): ChatSlice {
 }
 
 /** Why a reply failed, and whether it was the budget (the chat then offers a way to raise it). */
-function failure({ error, code }: { error: string; code?: "budget" }): Pick<Message, "error" | "errorCode"> {
-  return code === "budget" ? { error, errorCode: "budget" } : { error };
+function failure({ error, code }: { error: string; code?: "budget" | "limit" }): Pick<Message, "error" | "errorCode"> {
+  return code === "budget" || code === "limit" ? { error, errorCode: code } : { error };
 }
 
 /**

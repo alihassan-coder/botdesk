@@ -309,8 +309,8 @@ export type ApiRunEvent = {
   | { kind: "run_started"; data: { botId: string } }
   | { kind: "message_delta"; data: { messageId: string; botId: string; text: string } }
   | { kind: "run_finished"; data: { status: "succeeded" | "cancelled" } }
-  /** `code` "budget": the bot or the org reached its monthly budget. */
-  | { kind: "run_failed"; data: { status: "failed"; error: string; code?: "budget" } }
+  /** `code` "budget": the bot or the org reached its monthly budget; "limit": the run used its steps or its time. */
+  | { kind: "run_failed"; data: { status: "failed"; error: string; code?: "budget" | "limit" } }
   | { kind: "tool_started"; data: { toolExecutionId: string; tool: string; risk: ApiRiskClass; args: Record<string, unknown> } }
   | {
       kind: "tool_finished";
@@ -327,12 +327,14 @@ export type ApiRunEvent = {
   | { kind: "run_waiting_handoff"; data: { status: "waiting_handoff"; taskIds: string[] } }
   /** A group was renamed, or people or bots were added or removed (no unread count: the stream is shared). */
   | { kind: "thread_updated"; data: { thread: ApiThread } }
+  /** A message sent with "send now" was taken by the run that was working (ADR 0022). */
+  | { kind: "message_read"; data: { messageId: string } }
 );
 
 export const RUN_EVENT_KINDS = [
   "message_saved", "run_started", "message_delta", "run_finished", "run_failed",
   "tool_started", "tool_finished", "approval_requested", "approval_decided", "run_resumed", "run_needs_attention",
-  "task_updated", "run_waiting_handoff", "thread_updated",
+  "task_updated", "run_waiting_handoff", "thread_updated", "message_read",
 ] as const satisfies readonly ApiRunEvent["kind"][];
 
 /* ---------- Files and storage (ADR 0017) ---------- */
@@ -398,6 +400,21 @@ export interface ApiBrowser {
 }
 
 /* ---------- Cloud computers (ADR 0020) ---------- */
+
+/** GET /orgs/{id}/voice (ADR 0021): whether voice input works for you, and with which provider and model. */
+export interface ApiVoice {
+  available: boolean;
+  provider: string | null;
+  model: string | null;
+  message: string | null;
+}
+
+/** POST /orgs/{id}/voice/transcriptions. */
+export interface ApiTranscription {
+  text: string;
+  provider: string;
+  model: string;
+}
 
 /** GET/PUT /orgs/{id}/computer-provider. provider null: none yet. */
 export interface ApiComputerProvider {

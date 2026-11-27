@@ -139,10 +139,11 @@ def _queued_run(
 
 
 async def create_runs(
-    db: AsyncSession, *, thread: Thread, message: Message, settings: Settings, text: str
+    db: AsyncSession, *, thread: Thread, message: Message, settings: Settings, text: str, deliver_now: bool = False
 ) -> list[Run]:
     """A member's message: a queued run (hop 0) for each bot that should reply (see
-    `mention_routing`). Saved with the message, in the same transaction."""
+    `mention_routing`). Saved with the message, in the same transaction. `deliver_now` (ADR 0022):
+    a working run of the same bot may take the message at its next step (`take_new_messages`)."""
     routing = route(
         await _chat_bots(db, thread, with_guests=False),
         text,
@@ -155,6 +156,8 @@ async def create_runs(
         _queued_run(thread, reply, trigger=message, settings=settings, parent=None, requester_id=requester)
         for reply in routing.replies
     ]
+    for run in runs:
+        run.deliver_now = deliver_now
     db.add_all(runs)
     await db.flush()
     return runs
@@ -903,3 +906,54 @@ async def waiting_task_ids(db: AsyncSession, runs: list[Run]) -> dict[uuid.UUID,
     for parent_id, task_id in rows:
         found.setdefault(parent_id, []).append(task_id)
     return found
+
+
+READ_WHILE_WORKING = "Read by the run that was working."
+
+
+@dataclass(frozen=True)
+class NewMessage:
+    """A message a working run took (ADR 0022): what it says, and the queued run it cancelled."""
+
+    message_id: uuid.UUID
+    run_id: uuid.UUID
+    line: ChatLine
+
+
+async def take_new_messages(db: AsyncSession, run_id: uuid.UUID) -> list[NewMessage]:
+    """Messages sent with "send now" while this run works (ADR 0022), oldest first: the queued
+    `deliver_now` runs of its own bot, in its own chat, from its own requester. Taking them cancels
+    those runs in one `UPDATE … WHERE status = 'queued' RETURNING`, so each message is either taken
+    here or answered by its own run, never both. The caller commits."""
+    run = await db.get(Run, run_id)
+    if run is None or run.requester_id is None:
+        return []
+    taken = (
+        await db.execute(
+            update(Run)
+            .where(
+                Run.thread_id == run.thread_id,
+                Run.bot_id == run.bot_id,
+                Run.requester_id == run.requester_id,
+                Run.status == "queued",
+                Run.deliver_now.is_(True),
+                Run.hop == 0,
+                Run.id != run.id,
+            )
+            .values(status="cancelled", error=READ_WHILE_WORKING, finished_at=utcnow())
+            .returning(Run.id, Run.trigger_message_id)
+        )
+    ).all()
+    run_of = {row.trigger_message_id: row.id for row in taken if row.trigger_message_id is not None}
+    if not run_of:
+        return []
+    rows = (
+        await db.execute(
+            chat_lines(run.thread_id).where(Message.id.in_(run_of)).order_by(Message.created_at, Message.id)
+        )
+    ).all()
+    handles = await _handles_of_cards(db, [row.parts for row in rows])
+    return [
+        NewMessage(message_id=row.id, run_id=run_of[row.id], line=_line(row, bot_id=run.bot_id, handles=handles))
+        for row in rows
+    ]

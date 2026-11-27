@@ -157,6 +157,14 @@ GET /threads/{id}/events          SSE: replays run_events after Last-Event-ID, t
                                   this process's bus, by Postgres NOTIFY from other processes, or every 5 s)
 ```
 
+**Sending while a bot works (ADR 0022).** `POST /threads/{id}/messages` takes `"delivery": "now" | "queue"` (default
+`"queue"`). Either way the message gets its queued run. With `"now"` the run is marked `deliver_now`, and before each
+model step a working run takes the queued `deliver_now` runs of its own bot, chat and requester
+(`run_service.take_new_messages`: one `UPDATE … WHERE status = 'queued' RETURNING`). Their messages join its
+conversation ("Ali sent a new message while you were working…"), and their runs end `cancelled` with "Read by the run
+that was working." (a `run_finished` event each, and a `message_read` event per message). If the working run ends first,
+the queued run simply answers the message, so it is always answered exactly once.
+
 ### Background jobs
 
 [ADR 0013](../adr/0013-the-job-queue-lands.md). Bot runs and timers are **jobs** on a queue: [procrastinate](https://procrastinate.readthedocs.io/) on Postgres (MIT; its tables come from the migration `b7f3a9c1d2e4`, so `pnpm db:migrate` is still the one step). Code reaches it only through `JobQueue` (`src/jobs/queue.py`):
@@ -429,6 +437,17 @@ The code: `src/model_providers/` holds one small adapter per provider behind one
 - **Editing a custom server:** an empty `apiKey` keeps the saved key while the base URL stays the same. A saved key is never sent to a new address, so a changed `baseUrl` needs the key again or `"noKey": true` (400 otherwise). Two admins saving the first key for the same provider at once end with one key (the second insert hits the unique index and becomes an update), not a 500.
 - **Timeouts:** chat calls connect within 10 s and fail if the provider sends nothing for 60 s (httpx's read timeout is per chunk, so a long streamed answer is fine).
 - **Speed:** the providers list is one query. Saving, testing and listing end the database transaction before calling a provider (calls time out after 8 s) and open a short new one to save the result. Model lists are cached per organization and provider for 10 minutes, keyed by a hash of the key and base URL, so a replaced key never serves the old list; saving a key fills the cache.
+
+### Voice input
+
+`GET /orgs/{id}/voice` says whether voice input works for you and with which model; `POST /orgs/{id}/voice/transcriptions`
+(multipart `audio`, at most 25 MB, and an optional `hint` with names in the chat) returns `{text, provider, model}`
+(ADR 0021). The model is the best speech-to-text model your keys reach: OpenAI's (`…transcribe`, then `whisper-1`) before
+Groq's (`whisper-large-v3`, then `-turbo`), each provider's key found as a run's is (your own, the org's, the server's).
+Each key's choice comes from the provider's live model list and is cached 10 minutes (`services/voice_service.py`,
+`app.state.voice`). The audio is never stored or logged; the request's database session is closed before the provider
+call. 400 without a speech-capable key or for something that isn't audio; 503 with the provider's reason (key removed)
+when it fails.
 
 ### Member keys
 

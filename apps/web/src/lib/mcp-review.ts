@@ -39,6 +39,29 @@ export function initialChoices(tools: McpTool[]): Record<string, McpToolChoice> 
   );
 }
 
+/** The server says this tool only reads (MCP's `readOnlyHint`) and doesn't claim it destroys anything. */
+export function saysItOnlyReads(tool: McpTool): boolean {
+  return tool.annotations.readOnlyHint === true && tool.annotations.destructiveHint !== true;
+}
+
+/**
+ * The server's own read-only claims, accepted in one go by a person who trusts the server: those
+ * tools become "read" (they run without asking). Only tools the review shows and that aren't "read"
+ * already. Returns the new choices and how many changed. Never applied without a click: the claims
+ * are the server's, not checked (ADR 0012).
+ */
+export function withReadOnlyHints(tools: McpTool[], choices: Record<string, McpToolChoice>): { choices: Record<string, McpToolChoice>; changed: number } {
+  let changed = 0;
+  const next = { ...choices };
+  for (const tool of tools) {
+    const choice = next[tool.serverName];
+    if (!choice || choice.risk === "read" || !saysItOnlyReads(tool)) continue;
+    next[tool.serverName] = { ...choice, risk: "read" };
+    changed += 1;
+  }
+  return { choices: next, changed };
+}
+
 /** Tools the review must look at, first: changed, then new, then removed, then the rest (server order kept). */
 export function reviewOrder(tools: McpTool[]): McpTool[] {
   const rank: Record<McpTool["state"], number> = { changed: 0, pending: 1, removed: 2, approved: 3 };

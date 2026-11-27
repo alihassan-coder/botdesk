@@ -24,6 +24,7 @@ from src.api.v1.routes import (
     templates,
     threads,
     usage,
+    voice,
 )
 
 api_router = APIRouter(prefix="/api/v1")
@@ -50,3 +51,4 @@ api_router.include_router(memories.router)
 api_router.include_router(usage.router)
 api_router.include_router(mcp_servers.router)
 api_router.include_router(templates.router)
+api_router.include_router(voice.router)

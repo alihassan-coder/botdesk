@@ -254,9 +254,14 @@ export interface Message {
   status?: "streaming" | "complete" | "error";
   /** Why it failed, when `status` is "error": a reply that broke off, or a message that wasn't sent. */
   error?: string;
-  /** "budget": the bot or the org reached its monthly budget, so the chat offers a way to raise it. */
-  errorCode?: "budget";
+  /**
+   * "budget": the bot or the org reached its monthly budget, so the chat offers a way to raise it.
+   * "limit": the run used its steps or its time, so the chat offers to carry on.
+   */
+  errorCode?: "budget" | "limit";
   reactions?: { emoji: string; count: number }[];
+  /** Sent with "send now": the bot that was working read it at its next step (ADR 0022). Known while the chat is open. */
+  readWhileWorking?: boolean;
 }
 
 /* ---------- Approvals ---------- */
@@ -802,6 +807,23 @@ export interface ComputerProvider {
   checkedAt?: ISODate;
   /** "key_refused": the provider stopped taking the key; it needs replacing. */
   status?: "ok" | "key_refused";
+}
+
+/** While a bot is working (ADR 0022): "now", it reads your message at its next step; "queue", it answers after it finishes. */
+export type Delivery = "now" | "queue";
+
+/** Voice input (ADR 0021): whether the composer's microphone works, and with which provider and model. */
+export interface VoiceStatus {
+  available: boolean;
+  provider?: string;
+  model?: string;
+  /** When it's off: how to turn it on. */
+  message?: string;
+}
+
+export interface VoiceLoad {
+  status: "loading" | "ready" | "error";
+  current?: VoiceStatus;
 }
 
 export interface ComputerProviderLoad {

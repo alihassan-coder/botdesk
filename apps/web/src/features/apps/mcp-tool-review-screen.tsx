@@ -10,7 +10,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { actions, useAuthStatus, useCurrentUser, useMcpServers, useOrg } from "@/data/store";
 import type { McpServer, McpToolChoice } from "@/data/types";
 import { PageHeader } from "@/features/shell/page-header";
-import { initialChoices, reviewOrder, waitingLabel } from "@/lib/mcp-review";
+import { initialChoices, reviewOrder, waitingLabel, withReadOnlyHints } from "@/lib/mcp-review";
 import { McpToolReviewItem } from "./mcp-tool-review-item";
 
 /**
@@ -57,6 +57,7 @@ function ReviewForm({ server }: { server: McpServer }) {
   const offered = Object.values(choices).filter((c) => c.enabled).length;
   const waiting = waitingLabel(server.tools);
   const firstReview = server.tools.length > 0 && server.tools.every((t) => t.state === "pending");
+  const hinted = withReadOnlyHints(server.tools, choices).changed;
 
   async function save() {
     setSaving(true);
@@ -87,6 +88,24 @@ function ReviewForm({ server }: { server: McpServer }) {
       <p className="text-sm text-muted-foreground">
         Every tool starts as &ldquo;sends outside your org&rdquo;, so bots ask before using it. What a tool returns is outside text: after it, risky actions always wait for approval.
       </p>
+      {canEdit && hinted > 0 && (
+        <div className="flex flex-wrap items-center gap-3 rounded-lg border bg-muted/40 p-3">
+          <p className="min-w-0 flex-1 text-sm">
+            The server says {hinted === 1 ? "1 tool only reads" : `${hinted} tools only read`}. Marked as read, they run without asking. Do this only for a server you trust: the claim is the server&apos;s own.
+          </p>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => {
+              const next = withReadOnlyHints(server.tools, choices);
+              setChoices(next.choices);
+              toast(`Marked ${next.changed === 1 ? "1 tool" : `${next.changed} tools`} as read. Check them, then save.`);
+            }}
+          >
+            Mark them read
+          </Button>
+        </div>
+      )}
       <ul className="flex flex-col gap-3">
         {tools.map((tool) => (
           <McpToolReviewItem

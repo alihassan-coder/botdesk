@@ -42,6 +42,16 @@ describe("a chat's live updates", () => {
     expect(chat.threads[0]).toBe(thread);
   });
 
+  it("message_read marks a message the working bot took; its own run stops counting as waiting", () => {
+    const mine = toMessage(apiMessage("m9", "Use the new date", { type: "user", id: "u1" }, "2026-11-12T09:00:03Z"));
+    const chat: ChatSlice = { ...start, messages: [mine], runs: [{ id: "r1", threadId: "t1" }, { id: "r2", threadId: "t1" }] };
+    const read = applyRunEvent(chat, event({ kind: "message_read", data: { messageId: "m9" } }));
+    expect(read.messages[0].readWhileWorking).toBe(true);
+    const ended = applyRunEvent(read, event({ kind: "run_finished", runId: "r2", data: { status: "cancelled" } }));
+    expect(ended.runs.map((r) => r.id)).toEqual(["r1"]);
+    expect(applyRunEvent(chat, event({ kind: "message_read", data: { messageId: "gone" } })).messages).toBe(chat.messages);
+  });
+
   it("run_started shows the bot thinking, with no words yet", () => {
     const chat = play(started);
     expect(only(chat)).toMatchObject({ id: "typing-r1", status: "streaming", error: undefined, parts: [{ type: "text", text: "" }] });

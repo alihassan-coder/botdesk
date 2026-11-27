@@ -27,6 +27,10 @@ from src.computers.commands import GIT_SAFE_CONFIG, USE_RUN, check, hardened
         "git status",
         "git -C ~/app status --short",
         "git --no-pager log --oneline -n 20",
+        "git --version",
+        "git version",
+        "gh --version",
+        "curl --version",
         "git diff HEAD~1 -- src/app.py",
         "git show HEAD:package.json",
         "git branch -a",
@@ -120,7 +124,7 @@ def test_reading_commands_run(command: str) -> None:
         ("printenv", "isn't one of the programs"),
         ("xargs rm < list", "Redirection"),
         ("ls | xargs rm", "xargs isn't one of the programs"),
-        ("curl https://example.com", "curl isn't one of the programs"),
+        ("curl https://example.com", "curl only shows its version"),
         ("python3 -c 'import os'", "only shows its version"),
         ("node -e 'process.exit()'", "only shows its version"),
         ("awk '{system(\"rm x\")}' f", "awk isn't one of the programs"),
@@ -176,6 +180,7 @@ def test_every_git_runs_with_botdesks_own_config_and_options_first() -> None:
     no fsmonitor, no hooks, no external diff, textconv or signature program."""
     assert SAFE == ("-c core.fsmonitor=false -c core.hooksPath=/dev/null -c diff.external= -c log.showSignature=false")
     assert hardened("git status") == f"git {SAFE} status"
+    assert hardened("git --version") == "git --version"  # reads nothing of the repository
     assert hardened("git -C ~/p status --short") == f"git {SAFE} -C ~/p status --short"
     assert hardened("git --no-pager diff HEAD -- src | wc -l") == (
         f"git {SAFE} --no-pager diff --no-ext-diff --no-textconv HEAD -- src | wc -l"

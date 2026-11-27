@@ -21,6 +21,7 @@ from src.services.credential_vault import CredentialVault
 from src.services.email_service import EmailSender
 from src.services.model_catalog import ModelCatalog
 from src.services.oauth_flow import OAuth
+from src.services.voice_service import SpeechToText
 
 Db = Annotated[AsyncSession, Depends(get_session)]
 
@@ -103,6 +104,15 @@ def get_model_catalog(request: Request) -> ModelCatalog:
 
 
 Catalog = Annotated[ModelCatalog, Depends(get_model_catalog)]
+
+
+def get_voice(request: Request) -> SpeechToText:
+    """Speech to text for voice input (ADR 0021), one per API process."""
+    voice: SpeechToText = request.app.state.voice
+    return voice
+
+
+Voice = Annotated[SpeechToText, Depends(get_voice)]
 
 
 def get_limiter(request: Request) -> RateLimiter:

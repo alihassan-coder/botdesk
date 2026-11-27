@@ -2,7 +2,7 @@ import uuid
 from datetime import datetime
 from typing import Any, Literal
 
-from sqlalchemy import BigInteger, ForeignKey, Index, Integer, String, Text, UniqueConstraint, text
+from sqlalchemy import BigInteger, ForeignKey, Index, Integer, String, Text, UniqueConstraint, false, text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from src.core.database import Base, CreatedAtMixin, IdMixin
@@ -64,6 +64,9 @@ class Run(IdMixin, CreatedAtMixin, Base):
     # Set once a tool returned outside text (an email, a web page): from then on risky calls ask.
     tainted: Mapped[bool] = mapped_column(default=False)
     stop_requested: Mapped[bool] = mapped_column(default=False)
+    # Its message was sent with "send now" while a run of the same bot was working (ADR 0022): that
+    # run may take the message at its next step, which cancels this one.
+    deliver_now: Mapped[bool] = mapped_column(default=False, server_default=false())
     graph_version: Mapped[int] = mapped_column(Integer, default=1)
     error: Mapped[str | None] = mapped_column(Text)
     started_at: Mapped[datetime | None]

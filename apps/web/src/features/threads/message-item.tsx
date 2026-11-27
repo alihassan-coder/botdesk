@@ -1,3 +1,4 @@
+import { Zap } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { ClockTime } from "@/components/time-ago";
 import { useBot, useCurrentUser, useParticipantName } from "@/data/store";
@@ -6,6 +7,7 @@ import { BotAvatar, MemberAvatar } from "@/features/bots/bot-avatar";
 import { MessageActions } from "@/features/messages/message-actions";
 import { MessageParts } from "@/features/messages/message-parts";
 import { BudgetStopNotice } from "./budget-stop-notice";
+import { LimitStopNotice, stoppedAtLimit } from "./limit-stop-notice";
 import { SystemNotice } from "./system-notice";
 
 /**
@@ -32,6 +34,8 @@ export function MessageItem({ message, isGroup, dmBotId }: { message: Message; i
         {message.status === "error" &&
           (message.errorCode === "budget" ? (
             <BudgetStopNotice message={message} />
+          ) : stoppedAtLimit(message) ? (
+            <LimitStopNotice message={message} />
           ) : (
             <p className="text-xs text-destructive">{message.error ?? "This reply didn't finish."}</p>
           ))}
@@ -44,6 +48,11 @@ export function MessageItem({ message, isGroup, dmBotId }: { message: Message; i
             ))}
           </div>
         ) : null}
+        {message.readWhileWorking && (
+          <p className="-mt-1 flex items-center gap-1 text-xs text-muted-foreground">
+            <Zap aria-hidden className="size-3" /> Read while working
+          </p>
+        )}
         <MessageActions message={message} isOwn={isOwn} showTime={!showAuthor} />
       </div>
     </div>

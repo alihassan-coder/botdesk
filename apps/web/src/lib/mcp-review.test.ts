@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { McpTool } from "@/data/types";
-import { changedParts, initialChoices, isLowered, offeredLabel, reviewOrder, toolArguments, waitingLabel } from "./mcp-review";
+import { changedParts, initialChoices, isLowered, offeredLabel, reviewOrder, toolArguments, waitingLabel, withReadOnlyHints } from "./mcp-review";
 
 const tool = (serverName: string, state: McpTool["state"], enabled = true): McpTool => ({
   name: `mcp-1.${serverName}`, serverName, title: null, description: null, inputSchema: { type: "object" }, outputSchema: null,
@@ -68,5 +68,23 @@ describe("MCP tool review", () => {
     expect(changedParts(changed)).toEqual(["description"]); // key order alone is no change
     expect(changedParts({ ...changed, title: "Echo", outputSchema: { type: "object" } })).toEqual(["title", "description", "output"]);
     expect(changedParts(tool("a", "approved"))).toEqual([]);
+  });
+
+  it("takes the server's read-only claims only when asked, and never for a tool that says it destroys", () => {
+    const tools: McpTool[] = [
+      { ...tool("get_me", "pending"), annotations: { readOnlyHint: true } },
+      { ...tool("list_issues", "approved"), annotations: { readOnlyHint: true } },
+      { ...tool("wipe", "pending"), annotations: { readOnlyHint: true, destructiveHint: true } },
+      { ...tool("create_pr", "pending"), annotations: { readOnlyHint: false } },
+      { ...tool("already", "approved"), annotations: { readOnlyHint: true }, risk: "read" },
+    ];
+    const start = initialChoices(tools);
+    const { choices, changed } = withReadOnlyHints(tools, start);
+    expect(changed).toBe(2);
+    expect(Object.fromEntries(Object.values(choices).map((c) => [c.serverName, c.risk]))).toEqual({
+      get_me: "read", list_issues: "read", wipe: "external-send", create_pr: "external-send", already: "read",
+    });
+    expect(start.get_me.risk).toBe("external-send"); // the old choices aren't changed
+    expect(withReadOnlyHints(tools, choices).changed).toBe(0);
   });
 });

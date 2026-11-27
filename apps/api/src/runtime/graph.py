@@ -67,12 +67,20 @@ from src.runtime.chat_model import (
 from src.runtime.limits import RunLimits, limit_reached
 from src.runtime.memory import MemoryScope, MemoryService
 from src.runtime.policy import LEVELS, looser_than, strictest_level
-from src.runtime.prompt import COMPUTER_RUN_TOOL, HistoryLine, TaskBrief, Teammate, build_prompt, results_text
+from src.runtime.prompt import (
+    COMPUTER_RUN_TOOL,
+    HistoryLine,
+    TaskBrief,
+    Teammate,
+    build_prompt,
+    new_message_text,
+    results_text,
+)
 from src.runtime.reporter import RunReporter
 from src.runtime.token_batcher import BackgroundSender, TokenBatcher
 from src.runtime.tool_access import ToolAccessProvider
 from src.runtime.tool_pipeline import ToolCallRequest, finished_event
-from src.services import pricing, run_service, task_service, tool_execution_service, usage_service
+from src.services import pricing, run_event_service, run_service, task_service, tool_execution_service, usage_service
 from src.services.mcp_server_service import McpRuntime
 from src.services.task_service import Refused
 from src.services.tool_execution_service import RunRef
@@ -84,6 +92,13 @@ STEP_SEPARATOR = "\n\n"  # between the text of two model steps in one reply
 
 class RunError(Exception):
     """A run can't go on. The message is shown to people as the run's error."""
+
+
+class LimitReached(RunError):
+    """The run used its steps or its time. It fails with `code` "limit", so the web can offer to
+    carry on with a fresh run (Continue)."""
+
+    code = "limit"
 
 
 class BudgetReached(RunError):
@@ -328,8 +343,9 @@ async def call_model(state: RunState, runtime: Runtime[RunDeps]) -> RunState:
         raise RunStopped
     elapsed = time.monotonic() - deps.started_at
     if reason := limit_reached(deps.limits, steps_used=step.steps_used, elapsed_seconds=elapsed):
-        raise RunError(reason)
+        raise LimitReached(reason)
 
+    news = await _take_new_messages(deps)
     tools_of_run = await _toolset(deps)
     prompt = build_prompt(
         bot_name=state["bot_name"],
@@ -346,7 +362,7 @@ async def call_model(state: RunState, runtime: Runtime[RunDeps]) -> RunState:
         task=_task_brief(state),
         summary=state.get("summary"),
     )
-    turns = state.get("turns", [])
+    turns = [*state.get("turns", []), *news]
     messages = [*prompt, *messages_from_dict(turns)]
     prompt_chars = sum(len(str(message.content)) for message in messages)
     price = await deps.price_for(state["model_id"])
@@ -379,6 +395,29 @@ async def call_model(state: RunState, runtime: Runtime[RunDeps]) -> RunState:
         "turns": [*turns, message_to_dict(answer)] if calls else turns,
         "pending_calls": calls,
     }
+
+
+async def _take_new_messages(deps: RunDeps) -> list[dict[str, Any]]:
+    """Messages sent with "send now" while this run works (ADR 0022) join its conversation before the
+    model's next step. Their own queued runs are cancelled (and reported finished, so the chat stops
+    showing them as waiting) and each message is reported read."""
+    async with deps.sessionmaker() as db:
+        taken = await run_service.take_new_messages(db, deps.run_id)
+        if not taken:
+            return []
+        for new in taken:
+            run_event_service.add_event(
+                db,
+                org_id=deps.org_id,
+                thread_id=deps.thread_id,
+                run_id=new.run_id,
+                kind="run_finished",
+                data={"status": "cancelled"},
+            )
+            deps.reporter.add(db, "message_read", {"messageId": str(new.message_id)})
+        await db.commit()
+    deps.reporter.announce()
+    return [message_to_dict(HumanMessage(content=new_message_text(new.line.author, new.line.text))) for new in taken]
 
 
 async def _check_budget(deps: RunDeps, price: ModelPrice, prompt_chars: int) -> float | None:

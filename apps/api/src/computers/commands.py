@@ -98,6 +98,10 @@ _VERSION_ONLY = frozenset(
         "gcc",
         "make",
         "ruby",
+        "gh",
+        "curl",
+        "wget",
+        "tsc",
     }
 )
 _VERSION_ARGS = frozenset({"--version", "-V", "-v", "-version"})
@@ -174,6 +178,8 @@ def hardened(command: str) -> str:
 
 
 def _hardened_git(argv: list[str]) -> str:
+    if argv[1:] in _GIT_VERSION:  # nothing of the repository's is read
+        return " ".join(argv)
     rest, before = list(argv[1:]), []
     while rest and rest[0].startswith("-"):
         flag = rest.pop(0)
@@ -294,7 +300,12 @@ def _find(args: list[str]) -> str | None:
     return None
 
 
+_GIT_VERSION = (["--version"], ["version"])
+
+
 def _git(args: list[str]) -> str | None:
+    if args in _GIT_VERSION:
+        return None
     rest = list(args)
     while rest and rest[0].startswith("-"):
         flag = rest.pop(0)

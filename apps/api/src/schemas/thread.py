@@ -1,6 +1,6 @@
 import uuid
 from datetime import datetime
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import Field, model_validator
 
@@ -92,6 +92,9 @@ class MessageIn(ApiModel):
 
     text: str = Field(default="", max_length=20_000)
     attachments: list[uuid.UUID] = Field(default_factory=list, max_length=MAX_ATTACHMENTS)
+    # While a bot is working (ADR 0022): "now", it reads the message at its next step; "queue", it
+    # answers after it finishes (also what happens when no bot is working).
+    delivery: Literal["now", "queue"] = "queue"
 
     @model_validator(mode="after")
     def _something_to_send(self) -> "MessageIn":

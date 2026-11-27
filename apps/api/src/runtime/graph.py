@@ -67,7 +67,7 @@ from src.runtime.chat_model import (
 from src.runtime.limits import RunLimits, limit_reached
 from src.runtime.memory import MemoryScope, MemoryService
 from src.runtime.policy import LEVELS, looser_than, strictest_level
-from src.runtime.prompt import HistoryLine, TaskBrief, Teammate, build_prompt, results_text
+from src.runtime.prompt import COMPUTER_RUN_TOOL, HistoryLine, TaskBrief, Teammate, build_prompt, results_text
 from src.runtime.reporter import RunReporter
 from src.runtime.token_batcher import BackgroundSender, TokenBatcher
 from src.runtime.tool_access import ToolAccessProvider
@@ -340,6 +340,7 @@ async def call_model(state: RunState, runtime: Runtime[RunDeps]) -> RunState:
         guest=state.get("guest", False),
         asked_by_bot=state.get("hop", 0) > 0,
         can_hand_off=tools_of_run.get(HANDOFF_TOOL) is not None,
+        has_computer=tools_of_run.get(COMPUTER_RUN_TOOL) is not None,
         teammates=_teammates(state),
         more_teammates=state.get("more_teammates", 0),
         task=_task_brief(state),

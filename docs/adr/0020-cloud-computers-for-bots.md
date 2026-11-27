@@ -2,7 +2,7 @@
 
 - Status: accepted (owner asked for it on 2026-11-27: "give the computer to my AI agent", each bot picks what it needs, show the screen)
 - Date: 2026-11-27
-- Based on: [ADR 0004](0004-agent-runtime-and-safety.md) (risk, approvals, taint), [ADR 0008](0008-bring-your-own-keys.md) (bring your own keys), [ADR 0017](0017-bot-browsers-and-file-storage.md) (Files and browsers, take over)
+- Based on: [ADR 0004](0004-agent-runtime-and-safety.md) (risk, approvals, taint), [ADR 0008](0008-free-and-open-source.md) (bring your own keys), [ADR 0017](0017-bot-browsers-and-file-storage.md) (Files and browsers, take over)
 - Research: [docs/research/orgo-api.md](../research/orgo-api.md) (from Orgo's OpenAPI, fetched 2026-11-27)
 
 ## Context

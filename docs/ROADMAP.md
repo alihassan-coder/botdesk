@@ -108,6 +108,7 @@ When you finish something, tick it here in the same pull request.
 ### MCP (step 8)
 - [x] Connect a remote MCP server; its tools become bot tools (slice 7.2: header-key auth, tool snapshot pinned by hash, every tool asks and taints)
 - [x] MCP OAuth sign-in (7.3); review tools and their risk, drift diff and badge (7.4) ([ADR 0016](adr/0016-mcp-sign-in-and-review-as-built.md), proposed; [manual test](testing/mcp.md); not yet tried against a real OAuth MCP server)
+- [x] Web: official vendor-hosted MCP servers on Connect apps (`apps/web/src/lib/mcp-catalogue.ts`), Connect fills in Add MCP server for each; servers show their own icon or the brand mark
 - [ ] Member- and bot-owned MCP sign-ins (each member's own account, only in their DMs); v1 has the organization's sign-in only
 - [ ] MCP drift noticed without a call or a Refresh (a scheduled re-list)
 

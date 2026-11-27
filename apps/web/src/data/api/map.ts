@@ -217,6 +217,7 @@ export function toMcpServer(s: ApiMcpServer): McpServer {
       previous: previous ? { ...previous, outputSchema: previous.outputSchema ?? null } : null,
     })),
     lastCheckedAt: s.lastCheckedAt ? asUtc(s.lastCheckedAt) : null,
+    iconUrl: s.iconUrl ?? null, // older APIs don't send it
   };
 }
 

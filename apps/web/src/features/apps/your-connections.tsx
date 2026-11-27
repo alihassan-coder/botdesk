@@ -17,6 +17,7 @@ import { Button } from "@/components/ui/button";
 import { actions, useBots, useCurrentUser, useMcpServers } from "@/data/store";
 import type { AccountConnection, McpServer, ServerConnector } from "@/data/types";
 import { ownerLabel, ownerOf } from "@/lib/connections";
+import { McpServerLogo } from "./mcp-server-logo";
 
 /** API only: the connected accounts you may see, with Reconnect (when broken) and Disconnect. */
 export function YourConnections({ accounts, connectors }: { accounts: AccountConnection[]; connectors: ServerConnector[] }) {
@@ -40,7 +41,7 @@ export function YourConnections({ accounts, connectors }: { accounts: AccountCon
             const broken = account.status === "needs_reconnect";
             return (
               <li key={account.id} className="flex flex-wrap items-center gap-3 rounded-2xl border bg-card p-4">
-                <ConnectorLogo connectorId={account.connectorId} name={name} decorative />
+                {mcp ? <McpServerLogo server={mcp} /> : <ConnectorLogo connectorId={account.connectorId} name={name} decorative />}
                 <div className="min-w-0 flex-1">
                   <p className="font-medium">{name} <span className="font-normal text-muted-foreground">· {account.accountLabel}</span></p>
                   <p className="truncate text-sm text-muted-foreground">

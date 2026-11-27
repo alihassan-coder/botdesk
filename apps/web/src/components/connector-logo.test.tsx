@@ -30,6 +30,25 @@ describe("ConnectorLogo", () => {
     }
   });
 
+  it("draws the catalogue's MCP servers' marks, Jira's for Atlassian", () => {
+    for (const [id, name] of [["google-drive", "Google Drive"], ["atlassian", "Jira & Confluence"], ["sentry", "Sentry"], ["asana", "Asana"]]) {
+      render(<ConnectorLogo connectorId={id} name={name} />);
+      expect(screen.getByRole("img", { name })).toHaveAttribute("data-logo", "brand");
+    }
+  });
+
+  it("prefers the picture it's given over the brand mark, but only an inline one", () => {
+    const icon = "data:image/png;base64,iVBORw0KGgo=";
+    const { container, rerender } = render(<ConnectorLogo connectorId="linear" name="Linear" iconUrl={icon} />);
+    expect(screen.getByRole("img", { name: "Linear" })).toHaveAttribute("data-logo", "icon");
+    expect(container.querySelector("img")).toHaveAttribute("src", icon);
+    expect(container.querySelector("img")).toHaveAttribute("alt", "");
+
+    rerender(<ConnectorLogo connectorId="linear" name="Linear" iconUrl="https://tracker.example/pixel.png" />);
+    expect(screen.getByRole("img", { name: "Linear" })).toHaveAttribute("data-logo", "brand");
+    expect(container.querySelector("img")).toBeNull();
+  });
+
   it("switches a near-black brand colour to the foreground colour in dark mode", () => {
     render(
       <>
@@ -52,6 +71,8 @@ describe("isNearBlack", () => {
   it("flags blacks and near-blacks only", () => {
     expect(isNearBlack("181717")).toBe(true);
     expect(isNearBlack("#000000")).toBe(true);
+    expect(isNearBlack("362D59")).toBe(true); // Sentry's deep purple
+    expect(isNearBlack("0052CC")).toBe(false);
     expect(isNearBlack("EA4335")).toBe(false);
     expect(isNearBlack("5E6AD2")).toBe(false);
     expect(isNearBlack("nope")).toBe(false);

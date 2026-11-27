@@ -5,10 +5,12 @@ import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { Field, FieldDescription, FieldLabel, FieldLegend, FieldSet } from "@/components/ui/field";
+import { Field, FieldDescription, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
 import { actions, useMcpServers } from "@/data/store";
+import type { McpCatalogueEntry } from "@/lib/mcp-catalogue";
 import { waitingLabel } from "@/lib/mcp-review";
+import { ApiKeyFields, OAuthClientFields } from "./mcp-auth-fields";
 
 /**
  * Owners and admins: add a remote MCP server. The API connects and lists its tools before
@@ -16,8 +18,9 @@ import { waitingLabel } from "@/lib/mcp-review";
  * A server that wants a sign-in (it answers 401, or "Uses sign-in" is ticked) sends the tab to
  * its sign-in page; a client ID is only needed when the server can't register BotDesk itself.
  * Step 2 leads to Review tools: no tool is offered to a bot before that (ADR 0012 §4).
+ * `preset` fills it in for an official server (lib/mcp-catalogue.ts) and asks for what that one needs.
  */
-export function AddMcpServerDialog({ open, onClose }: { open: boolean; onClose: () => void }) {
+export function AddMcpServerDialog({ open, preset = null, onClose }: { open: boolean; preset?: McpCatalogueEntry | null; onClose: () => void }) {
   const [addedId, setAddedId] = useState<string | null>(null);
   const close = () => {
     setAddedId(null);
@@ -25,8 +28,9 @@ export function AddMcpServerDialog({ open, onClose }: { open: boolean; onClose: 
   };
   return (
     <Dialog open={open} onOpenChange={(next) => !next && close()}>
-      <DialogContent>
-        {open && (addedId ? <ReviewNext serverId={addedId} onClose={close} /> : <AddForm onAdded={setAddedId} onClose={close} />)}
+      {/* An official server's how-to and redirect URI make the form taller than a phone. */}
+      <DialogContent className="max-h-[90svh] overflow-y-auto">
+        {open && (addedId ? <ReviewNext serverId={addedId} onClose={close} /> : <AddForm key={preset?.id ?? "custom"} preset={preset} onAdded={setAddedId} onClose={close} />)}
       </DialogContent>
     </Dialog>
   );
@@ -54,18 +58,20 @@ function ReviewNext({ serverId, onClose }: { serverId: string; onClose: () => vo
   );
 }
 
-function AddForm({ onAdded, onClose }: { onAdded: (serverId: string) => void; onClose: () => void }) {
-  const [name, setName] = useState("");
-  const [url, setUrl] = useState("");
-  const [header, setHeader] = useState("");
+function AddForm({ preset, onAdded, onClose }: { preset: McpCatalogueEntry | null; onAdded: (serverId: string) => void; onClose: () => void }) {
+  const kind = preset?.signIn.kind;
+  const [name, setName] = useState(preset?.name ?? "");
+  const [url, setUrl] = useState(preset?.url ?? "");
+  const [header, setHeader] = useState(preset?.signIn.kind === "key" ? preset.signIn.header : "");
   const [key, setKey] = useState("");
-  const [signIn, setSignIn] = useState(false);
+  const [signIn, setSignIn] = useState(kind === "oauth" || kind === "oauth-client");
   const [clientId, setClientId] = useState("");
   const [clientSecret, setClientSecret] = useState("");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
-  const halfKey = !signIn && Boolean(header.trim()) !== Boolean(key.trim());
-  const secretWithoutId = signIn && Boolean(clientSecret.trim()) && !clientId.trim();
+  // An official server's key or client is required (GitHub's token, the app made in Google Cloud); a custom one's is optional.
+  const keyMissing = !signIn && (kind === "key" ? !header.trim() || !key.trim() : Boolean(header.trim()) !== Boolean(key.trim()));
+  const clientMissing = signIn && (kind === "oauth-client" ? !clientId.trim() || !clientSecret.trim() : Boolean(clientSecret.trim()) && !clientId.trim());
 
   async function submit() {
     setBusy(true);
@@ -90,8 +96,10 @@ function AddForm({ onAdded, onClose }: { onAdded: (serverId: string) => void; on
       className="flex flex-col gap-5"
     >
       <DialogHeader>
-        <DialogTitle>Add MCP server</DialogTitle>
-        <DialogDescription>BotDesk connects to it now and lists its tools. You review them next; bots get them only once you have, and the server is on in their Tools.</DialogDescription>
+        <DialogTitle>{preset ? `Connect ${preset.name}` : "Add MCP server"}</DialogTitle>
+        <DialogDescription>
+          {preset ? `${preset.publisher}'s own MCP server. ` : ""}BotDesk connects to it now and lists its tools. You review them next; bots get them only once you have, and the server is on in their Tools.
+        </DialogDescription>
       </DialogHeader>
 
       <Field>
@@ -110,23 +118,9 @@ function AddForm({ onAdded, onClose }: { onAdded: (serverId: string) => void; on
       </Field>
 
       {signIn ? (
-        <FieldSet>
-          <FieldLegend variant="label">OAuth client (optional)</FieldLegend>
-          <div className="grid gap-3 sm:grid-cols-2">
-            <Input aria-label="Client ID" value={clientId} onChange={(e) => setClientId(e.target.value)} placeholder="Client ID" autoComplete="off" />
-            <Input aria-label="Client secret" type="password" value={clientSecret} onChange={(e) => setClientSecret(e.target.value)} placeholder="Client secret" autoComplete="off" />
-          </div>
-          <FieldDescription>Leave empty and BotDesk registers itself with the server. Paste one only if the server asks you to create it. The secret is kept encrypted and never shown again.</FieldDescription>
-        </FieldSet>
+        <OAuthClientFields preset={preset} clientId={clientId} clientSecret={clientSecret} setClientId={setClientId} setClientSecret={setClientSecret} />
       ) : (
-        <FieldSet>
-          <FieldLegend variant="label">API key (optional)</FieldLegend>
-          <div className="grid gap-3 sm:grid-cols-[2fr_3fr]">
-            <Input aria-label="Header name" value={header} onChange={(e) => setHeader(e.target.value)} placeholder="Authorization" autoComplete="off" />
-            <Input aria-label="Header value" type="password" value={key} onChange={(e) => setKey(e.target.value)} placeholder="Bearer sk-…" autoComplete="off" />
-          </div>
-          <FieldDescription>Sent in this header on every request. Kept encrypted on the server and never shown again. A server that asks for a sign-in instead is detected when you add it.</FieldDescription>
-        </FieldSet>
+        <ApiKeyFields preset={preset} header={header} value={key} setHeader={setHeader} setValue={setKey} />
       )}
 
       <Alert>
@@ -137,7 +131,7 @@ function AddForm({ onAdded, onClose }: { onAdded: (serverId: string) => void; on
       {error && <p role="alert" className="text-sm text-destructive">{error}</p>}
       <DialogFooter>
         <Button type="button" variant="ghost" onClick={onClose}>Cancel</Button>
-        <Button type="submit" disabled={busy || !name.trim() || !url.trim() || halfKey || secretWithoutId}>{busy ? "Connecting…" : signIn ? "Add and sign in" : "Add server"}</Button>
+        <Button type="submit" disabled={busy || !name.trim() || !url.trim() || keyMissing || clientMissing}>{busy ? "Connecting…" : signIn ? "Add and sign in" : "Add server"}</Button>
       </DialogFooter>
     </form>
   );

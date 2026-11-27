@@ -57,10 +57,9 @@ describe("Connect apps on the API", () => {
     const demoCard = within(apps).getByRole("article", { name: "Demo" });
     await user.click(within(demoCard).getByRole("button", { name: /What bots can do \(2\)/ }));
     expect(within(demoCard).getByText("Sends outside your org")).toBeInTheDocument();
-    // The catalogue keeps only what the server has no plugin for.
-    const soon = screen.getByRole("region", { name: "Coming soon" });
-    expect(within(soon).queryByText("Gmail")).not.toBeInTheDocument();
-    expect(within(soon).getByText("Slack")).toBeInTheDocument();
+    // No placeholders for apps the server has no plugin for: the official MCP servers stand in.
+    expect(screen.queryByRole("region", { name: "Coming soon" })).not.toBeInTheDocument();
+    expect(within(screen.getByRole("region", { name: "Official MCP servers" })).getByRole("article", { name: "Slack MCP server" })).toBeInTheDocument();
   });
 
   it("Connect signs in with the provider: owner and access level go to the API, then the tab leaves for its page", async () => {
@@ -69,7 +68,7 @@ describe("Connect apps on the API", () => {
     await signInOnApi();
     const { user } = renderUI(<AppsScreen />);
 
-    // Wait for the server's card: until then the catalogue's own (disabled) Gmail card is there.
+    // The server's built-in Gmail, not the official Gmail MCP server further down.
     await user.click(within(await screen.findByRole("article", { name: "Gmail" })).getByRole("button", { name: "Connect Gmail" }));
     expect(screen.getByRole("radio", { name: /Read, organise, draft and send/ })).toBeChecked();
     await user.click(screen.getByRole("radio", { name: /Read only/ }));

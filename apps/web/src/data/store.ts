@@ -3315,6 +3315,8 @@ export const useConnections = () => useStore(useCallback((s: State) => s.connect
 export const useServerConnectors = () => useStore(useCallback((s: State) => s.serverConnectors, []));
 /** Connect apps: the organization's MCP servers, as last loaded with `actions.loadMcpServers`. */
 export const useMcpServers = () => useStore(useCallback((s: State) => s.mcpServers, []));
+/** Where providers send people back after signing in: the redirect URI an admin gives an OAuth app they create. */
+export const oauthCallbackUrl = () => `${apiBaseUrl()}/api/v1/oauth/callback`;
 /** Accounts connected to connectors that you may see (yours, the bots', the organization's). */
 export const useAccountConnections = () => useStore(useCallback((s: State) => s.accounts, []));
 /** A bot's Tools tab, as last loaded with `actions.loadBotTools`; undefined until then. */

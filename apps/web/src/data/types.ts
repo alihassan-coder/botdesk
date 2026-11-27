@@ -407,6 +407,8 @@ export interface McpServer {
   /** Changed, new or removed tools waiting for the review ("Tools changed"). */
   toolsChanged: number;
   lastCheckedAt: string | null;
+  /** The server's own icon from its MCP handshake, as a data:image URI; null when it has none. */
+  iconUrl: string | null;
 }
 
 export interface McpServerList {

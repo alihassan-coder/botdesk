@@ -3,18 +3,19 @@
 import { useState } from "react";
 import { ConnectorLogo } from "@/components/connector-logo";
 import { Button } from "@/components/ui/button";
-import { actions, useConnections, useConnectors, useIsDemo, useServerConnectors } from "@/data/store";
+import { actions, useConnections, useConnectors, useIsDemo } from "@/data/store";
 import type { Connector } from "@/data/types";
 import { PageHeader } from "@/features/shell/page-header";
 import { ConnectDialog } from "./connect-dialog";
 import { McpServers } from "./mcp-servers";
+import { OfficialMcpServers } from "./official-mcp-servers";
 import { ServerConnectors } from "./server-connectors";
 import { ToolList } from "./tool-list";
 
 /**
  * /apps — what your bots can reach. The demo connects its mock apps. On the API, the server's
- * connectors are listed with your connected accounts; the rest of the catalogue (apps this
- * server has no plugin for yet) is shown as coming soon with Connect off.
+ * connectors are listed with your connected accounts. Then the organization's MCP servers, and
+ * the official ones each company hosts, ready to connect.
  */
 export function AppsScreen() {
   const isDemo = useIsDemo();
@@ -22,8 +23,6 @@ export function AppsScreen() {
   const [connecting, setConnecting] = useState<Connector | null>(null);
 
   const available = connectors.filter((c) => c.available);
-  const onServer = new Set(useServerConnectors().items.map((c) => c.id));
-  const comingSoon = isDemo ? connectors.filter((c) => !c.available) : connectors.filter((c) => !onServer.has(c.id));
 
   return (
     <div className="flex h-full flex-col">
@@ -51,22 +50,7 @@ export function AppsScreen() {
 
           <McpServers />
 
-          <section aria-label="Coming soon">
-            <h3 className="mb-3 text-sm font-semibold">Coming soon</h3>
-            {!isDemo && <p className="mb-3 text-sm text-muted-foreground">This server has no plugin for these apps yet.</p>}
-            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-              {comingSoon.map((c) => (
-                <article key={c.id} className="flex items-center gap-3 rounded-2xl border border-dashed p-4 text-muted-foreground">
-                  <ConnectorLogo connectorId={c.id} name={c.name} decorative className="opacity-75 dark:opacity-90" />
-                  <div className="min-w-0 flex-1">
-                    <p className="font-medium text-foreground/80">{c.name}</p>
-                    <p className="truncate text-xs">{c.description}</p>
-                  </div>
-                  {c.available && <Button size="sm" variant="outline" disabled aria-label={`Connect ${c.name}`}>Connect</Button>}
-                </article>
-              ))}
-            </div>
-          </section>
+          <OfficialMcpServers />
         </div>
       </div>
       {isDemo && <ConnectDialog connector={connecting} onClose={() => setConnecting(null)} />}

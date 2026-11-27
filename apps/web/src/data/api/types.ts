@@ -455,6 +455,8 @@ export interface ApiMcpServer {
   lastCheckedAt: string | null;
   createdAt: string;
   createdBy: string | null;
+  /** A data:image URI read from the server's handshake. Older APIs don't send it. */
+  iconUrl?: string | null;
 }
 
 /** POST /orgs/{id}/mcp-servers: a server that wants a sign-in comes back with where to go. */

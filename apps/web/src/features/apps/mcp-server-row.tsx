@@ -18,6 +18,7 @@ import { Button } from "@/components/ui/button";
 import { actions } from "@/data/store";
 import type { McpServer } from "@/data/types";
 import { offeredLabel, offeredTools, waitingLabel } from "@/lib/mcp-review";
+import { McpServerLogo } from "./mcp-server-logo";
 import { ToolList } from "./tool-list";
 
 const STATUS: Record<McpServer["status"], { label: string; problem: boolean }> = {
@@ -53,6 +54,7 @@ export function McpServerRow({ server, canManage }: { server: McpServer; canMana
   return (
     <li className="flex flex-col gap-3 rounded-2xl border bg-card p-4" aria-label={server.name}>
       <div className="flex flex-wrap items-center gap-3">
+        <McpServerLogo server={server} />
         <div className="min-w-0 flex-1">
           <p className="font-medium">{server.name}</p>
           <p className="truncate text-sm text-muted-foreground">{server.url} · {offeredLabel(server.tools)}</p>

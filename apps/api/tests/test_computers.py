@@ -10,7 +10,7 @@ from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from datetime import timedelta
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import httpx
 import pytest
@@ -33,6 +33,8 @@ from src.computers.base import (
 from src.computers.orgo import OrgoComputers
 from src.core.config import Settings
 from src.core.database import Base, create_engine, create_sessionmaker, utcnow
+from src.jobs import tasks
+from src.jobs.queue import JobEnv
 from src.models import Bot, BotComputer, ComputerProvider, Organization, UsageRecord
 from src.plugins.registry import build_registry
 from src.runtime.toolset import BindingRow, RunScope, resolve
@@ -543,6 +545,45 @@ async def test_members_watch_and_take_over_like_editing_the_bot(
     assert (await client.get(f"{computer}/screen")).status_code == 200
     assert (await client.post(f"{computer}/input", json={"kind": "type", "text": "hi"})).status_code == 204
     assert (await client.post(f"{computer}/stop")).json()["status"] == "stopped"
+
+
+# The idle stop
+
+
+async def test_idle_computers_stop_and_their_time_is_recorded(desk: Desk) -> None:
+    await desk.add_key()
+    busy, idle = await desk.cloud_bot("Busy"), await desk.cloud_bot("Idle")
+    for bot_id in (busy, idle):
+        await desk.computers.ensure_running(desk.org_id, uuid.UUID(bot_id))
+    async with desk.app.state.sessionmaker() as db:
+        await db.execute(
+            update(BotComputer)
+            .where(BotComputer.bot_id == uuid.UUID(idle))
+            .values(last_used_at=utcnow() - timedelta(minutes=21), started_at=utcnow() - timedelta(minutes=30))
+        )
+        await db.commit()
+
+    env = cast("JobEnv", type("Env", (), {"runs": desk.app.state.runs})())
+    await tasks.stop_idle_computers(env, int(utcnow().timestamp()))
+
+    busy_row, idle_row = await desk.row(busy), await desk.row(idle)
+    assert busy_row is not None and busy_row.status == "running"
+    assert idle_row is not None and idle_row.status == "stopped"
+    (usage,) = await desk.usage()
+    assert str(usage.bot_id) == idle
+    assert usage.cost_usd == pytest.approx(0.5 * 0.055, abs=0.001)
+
+
+async def test_watching_keeps_a_computer_from_its_idle_stop(desk: Desk) -> None:
+    await desk.add_key()
+    bot_id = await desk.cloud_bot()
+    await desk.computers.ensure_running(desk.org_id, uuid.UUID(bot_id))
+    async with desk.app.state.sessionmaker() as db:
+        await db.execute(update(BotComputer).values(last_used_at=utcnow() - timedelta(minutes=21)))
+        await db.commit()
+
+    assert (await desk.client.get(f"{desk.org}/bots/{bot_id}/computer/screen")).status_code == 200
+    assert await desk.computers.stop_idle(utcnow()) == 0
 
 
 def test_settings_default_to_orgos_list_price_and_a_fake_only_outside_production() -> None:

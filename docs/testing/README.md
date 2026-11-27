@@ -6,6 +6,7 @@ Allow about 2 hours for everything, plus about 30 minutes for the Google setup (
 
 - [Gmail](gmail.md): read, organise, draft and send email, and react to new email
 - [MCP servers](mcp.md): add a server, review its tools, sign in
+- [Cloud computers](computers.md): a bot's own Orgo computer, commands with approval, the live screen, previews, idle stop
 
 ## Before you start
 

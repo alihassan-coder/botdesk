@@ -140,6 +140,7 @@ When you finish something, tick it here in the same pull request.
 - [x] Bots read PDFs, download linked files (`browser.download`), and search the web with a Brave Search key (`plugins/brave-search`)
 - [x] A memory key per organization, OpenAI or Gemini, used only for bots' memory (API; Settings → Memory card)
 - [x] Chat history: bots read a running summary of older messages; delete messages older than 30–365 days (API, [ADR 0019](adr/0019-chat-history-summaries-and-retention.md); Settings → Organization)
+- [x] Cloud computers for bots on Orgo, with the organization's own key: Browser or Cloud per bot, `computer.*` tools (read-only `inspect`; `run` with approval), apps and preview links, watch and take over, idle stop and usage (API; [ADR 0020](adr/0020-cloud-computers-for-bots.md); by hand: [testing/computers.md](testing/computers.md))
 - [ ] Bots see images ([ADR 0018](adr/0018-bots-see-images.md), proposed)
 - [ ] A browser in the Docker image (or Docker users pick a cloud browser)
 - [ ] The full bot computer (a whole desktop) and routine recording

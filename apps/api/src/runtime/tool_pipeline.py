@@ -39,6 +39,8 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from src.core.database import utcnow
 from src.models.bot import SecurityLevel
+from src.plugins.computer import CALL_TIMEOUT_SECONDS as COMPUTER_CALL_TIMEOUT_SECONDS
+from src.plugins.computer import COMPUTER_PLUGIN_ID
 from src.plugins.registry import RegisteredTool
 from src.runtime.policy import LEVEL_NAMES, STAYS_INSIDE, PolicyDecision, decide
 from src.runtime.reporter import RunReporter
@@ -283,8 +285,7 @@ async def _run_tool(
         # The bot's account for this app changed after the call was decided: never run it on
         # an account nobody decided about.
         return None, ACCOUNT_CHANGED
-    # An MCP call (re-check its definition, then call) gets its own limit (ADR 0012 §6).
-    timeout = MCP_CALL_TIMEOUT_SECONDS if is_mcp_plugin(tool.plugin_id) else deps.timeout_seconds
+    timeout = _time_limit(tool, deps.timeout_seconds)
     try:
         parsed = tool.spec.args_model.model_validate(args)  # checked before: fails only if the tool changed
     except ValidationError as invalid:
@@ -336,6 +337,16 @@ async def _run_tool(
         # It ran to the end and did whatever it does; only its answer is unusable.
         raise OutcomeUnknown(f"{problem} It may have been done: check before trying again.")
     return checked, problem
+
+
+def _time_limit(tool: RegisteredTool, default: float) -> float:
+    """An MCP call (re-check its definition, then call) gets its own limit (ADR 0012 §6); a computer
+    tool may first start the computer, then run a command for up to 5 minutes (ADR 0020)."""
+    if is_mcp_plugin(tool.plugin_id):
+        return MCP_CALL_TIMEOUT_SECONDS
+    if tool.plugin_id == COMPUTER_PLUGIN_ID:
+        return COMPUTER_CALL_TIMEOUT_SECONDS
+    return default
 
 
 def _changes_outside(tool: RegisteredTool) -> bool:

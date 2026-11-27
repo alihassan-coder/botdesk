@@ -121,21 +121,26 @@ def _plugin_out(
 
 async def run_bindings(
     db: AsyncSession, run_id: uuid.UUID
-) -> tuple[Run, Thread, list[tuple[BotTool, Connection | None]]] | None:
-    """A run, its chat, and its bot's enabled bindings with their connections (two queries).
-    None when the run is gone."""
+) -> tuple[Run, Thread, list[tuple[BotTool, Connection | None]], str] | None:
+    """A run, its chat, its bot's enabled bindings with their connections, and the bot's computer
+    mode (browser | cloud; two queries). None when the run is gone."""
     row = (
-        await db.execute(select(Run, Thread).join(Thread, Thread.id == Run.thread_id).where(Run.id == run_id))
+        await db.execute(
+            select(Run, Thread, Bot.computer)
+            .join(Thread, Thread.id == Run.thread_id)
+            .join(Bot, Bot.id == Run.bot_id)
+            .where(Run.id == run_id)
+        )
     ).first()
     if row is None:
         return None
-    run, thread = row
+    run, thread, computer = row
     bindings = await db.execute(
         select(BotTool, Connection)
         .outerjoin(Connection, (Connection.id == BotTool.connection_id) & (Connection.org_id == BotTool.org_id))
         .where(BotTool.bot_id == run.bot_id, BotTool.enabled.is_(True))
     )
-    return run, thread, [(binding, connection) for binding, connection in bindings.tuples()]
+    return run, thread, [(binding, connection) for binding, connection in bindings.tuples()], computer
 
 
 # Changing

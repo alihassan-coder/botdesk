@@ -21,6 +21,9 @@ A connection is usable when it is active and its owner fits the run:
 - bot-owned: owned by this run's bot;
 - org-owned: always.
 
+A bot works either in its browser or on its cloud computer (`Bot.computer`, ADR 0020 §2): a
+"cloud" bot isn't offered the Browser plugin, and only a "cloud" bot is offered the Computer one.
+
 The graph resolves the toolset again in every node that uses it, so a tool unbound mid-run is
 refused when the run resumes.
 """
@@ -33,6 +36,8 @@ from botdesk_plugin_sdk import Auth, OAuth2Auth
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.models import Connection
+from src.plugins.browser import BROWSER_PLUGIN_ID
+from src.plugins.computer import COMPUTER_PLUGIN_ID
 from src.plugins.registry import RegisteredTool, ToolRegistry
 from src.services import binding_service, mcp_server_service
 from src.services.mcp_server_service import McpRuntime, is_mcp_plugin
@@ -47,6 +52,7 @@ class RunScope:
     thread_kind: str  # "dm" | "group"
     thread_created_by: uuid.UUID | None
     thread_bot_id: uuid.UUID | None  # a DM's own bot
+    computer: str = "browser"  # the bot's: browser | cloud (ADR 0020 §2)
 
 
 @dataclass(frozen=True)
@@ -118,7 +124,7 @@ def resolve(registry: ToolRegistry, bindings: Iterable[BindingRow], scope: RunSc
     connections: dict[str, ConnectionRow] = {}
     for binding in bindings:
         plugin = registry.plugin(binding.plugin_id)
-        if plugin is None or not binding.enabled:
+        if plugin is None or not binding.enabled or not _fits_computer(plugin.id, scope.computer):
             continue
         connection = binding.connection
         if connection is not None:
@@ -135,6 +141,15 @@ def resolve(registry: ToolRegistry, bindings: Iterable[BindingRow], scope: RunSc
     return Toolset(_tools=tools, _registry=registry, connections=connections)
 
 
+def _fits_computer(plugin_id: str, computer: str) -> bool:
+    """The browser for bots on their browser, the cloud computer for bots on theirs."""
+    if plugin_id == BROWSER_PLUGIN_ID:
+        return computer != "cloud"
+    if plugin_id == COMPUTER_PLUGIN_ID:
+        return computer == "cloud"
+    return True
+
+
 def _effective_scopes(auth: Auth | None, granted: Iterable[str]) -> frozenset[str]:
     return auth.effective_scopes(granted) if isinstance(auth, OAuth2Auth) else frozenset(granted)
 
@@ -145,7 +160,7 @@ async def load(db: AsyncSession, registry: ToolRegistry, run_id: uuid.UUID, mcp:
     rows = await binding_service.run_bindings(db, run_id)
     if rows is None:
         return Toolset(_registry=registry)
-    run, thread, bindings = rows
+    run, thread, bindings, computer = rows
     if any(is_mcp_plugin(binding.plugin_id) for binding, _ in bindings):
         registry = await mcp_server_service.org_registry(db, registry, run.org_id, mcp)
     scope = RunScope(
@@ -154,6 +169,7 @@ async def load(db: AsyncSession, registry: ToolRegistry, run_id: uuid.UUID, mcp:
         thread_kind=thread.kind,
         thread_created_by=thread.created_by,
         thread_bot_id=thread.bot_id,
+        computer=computer,
     )
     return resolve(
         registry,

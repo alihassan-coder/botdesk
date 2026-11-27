@@ -34,6 +34,8 @@ from src.computers.orgo import OrgoComputers
 from src.core.config import Settings
 from src.core.database import Base, create_engine, create_sessionmaker, utcnow
 from src.models import Bot, BotComputer, ComputerProvider, Organization, UsageRecord
+from src.plugins.registry import build_registry
+from src.runtime.toolset import BindingRow, RunScope, resolve
 from src.services.computer_service import Computers
 from src.services.credential_vault import CredentialVault
 from tests.conftest import TEST_SETTINGS, FakeProviders, api_client, sign_up
@@ -242,6 +244,19 @@ async def test_a_bot_goes_on_a_cloud_computer_only_with_the_organizations_key(de
     assert back.json()["computer"] == "browser"
     await desk.computers.settle()
     assert desk.orgo.computers["pc-1"]["status"] == "stopped"  # stopped, not deleted: its disk stays
+
+
+def test_cloud_bots_get_the_computer_tools_and_browser_bots_the_browser() -> None:
+    registry = build_registry([])
+    bindings = [BindingRow(plugin_id, True, None) for plugin_id in ("files", "browser", "computer")]
+    bot = uuid.uuid4()
+
+    def plugins(computer: str) -> set[str]:
+        scope = RunScope(bot, None, "dm", None, bot, computer=computer)
+        return {tool.plugin_id for tool in resolve(registry, bindings, scope).tools()}
+
+    assert plugins("browser") == {"files", "browser"}
+    assert plugins("cloud") == {"files", "computer"}
 
 
 # A computer's life

@@ -72,6 +72,7 @@ from src.services import (
 )
 from src.services.browser_tools import BrowserTools
 from src.services.computer_service import Computers
+from src.services.computer_tools import ComputerTools
 from src.services.credential_vault import CredentialVault
 from src.services.file_tools import FileTools
 from src.services.mcp_server_service import McpRuntime
@@ -143,8 +144,12 @@ class RunManager:
         # Bots' cloud computers at the organization's provider (ADR 0020). main.py points its
         # `transport` at the app's outbound network (tests: a fake Orgo).
         self.computers = Computers(sessionmaker, settings, vault)
+        computer_access = ComputerTools(self.computers, sessionmaker, settings, vault)
         self.registry = registry or build_registry(
-            settings.plugin_ids, files_access=files_access, browser_access=browser_access
+            settings.plugin_ids,
+            files_access=files_access,
+            browser_access=browser_access,
+            computer_access=computer_access,
         )
         # What tools may reach: their plugin's hosts, with its connection's credential (ADR 0010).
         # Tests set `tool_access.transport` to answer tools' requests without a network.

@@ -11,8 +11,9 @@ from typing import Any
 
 from botdesk_plugin_sdk import PluginManifest, ToolSpec, validate_manifest
 
-from src.plugins import browser, files, team
+from src.plugins import browser, computer, files, team
 from src.plugins.browser import BrowserAccess
+from src.plugins.computer import ComputerAccess
 from src.plugins.core import CORE_PLUGIN_IDS
 from src.plugins.files import FileAccess
 from src.plugins.loader import installed_plugins, load_plugins
@@ -96,7 +97,11 @@ class ToolRegistry:
 
 
 def build_registry(
-    plugin_ids: list[str], *, files_access: FileAccess | None = None, browser_access: BrowserAccess | None = None
+    plugin_ids: list[str],
+    *,
+    files_access: FileAccess | None = None,
+    browser_access: BrowserAccess | None = None,
+    computer_access: ComputerAccess | None = None,
 ) -> ToolRegistry:
     """The registry for the allowlisted plugins, found through their entry points.
 
@@ -104,10 +109,11 @@ def build_registry(
     the API down. An id in `PLUGINS` that no installed package provides is an operator typo, and
     stops startup with a clear message instead of quietly running without the plugin.
 
-    The core plugins (Team, ADR 0014; Files and Browser, ADR 0017) are always registered first.
-    Their ids are reserved: naming one in `PLUGINS`, or installing a package that claims one, stops
-    startup. `files_access` and `browser_access` are what the Files and Browser tools do; without
-    them (a registry built only to read manifests) those tools fail when called.
+    The core plugins (Team, ADR 0014; Files and Browser, ADR 0017; Computer, ADR 0020) are always
+    registered first. Their ids are reserved: naming one in `PLUGINS`, or installing a package that
+    claims one, stops startup. `files_access`, `browser_access` and `computer_access` are what the
+    Files, Browser and Computer tools do; without them (a registry built only to read manifests)
+    those tools fail when called.
     """
     for plugin_id in [*plugin_ids, *installed_plugins()]:
         if plugin_id in CORE_PLUGIN_IDS:
@@ -116,6 +122,7 @@ def build_registry(
     registry.register(team.manifest())
     registry.register(files.manifest(files_access))
     registry.register(browser.manifest(browser_access))
+    registry.register(computer.manifest(computer_access))
     for manifest in load_plugins(plugin_ids):
         registry.register(manifest)
     return registry

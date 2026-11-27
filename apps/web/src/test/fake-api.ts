@@ -66,7 +66,8 @@ export function withFakeApi(): FakeApi {
         await route.wait;
         if (route.body === undefined) return new Response(null, { status: route.status });
         // Bytes (a computer's screen) go back as they are; anything else as JSON.
-        if (route.body instanceof Uint8Array) return new Response(new Blob([new Uint8Array(route.body)]), { status: route.status, headers: { "Content-Type": "image/jpeg" } });
+        // The bytes themselves, not a Blob: under jsdom a Blob is jsdom's, which Node 22's Response doesn't take as a body.
+        if (route.body instanceof Uint8Array) return new Response(new Uint8Array(route.body), { status: route.status, headers: { "Content-Type": "image/jpeg" } });
         return Response.json(route.body, { status: route.status });
       }),
     );

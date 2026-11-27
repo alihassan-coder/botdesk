@@ -61,6 +61,7 @@ from src.core.errors import AppError, BadRequest, Conflict, Forbidden, NotFound
 from src.core.secrets import SecretUnreadable
 from src.core.url_guard import GuardedTransport, UnsafeUrl, safe_addresses
 from src.mcp import client as mcp
+from src.mcp import icons as mcp_icons
 from src.mcp import oauth as mcp_oauth
 from src.mcp.client import (
     MAX_RESULT_TEXT,
@@ -332,13 +333,14 @@ async def add(db: AsyncSession, runtime: McpRuntime, actor: Actor, data: McpServ
     await db.rollback()
     if not data.sign_in:
         try:
-            tools = await mcp.list_tools(_header_config(server, runtime), network=runtime.network)
+            listing = await mcp.list_tools(_header_config(server, runtime), network=runtime.network)
         except McpAuthRequired as needs:
             if data.api_key_header:
                 raise BadRequest(KEY_REFUSED) from needs
             challenge = needs.challenge
         else:
-            _save_snapshot(server, tools)
+            _save_snapshot(server, listing.tools)
+            server.icon = await mcp_icons.fetch_icon(listing.icons, server.url, runtime.network)
             db.add(server)
             await db.flush()
             _audit(db, actor, "mcp_server.added", server)
@@ -359,16 +361,17 @@ async def refresh(db: AsyncSession, runtime: McpRuntime, actor: Actor, server_id
     _require_admin(actor)
     ref = _ref(await get_server(db, actor.org_id, server_id))
     await db.rollback()
-    tools: list[mcp.McpToolInfo] | None = None
+    listing: mcp.McpListing | None = None
     failure: McpClientError | None = None
     try:
-        tools = await mcp.list_tools(await _config_for(ref, runtime), network=runtime.network)
+        listing = await mcp.list_tools(await _config_for(ref, runtime), network=runtime.network)
     except McpNeedsSignIn:
         return await get_server(db, actor.org_id, server_id)  # Reconnect shows from the connection's state
     except McpClientError as error:
         failure = error
     if isinstance(failure, McpAuthRequired) and ref.auth_kind == "oauth":
         await _sign_in_refused(runtime, ref.org_id, ref.plugin_id)
+    icon = await mcp_icons.fetch_icon(listing.icons, ref.url, runtime.network) if listing else None
     server = await get_server(db, actor.org_id, server_id, for_update=True)
     if isinstance(failure, McpAuthRequired) and server.auth_kind == "oauth":
         return server
@@ -381,8 +384,9 @@ async def refresh(db: AsyncSession, runtime: McpRuntime, actor: Actor, server_id
         server.status, server.status_reason = "unreachable", KEY_REFUSED if refused_key else status_reason(failure)
         server.last_checked_at = utcnow()
         return server
-    assert tools is not None
-    _save_snapshot(server, tools)
+    assert listing is not None
+    _save_snapshot(server, listing.tools)
+    server.icon = icon
     _audit(db, actor, "mcp_server.refreshed", server)
     return server
 
@@ -597,11 +601,13 @@ async def finish_sign_in(
         tokens = read_tokens(answer)
     except (TokenRefused, httpx.HTTPError, AppError, ValueError) as failed:
         raise FlowFailed("failed", f"the code exchange failed ({type(failed).__name__})") from failed
-    listed: list[mcp.McpToolInfo] | None = None
+    listed: mcp.McpListing | None = None
+    icon: str | None = None
     unreachable = ""
     try:
         bearer = {"Authorization": f"Bearer {tokens.access_token}"}
         listed = await mcp.list_tools(McpServerConfig(url=url, headers=bearer), network=runtime.network)
+        icon = await mcp_icons.fetch_icon(listed.icons, url, runtime.network)
     except McpClientError as error:
         unreachable = status_reason(error)
 
@@ -624,7 +630,8 @@ async def finish_sign_in(
     row = await db.get(McpServer, server_id, with_for_update=True)
     if row is not None:
         if listed is not None:
-            _save_snapshot(row, listed)
+            _save_snapshot(row, listed.tools)
+            row.icon = icon
         else:
             row.status, row.status_reason, row.last_checked_at = "unreachable", unreachable, utcnow()
     await db.commit()
@@ -903,7 +910,7 @@ def _tool(ref: _ServerRef, entry: Mapping[str, Any], runtime: McpRuntime) -> Too
         # says so (`NotDone`): the call then fails instead of stopping the run (ADR 0004 §2).
         try:
             config = await _config_for(ref, runtime)  # the key or token is read only now, inside the call
-            current = await mcp.list_tools(config, network=runtime.network)
+            current = (await mcp.list_tools(config, network=runtime.network)).tools
         except Exception as error:
             raise await _refused(runtime, ref, error) from error
         found = next((tool for tool in current if tool.name == remote_name), None)

@@ -7,6 +7,7 @@ pins the address exactly as it would in production. Reaching it at all needs the
 policy (private addresses and plain http allowed); the safety tests use the production policy."""
 
 import asyncio
+import base64
 import json
 import socket
 import threading
@@ -23,17 +24,19 @@ from mcp.server.mcpserver import MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
 from mcp.server.transport_security import TransportSecuritySettings
 from mcp.shared.exceptions import MCPError
+from mcp.types import Icon
 from mcp_types import INTERNAL_ERROR, INVALID_PARAMS, METHOD_NOT_FOUND, REQUEST_TIMEOUT
 from pydantic import ValidationError
 from starlette.applications import Starlette
 from starlette.requests import Request
-from starlette.responses import PlainTextResponse, RedirectResponse
+from starlette.responses import PlainTextResponse, RedirectResponse, Response
 from starlette.routing import Mount, Route
 from starlette.types import ASGIApp, Receive, Scope, Send
 
 from src.mcp.client import (
     McpCallResult,
     McpClientError,
+    McpIcon,
     McpNetwork,
     McpProtocolError,
     McpRefused,
@@ -47,13 +50,19 @@ from src.mcp.client import (
 )
 
 HUGE = 300 * 1024  # more text than a tool result may carry (256 KB)
+# A 1x1 PNG: the icon the test server names for itself, and serves at /icon.png.
+PNG = base64.b64decode(
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=="
+)
+PNG_URI = "data:image/png;base64," + base64.b64encode(PNG).decode()
 
 
 # The test server
 
 
 def build_server() -> MCPServer:
-    server = MCPServer("botdesk-test")
+    icon = Icon.model_validate({"src": PNG_URI, "mimeType": "image/png", "sizes": ["16x16"]})
+    server = MCPServer("botdesk-test", icons=[icon])
 
     @server.tool(description="Adds two numbers.", structured_output=False)
     def add(a: int, b: int) -> str:
@@ -118,6 +127,15 @@ def live_server() -> Iterator[LiveServer]:
         transport_security=TransportSecuritySettings(enable_dns_rebinding_protection=False),
     )
 
+    async def icon(_request: Request) -> Response:
+        return Response(PNG, media_type="image/png")
+
+    async def big_icon(_request: Request) -> Response:
+        return Response(PNG + b"0" * (70 * 1024), media_type="image/png")
+
+    async def page(_request: Request) -> Response:
+        return Response("<html>not an icon</html>", media_type="text/html")
+
     async def moved(_request: Request) -> RedirectResponse:
         # A 307 to the same server under another host name: another origin, so never followed.
         return RedirectResponse(f"http://other.test:{port}/mcp", status_code=307)
@@ -139,6 +157,9 @@ def live_server() -> Iterator[LiveServer]:
     app = Starlette(
         routes=[
             Route("/moved", moved, methods=["POST", "GET"]),
+            Route("/icon.png", icon),
+            Route("/big.png", big_icon),
+            Route("/page", page),
             Mount("/mcp", app=mcp_app),
             Mount("/legacy", app=handshake_era),
         ],
@@ -172,8 +193,10 @@ def config(live: LiveServer, **overrides: Any) -> McpServerConfig:
 # Listing and calling
 
 
-async def test_lists_the_servers_tools(live_server: LiveServer) -> None:
-    tools = await list_tools(config(live_server), network=TEST_NETWORK)
+async def test_lists_the_servers_tools_and_icons(live_server: LiveServer) -> None:
+    listing = await list_tools(config(live_server), network=TEST_NETWORK)
+    tools = listing.tools
+    assert listing.icons == [McpIcon(src=PNG_URI, mime_type="image/png", sizes=("16x16",), theme=None)]
 
     by_name = {tool.name: tool for tool in tools}
     assert set(by_name) == {"add", "broken", "slow", "chatty", "weather"}

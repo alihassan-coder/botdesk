@@ -62,6 +62,7 @@ def server_out(server: McpServer, sign_in: SignIn | None = None) -> McpServerOut
         url=server.url,
         auth_kind="oauth" if server.auth_kind == "oauth" else "header" if server.auth_kind == "header" else "none",
         auth_header=server.auth_header,
+        icon_url=server.icon,
         status=status,  # one of the four
         # Why the sign-in stopped working ("needs more access…") comes from its connection.
         status_reason=sign_in.reason if status == "needs_reconnect" and sign_in else server.status_reason,

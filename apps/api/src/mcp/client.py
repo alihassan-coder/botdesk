@@ -2,7 +2,8 @@
 
 ADR 0012. The only module that imports the `mcp` SDK. Two operations:
 
-- `list_tools(server)` → every tool (all pages, at most `MAX_TOOLS`) as `McpToolInfo`;
+- `list_tools(server)` → `McpListing`: every tool (all pages, at most `MAX_TOOLS`) as `McpToolInfo`,
+  and the icons the server names for itself in the handshake (`McpIcon`; see `mcp/icons.py`);
 - `call_tool(server, name, args)` → `McpCallResult`: text for the model plus `is_error`.
 
 What callers get for free:
@@ -158,6 +159,25 @@ class McpToolInfo:
 
 
 @dataclass(frozen=True)
+class McpIcon:
+    """An icon the server names for itself in the handshake (`serverInfo.icons`, MCP 2025-11-25).
+    The server's own (untrusted) words: `mcp/icons.py` decides whether to fetch it."""
+
+    src: str  # an https address or a data: URI
+    mime_type: str | None
+    sizes: tuple[str, ...]  # "48x48", "any"…
+    theme: str | None  # "light" | "dark": the background it's drawn for
+
+
+@dataclass(frozen=True)
+class McpListing:
+    """What listing a server finds: its tools, and its icons."""
+
+    tools: list[McpToolInfo]
+    icons: list[McpIcon]
+
+
+@dataclass(frozen=True)
 class McpCallResult:
     """What a tool call gives the model. `is_error`: the tool ran and reported a failure."""
 
@@ -169,8 +189,8 @@ class McpCallResult:
 # Operations
 
 
-async def list_tools(server: McpServerConfig, *, network: McpNetwork = PUBLIC_ONLY) -> list[McpToolInfo]:
-    async def walk(client: Client) -> list[McpToolInfo]:
+async def list_tools(server: McpServerConfig, *, network: McpNetwork = PUBLIC_ONLY) -> McpListing:
+    async def walk(client: Client) -> McpListing:
         tools: list[McpToolInfo] = []
         cursor: str | None = None
         while True:
@@ -180,7 +200,7 @@ async def list_tools(server: McpServerConfig, *, network: McpNetwork = PUBLIC_ON
                 raise McpProtocolError(f"The server lists more than {MAX_TOOLS} tools, the limit.")
             cursor = page.next_cursor
             if not cursor:
-                return tools
+                return McpListing(tools, _icons(client.server_info))
 
     return await _with_client(server, network, walk)
 
@@ -201,6 +221,24 @@ async def call_tool(
 
 
 # Inside
+
+
+MAX_ICONS = 8  # of a server's own icons, the most considered
+
+
+def _icons(info: Any) -> list[McpIcon]:
+    """The icons in the server's handshake, if it names any (servers before 2025-11-25 don't)."""
+    icons = getattr(info, "icons", None) or []
+    return [
+        McpIcon(
+            src=str(icon.src),
+            mime_type=icon.mime_type,
+            sizes=tuple(str(size) for size in icon.sizes or ()),
+            theme=icon.theme,
+        )
+        for icon in icons[:MAX_ICONS]
+        if isinstance(getattr(icon, "src", None), str)
+    ]
 
 
 def _call_timeout(server: McpServerConfig) -> float:

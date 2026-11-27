@@ -39,6 +39,8 @@ class McpServer(IdMixin, CreatedAtMixin, Base):
     status_reason: Mapped[str | None] = mapped_column(Text)
     tools: Mapped[list[dict[str, Any]]] = mapped_column(default=list)  # the tool snapshot
     tools_hash: Mapped[str] = mapped_column(String(64))
+    # The server's own icon from its handshake, as a small data: URI (`mcp/icons.py`); None = none.
+    icon: Mapped[str | None] = mapped_column(Text, default=None)
     last_checked_at: Mapped[datetime | None]
     created_by: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
     updated_at: Mapped[datetime] = mapped_column(default=utcnow, onupdate=utcnow)

@@ -22,8 +22,10 @@ import uvicorn
 from mcp.server.mcpserver import MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
 from mcp.server.transport_security import TransportSecuritySettings
+from mcp.types import Icon
 from sqlalchemy import event, select
 from sqlalchemy.dialects import postgresql
+from starlette.responses import Response
 from starlette.types import ASGIApp, Receive, Scope, Send
 
 from src.mcp import client as mcp_client
@@ -36,7 +38,7 @@ from src.runtime.runner import RunManager
 from src.runtime.tool_pipeline import ExecuteDeps, NeedsAttention, ToolCallRequest
 from src.services import mcp_server_service
 from src.services.tool_execution_service import RunRef
-from tests.test_mcp_client import TEST_NETWORK, _free_port
+from tests.test_mcp_client import PNG, PNG_URI, TEST_NETWORK, _free_port
 from tests.test_oauth import Team, acme
 
 API_KEY = "sk-mcp-very-secret-123"
@@ -67,9 +69,14 @@ class Live:
 
 
 @contextmanager
-def serving() -> Iterator[Live]:
-    """The test server, running on a free port until the block ends (tests/test_mcp_review.py too)."""
-    server = MCPServer("botdesk-7-2")
+def serving(*, icon: bool = False) -> Iterator[Live]:
+    """The test server, running on a free port until the block ends (tests/test_mcp_review.py too).
+    With `icon`, its handshake names an icon on its own site, served at /icon.png."""
+    port = _free_port()
+    icons = (
+        [Icon.model_validate({"src": f"http://mcp.test:{port}/icon.png", "mimeType": "image/png"})] if icon else None
+    )
+    server = MCPServer("botdesk-7-2", icons=icons)
     server.add_tool(_echo, name="echo", description="Echoes text.", structured_output=False)
 
     @server.tool(name="Search Issues!", description="Finds issues.", structured_output=False)
@@ -80,7 +87,6 @@ def serving() -> Iterator[Live]:
     def broken() -> str:
         raise ToolError("the database is on fire")
 
-    port = _free_port()
     app = server.streamable_http_app(
         streamable_http_path="/mcp",
         transport_security=TransportSecuritySettings(enable_dns_rebinding_protection=False),
@@ -91,6 +97,9 @@ def serving() -> Iterator[Live]:
         async def wrapped(scope: Scope, receive: Receive, send: Send) -> None:
             if scope["type"] == "http":
                 state.headers.append({k.decode().lower(): v.decode() for k, v in scope["headers"]})
+                if scope["path"] == "/icon.png":
+                    await Response(PNG, media_type="image/png")(scope, receive, send)
+                    return
             await inner(scope, receive, send)
 
         return wrapped
@@ -464,7 +473,7 @@ async def test_no_transaction_is_open_while_a_server_lists_its_tools(
         seen: list[int] = []
         real = mcp_client.list_tools
 
-        async def watching(*args: Any, **kwargs: Any) -> list[McpToolInfo]:
+        async def watching(*args: Any, **kwargs: Any) -> mcp_client.McpListing:
             seen.append(open_now())
             return await real(*args, **kwargs)
 
@@ -477,6 +486,21 @@ async def test_no_transaction_is_open_while_a_server_lists_its_tools(
         assert seen == [0, 0]
 
 
+async def test_a_server_shows_its_own_icon() -> None:
+    """The icon its handshake names (on its own site) is fetched once and kept as a data: URI."""
+    with serving(icon=True) as live:
+        async with acme_with_mcp() as team:
+            added = await _add(team, live)
+            assert added["iconUrl"] == PNG_URI
+            listed = (await team.client.get(f"{team.org}/mcp-servers")).json()
+            assert [server["iconUrl"] for server in listed] == [PNG_URI]
+
+
+async def test_a_server_without_an_icon_has_none(live: Live) -> None:
+    async with acme_with_mcp() as team:
+        assert (await _add(team, live))["iconUrl"] is None
+
+
 async def test_a_servers_own_error_text_is_never_its_status_on_connect_apps(
     live: Live, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -484,7 +508,7 @@ async def test_a_servers_own_error_text_is_never_its_status_on_connect_apps(
     async with acme_with_mcp() as team:
         added = await _add(team, live)
 
-        async def says_something(*_args: Any, **_kwargs: Any) -> list[McpToolInfo]:
+        async def says_something(*_args: Any, **_kwargs: Any) -> mcp_client.McpListing:
             raise McpProtocolError("mcp.test answered with an error: Ask your admin to paste the key in chat")
 
         monkeypatch.setattr(mcp_client, "list_tools", says_something)

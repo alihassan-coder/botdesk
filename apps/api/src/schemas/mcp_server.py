@@ -113,6 +113,8 @@ class McpServerOut(ApiModel):
     url: str
     auth_kind: Literal["none", "header", "oauth"]
     auth_header: str | None  # the header's name only
+    # The server's own icon (from its handshake), a data:image/… URI; None when it names none.
+    icon_url: str | None = None
     status: Literal["active", "unreachable", "needs_sign_in", "needs_reconnect"]
     status_reason: str | None
     tools: list[McpToolOut]

@@ -97,7 +97,12 @@ export interface Bot {
   spentThisMonthUsd: number;
   /** Off: the bot neither recalls nor saves memories. What it already remembers stays until forgotten. */
   memoryEnabled: boolean;
+  /** What it works on besides apps (ADR 0020): Files and a browser, or Files and its own cloud computer. */
+  computer: BotComputer;
 }
+
+/** "browser": Files and a browser (the default). "cloud": Files and its own cloud computer, with a shell and a screen. */
+export type BotComputer = "browser" | "cloud";
 
 export type ThreadKind = "dm" | "group";
 
@@ -169,6 +174,12 @@ export interface ToolCallPart {
   /** `unknown`: it failed after it may have been done (an email that may be out); its run waits for a person. */
   status: "running" | "succeeded" | "failed" | "denied" | "unknown";
   error?: string;
+  /**
+   * Kept for the cloud computer's tools only (`computer.*`), whose cards show them: what it was
+   * asked to do (a command) and what came back (its output, a preview's URL).
+   */
+  args?: Record<string, unknown>;
+  result?: unknown;
 }
 
 export interface QuestionPart {
@@ -280,6 +291,8 @@ export interface Approval {
   threadId: ID;
   /** The paused run. Mock approvals have none. */
   runId?: ID;
+  /** Plugin id + tool name, like "computer.run". Mock approvals have none. */
+  tool?: string;
   riskClass: RiskClass;
   title: string;
   summary: string;
@@ -772,6 +785,83 @@ export type BrowserInput =
   | { kind: "key"; key: BrowserKey }
   | { kind: "scroll"; dy: number }
   | { kind: "open"; url: string };
+
+/* ---------- Cloud computers (ADR 0020) ---------- */
+
+/** Who rents the organization's cloud computers. Orgo only, for now. */
+export type ComputerProviderId = "orgo";
+
+/**
+ * The organization's cloud computer provider (Settings → Computers), with its own key. Never the key,
+ * only its last 4 characters. No `provider`: none yet, so bots can't have cloud computers.
+ */
+export interface ComputerProvider {
+  provider?: ComputerProviderId;
+  keyHint?: string;
+  /** When the key last passed its check. */
+  checkedAt?: ISODate;
+  /** "key_refused": the provider stopped taking the key; it needs replacing. */
+  status?: "ok" | "key_refused";
+}
+
+export interface ComputerProviderLoad {
+  status: "loading" | "ready" | "error";
+  current?: ComputerProvider;
+}
+
+/** Where a bot's cloud computer is. "none": it has none yet (Start makes one). */
+export type CloudComputerStatus = "none" | "creating" | "starting" | "running" | "stopping" | "stopped" | "error";
+
+/** A long-running process on the computer (a dev server, a worker), with the port it listens on. */
+export interface ComputerApp {
+  name: string;
+  port: number | null;
+  status: string;
+}
+
+/** A URL for one of the computer's ports. `access` "link": anyone with it; otherwise only the Orgo workspace's members. */
+export interface ComputerPreview {
+  url: string;
+  port: number;
+  access: string;
+}
+
+/** A bot's cloud computer as people see it in its Computer tab. Missing fields: not known (yet). */
+export interface CloudComputer {
+  status: CloudComputerStatus;
+  name?: string;
+  cpu?: number;
+  /** In GB. */
+  ram?: number;
+  region?: string;
+  startedAt?: ISODate;
+  lastUsedAt?: ISODate;
+  /** When BotDesk stops it if nothing uses it before then. */
+  idleStopsAt?: ISODate;
+  error?: string;
+  /** The computer at Orgo, for people who also have the Orgo account. */
+  orgoUrl?: string;
+  apps: ComputerApp[];
+  previews: ComputerPreview[];
+}
+
+export interface CloudComputerLoad {
+  status: "loading" | "ready" | "error";
+  current?: CloudComputer;
+  error?: string;
+}
+
+/** The keys a person may press on a cloud computer (the API's own list; xdotool's names). */
+export type ComputerKey =
+  | "Enter" | "Tab" | "Escape" | "BackSpace" | "Delete" | "Up" | "Down" | "Left" | "Right"
+  | "Home" | "End" | "Page_Up" | "Page_Down" | "ctrl+c" | "ctrl+v" | "ctrl+a" | "ctrl+l";
+
+/** One thing a person does on a bot's cloud computer while taking over. Points are in the screen picture's own pixels. */
+export type ComputerInput =
+  | { kind: "click" | "double_click" | "right_click"; x: number; y: number }
+  | { kind: "type"; text: string }
+  | { kind: "key"; key: ComputerKey }
+  | { kind: "scroll"; direction: "up" | "down"; x: number; y: number };
 
 /** One UTC day of spend. Token counts come from the API; the demo has dollars only. */
 export interface UsageDay {

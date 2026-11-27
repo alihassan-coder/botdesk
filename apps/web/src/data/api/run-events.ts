@@ -139,13 +139,19 @@ function reduce(chat: ChatSlice, event: ApiRunEvent): ChatSlice {
     }
 
     case "tool_started": {
-      const { toolExecutionId, tool } = event.data;
-      return withRunCard(chat, event, run?.botId, { type: "tool-call", toolExecutionId, tool, status: "running" });
+      const { toolExecutionId, tool, args } = event.data;
+      const line: ToolCallPart = { type: "tool-call", toolExecutionId, tool, status: "running", ...(showsDetail(tool) && args ? { args } : {}) };
+      return withRunCard(chat, event, run?.botId, line);
     }
 
     case "tool_finished": {
-      const { toolExecutionId, tool, status, error } = event.data;
-      const line: ToolCallPart = { type: "tool-call", toolExecutionId, tool, status, ...(error ? { error } : {}) };
+      const { toolExecutionId, tool, status, result, error } = event.data;
+      // The arguments came with its start: keep them on the finished line.
+      const args = event.runId ? toolLineOf(chat, event.runId, toolExecutionId)?.args : undefined;
+      const line: ToolCallPart = {
+        type: "tool-call", toolExecutionId, tool, status, ...(error ? { error } : {}),
+        ...(showsDetail(tool) ? { ...(args ? { args } : {}), ...(result !== undefined && result !== null ? { result } : {}) } : {}),
+      };
       return withRunCard(chat, event, run?.botId, line);
     }
 
@@ -393,8 +399,26 @@ function sameCard(a: MessagePart, b: MessagePart) {
  */
 function withToolLines(saved: MessagePart[], streamed: MessagePart[]): MessagePart[] {
   const lines = streamed.filter((p) => p.type === "tool-call");
-  if (lines.length === 0 || saved.some((p) => p.type === "tool-call")) return saved;
+  if (lines.length === 0) return saved;
+  if (saved.some((p) => p.type === "tool-call")) return saved.map((p) => withShownDetail(p, lines));
   return [...saved.filter((p) => p.type === "approval"), ...lines, ...saved.filter((p) => p.type !== "approval")];
+}
+
+/** Cloud computer tools' lines keep what they ran and what came back, which their cards show (ADR 0020). */
+const showsDetail = (tool: string) => tool.startsWith("computer.");
+
+/** A saved line that lacks the arguments or result shown live keeps the live ones. */
+function withShownDetail(part: MessagePart, streamed: ToolCallPart[]): MessagePart {
+  if (part.type !== "tool-call" || (part.args && part.result !== undefined)) return part;
+  const shown = streamed.find((p) => p.toolExecutionId === part.toolExecutionId);
+  if (!shown || (!shown.args && shown.result === undefined)) return part;
+  return { ...part, ...(!part.args && shown.args ? { args: shown.args } : {}), ...(part.result === undefined && shown.result !== undefined ? { result: shown.result } : {}) };
+}
+
+/** The tool line for this call in the run's reply, if it's shown yet. */
+function toolLineOf(chat: ChatSlice, runId: string, toolExecutionId: string): ToolCallPart | undefined {
+  const part = replyOf(chat, runId)?.parts.find((p) => p.type === "tool-call" && p.toolExecutionId === toolExecutionId);
+  return part?.type === "tool-call" ? part : undefined;
 }
 
 /**

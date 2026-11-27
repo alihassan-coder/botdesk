@@ -3,11 +3,12 @@ import type { UserEvent } from "@testing-library/user-event";
 import { describe, expect, it } from "vitest";
 import { actions } from "@/data/store";
 import { renderUI } from "@/test/render";
-import { signInOnApi, withFakeApi } from "@/test/fake-api";
+import { apiMe, apiOrg, signInOnApi, withFakeApi } from "@/test/fake-api";
 import { ComputersSettings } from "./computers-settings";
 
 const storage = () => within(screen.getByRole("region", { name: "Storage" }));
 const browser = () => within(screen.getByRole("region", { name: "Browser" }));
+const cloud = () => within(screen.getByRole("region", { name: "Cloud computer" }));
 
 /**
  * Fills a field with one paste instead of a key press per character, so these long forms stay well
@@ -72,6 +73,15 @@ describe("ComputersSettings in the demo", () => {
     await user.click(browser().getByRole("button", { name: "Check and save" }));
     expect(await browser().findByText("Steel")).toBeInTheDocument();
     expect(browser().getByText(/Key ••••ABCD/)).toBeInTheDocument();
+  });
+
+  it("explains cloud computers, and that they need an account", () => {
+    renderUI(<ComputersSettings />);
+    expect(cloud().getByText("No cloud computers yet")).toBeInTheDocument();
+    expect(cloud().getByText(/about \$0\.055 an hour while a computer runs, and BotDesk stops it after 20 idle minutes/)).toBeInTheDocument();
+    expect(cloud().getByRole("link", { name: "Create an Orgo key" })).toHaveAttribute("href", "https://www.orgo.ai/api-keys");
+    expect(cloud().getByText("Cloud computers need an account: sign up, then add your Orgo key here.")).toBeInTheDocument();
+    expect(cloud().queryByRole("button", { name: /Add Orgo key/ })).not.toBeInTheDocument();
   });
 
   it("members see where files go and browsers run, but can't change either", async () => {
@@ -166,5 +176,63 @@ describe("ComputersSettings on the API", () => {
 
     expect(await browser().findByText("Browserbase said no: your plan's browser hours are used up.")).toHaveAttribute("role", "alert");
     expect(api.sent.find((s) => s.key === "PUT /api/v1/orgs/o1/browser-provider")?.body).toEqual({ provider: "browserbase", projectId: "proj_1" });
+  });
+
+  const orgo = (patch: Record<string, unknown> = {}) => ({ provider: "orgo", keyHint: "abcd", checkedAt: "2026-11-27T08:00:00Z", status: "ok", ...patch });
+  const noOrgo = { provider: null, keyHint: null, checkedAt: null, status: null };
+
+  it("adds the Orgo key, showing Orgo's refusal first", async () => {
+    api.routes["GET /api/v1/orgs/o1/computer-provider"] = { status: 200, body: noOrgo };
+    api.routes["PUT /api/v1/orgs/o1/computer-provider"] = { status: 400, body: { detail: "That key didn't work: 401 Unauthorized." } };
+    await signInOnApi();
+    const { user } = renderUI(<ComputersSettings />);
+    await user.click(await cloud().findByRole("button", { name: "Add Orgo key" }));
+    await user.click(cloud().getByRole("button", { name: "Check and save" }));
+    expect(cloud().getByText("Paste your Orgo API key.")).toBeInTheDocument();
+
+    await fill(user, cloud().getByLabelText("Orgo API key"), "sk_live_bad0000");
+    await user.click(cloud().getByRole("button", { name: "Check and save" }));
+    expect(await cloud().findByText("That key didn't work: 401 Unauthorized.")).toBeInTheDocument();
+    expect(cloud().getByRole("form", { name: "Add an Orgo key" })).toBeInTheDocument();
+
+    api.routes["PUT /api/v1/orgs/o1/computer-provider"] = { status: 200, body: orgo() };
+    await fill(user, cloud().getByLabelText("Orgo API key"), "sk_live_1234abcd");
+    await user.click(cloud().getByRole("button", { name: "Check and save" }));
+    expect(await cloud().findByText("Orgo")).toBeInTheDocument();
+    expect(cloud().getByText(/Key ••••abcd · checked/)).toBeInTheDocument();
+    expect(cloud().queryByRole("form")).not.toBeInTheDocument();
+    expect(api.sent.filter((s) => s.key === "PUT /api/v1/orgs/o1/computer-provider").map((s) => s.body)).toEqual([
+      { provider: "orgo", apiKey: "sk_live_bad0000" },
+      { provider: "orgo", apiKey: "sk_live_1234abcd" },
+    ]);
+  });
+
+  it("says when Orgo refused the saved key, and removes it after asking", async () => {
+    api.routes["GET /api/v1/orgs/o1/computer-provider"] = { status: 200, body: orgo({ status: "key_refused" }) };
+    api.routes["DELETE /api/v1/orgs/o1/computer-provider"] = { status: 204 };
+    await signInOnApi();
+    const { user } = renderUI(<ComputersSettings />);
+    expect(await cloud().findByText("Key refused")).toBeInTheDocument();
+    expect(cloud().getByText("Key ••••abcd refused: replace it.")).toBeInTheDocument();
+    expect(cloud().getByRole("button", { name: "Replace key" })).toBeInTheDocument();
+
+    await user.click(cloud().getByRole("button", { name: "Remove" }));
+    const dialog = await screen.findByRole("alertdialog");
+    expect(dialog).toHaveTextContent("Every bot's cloud computer is stopped");
+    await user.click(within(dialog).getByRole("button", { name: "Remove" }));
+    expect(await cloud().findByText("No cloud computers yet")).toBeInTheDocument();
+    expect(api.sent.some((s) => s.key === "DELETE /api/v1/orgs/o1/computer-provider")).toBe(true);
+  });
+
+  it("members see the Orgo key but can't change it", async () => {
+    api.routes["POST /api/v1/auth/sign-in"] = { status: 200, body: { ...apiMe, organizations: [{ ...apiOrg, role: "member" }] } };
+    api.routes["GET /api/v1/orgs/o1/members"] = { status: 200, body: [{ ...apiMe.user, role: "member" }] };
+    api.routes["GET /api/v1/orgs/o1/computer-provider"] = { status: 200, body: orgo() };
+    await signInOnApi();
+    renderUI(<ComputersSettings />);
+    expect(await cloud().findByText(/Key ••••abcd/)).toBeInTheDocument();
+    expect(cloud().queryByRole("button", { name: "Replace key" })).not.toBeInTheDocument();
+    expect(cloud().queryByRole("button", { name: "Remove" })).not.toBeInTheDocument();
+    expect(cloud().getByText("Only owners and admins can change the cloud computer key.")).toBeInTheDocument();
   });
 });

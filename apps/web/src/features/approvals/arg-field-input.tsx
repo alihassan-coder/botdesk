@@ -35,6 +35,7 @@ export function ArgFieldInput({ field, value, error, idPrefix, onChange }: ArgFi
   const text = typeof value === "string" ? value : "";
   const common = {
     id, value: text, required: field.required, "aria-invalid": invalid, "aria-describedby": describedBy,
+    ...(field.code ? { className: "font-mono text-xs", spellCheck: false, autoCapitalize: "off", autoCorrect: "off" } : {}),
   };
 
   return (

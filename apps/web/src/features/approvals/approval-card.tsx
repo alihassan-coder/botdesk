@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import { Check, ShieldAlert } from "lucide-react";
 import { toast } from "sonner";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
@@ -95,7 +95,7 @@ export function ApprovalCard({ approvalId }: { approvalId: string }) {
         <ApprovalEditor approval={approval} onClose={closeEditor} />
       ) : isPending ? (
         <>
-          <PreviewFields preview={approval.preview} />
+          <PreviewFields approval={approval} />
           <div className="mt-3 flex flex-wrap gap-2">
             <Button size="sm" onClick={() => decide("approve")} disabled={deciding !== null}>
               {deciding === "approve" ? <Spinner /> : <Check />} Approve
@@ -120,8 +120,33 @@ function AlreadyDecided({ approval }: { approval: Approval }) {
   return <p className="mt-3 rounded-xl bg-muted/60 p-3 text-[13px]">{text}</p>;
 }
 
-/** The exact action: To, Subject, Body… Long values keep their line breaks. */
-function PreviewFields({ preview }: { preview: Approval["preview"] }) {
+/** The command a cloud computer would run (`computer.run`), in full: that's what's being approved (ADR 0020 §4). */
+function commandOf(approval: Approval): string | undefined {
+  const command = approval.args?.command;
+  return approval.tool === "computer.run" && typeof command === "string" ? command : undefined;
+}
+
+/** The exact action: To, Subject, Body… Long values keep their line breaks. A command is shown whole, in mono. */
+function PreviewFields({ approval }: { approval: Approval }) {
+  const command = commandOf(approval);
+  const captionId = useId();
+  const preview = command === undefined ? approval.preview : approval.preview.filter((field) => field.label !== "Command");
+  return (
+    <>
+      {command !== undefined && (
+        <figure aria-labelledby={captionId} className="mt-3 flex flex-col gap-1">
+          <figcaption id={captionId} className="text-xs text-muted-foreground">Command</figcaption>
+          <pre className="overflow-x-auto rounded-xl bg-muted/60 p-3 font-mono text-[12px] leading-relaxed whitespace-pre-wrap break-all">
+            <span aria-hidden className="text-muted-foreground select-none">$ </span>{command}
+          </pre>
+        </figure>
+      )}
+      <PreviewRows preview={preview} />
+    </>
+  );
+}
+
+function PreviewRows({ preview }: { preview: Approval["preview"] }) {
   if (preview.length === 0) return null;
   return (
     <dl className="mt-3 flex flex-col gap-2 rounded-xl bg-muted/60 p-3 text-[13px]">

@@ -32,17 +32,17 @@ import { previewFromArgs } from "@/lib/args-form";
 import { strictestLevel } from "@/lib/security-ceiling";
 import { rememberOAuthReturn } from "@/lib/connections";
 import { browser } from "@/lib/navigate";
-import { approvalApi, authApi, botApi, browserApi, connectionApi, fileApi, inviteApi, mcpApi, memoryApi, modelApi, orgApi, pluginApi, routineApi, runApi, templateApi, threadApi, usageApi } from "./api/botdesk";
+import { approvalApi, authApi, botApi, browserApi, computerApi, connectionApi, fileApi, inviteApi, mcpApi, memoryApi, modelApi, orgApi, pluginApi, routineApi, runApi, templateApi, threadApi, usageApi } from "./api/botdesk";
 import { ApiError, apiBaseUrl } from "./api/client";
 import { messageCache } from "./message-cache";
-import { toAccountConnection, toApiBot, toApproval, toBot, toBotBrowser, toBotFile, toBrowserProvider, toFileStorage, toInvitation, toMcpServer, toMemory, toMembership, toMemoryKey, toMemoryStatus, toMessage, toModel, toModelProvider, toOrg, toRoutine, toTemplate, toThread, toUsage, toUser } from "./api/map";
+import { toAccountConnection, toApiBot, toApproval, toBot, toBotBrowser, toBotFile, toBrowserProvider, toCloudComputer, toComputerProvider, toFileStorage, toInvitation, toMcpServer, toMemory, toMembership, toMemoryKey, toMemoryStatus, toMessage, toModel, toModelProvider, toOrg, toRoutine, toTemplate, toThread, toUsage, toUser } from "./api/map";
 import { applyRunEvent, typingId, upsertApproval, withActiveRuns, withPreview, withWaitingApprovals, type ActiveRun } from "./api/run-events";
 import type { ApiMe, ApiMessage, ApiRunEvent, ApiThread, ApiThreadRuns } from "./api/types";
 import { isTaskOpen, taskPreview, withTaskChangeIn, type TaskChange } from "@/lib/tasks";
 import * as chiefDemo from "./mock/chief-demo";
 import * as mock from "./mock/fixtures";
 import type {
-  AccountConnection, AccountConnectionList, Approval, ApprovalStatus, Bot, BotBrowser, BotFile, BotFileList, BrowserInput, BrowserLoad, BrowserProviderLoad, BotToolChange, BotTools, ConnectionOwner, FilePart, HistoryRetentionDays, Invitation, McpServerInput, McpServerList, McpToolChoice, MemoryItem, MemoryKeyLoad, MemoryKeyProvider, MemoryList, MemoryStatus, Membership, Message, MessagePart, Model, ModelListProblem, ModelProvider, Org,
+  AccountConnection, AccountConnectionList, Approval, ApprovalStatus, Bot, BotBrowser, BotFile, BotFileList, BrowserInput, BrowserLoad, BrowserProviderLoad, BotToolChange, BotTools, CloudComputer, CloudComputerLoad, ComputerInput, ComputerProviderLoad, ConnectionOwner, FilePart, HistoryRetentionDays, Invitation, McpServerInput, McpServerList, McpToolChoice, MemoryItem, MemoryKeyLoad, MemoryKeyProvider, MemoryList, MemoryStatus, Membership, Message, MessagePart, Model, ModelListProblem, ModelProvider, Org,
   Participant, PluginList, Routine, SecurityLevel, ServerConnectorList, StorageLoad, TemplateList, Thread, UsageSummary, User,
 } from "./types";
 
@@ -50,7 +50,7 @@ import type {
 export type NewBotInput = Pick<
   Bot,
   "name" | "role" | "description" | "avatarColor" | "modelId" | "securityLevel" | "computerMode" | "instructions" | "monthlyBudgetUsd"
-> & Partial<Pick<Bot, "memoryEnabled">>;
+> & Partial<Pick<Bot, "memoryEnabled" | "computer">>;
 
 /** What you pick to start a group chat. You're in it anyway, so leave yourself out of `userIds`. */
 export interface NewGroupInput {
@@ -172,6 +172,10 @@ interface State {
   browsers: Record<string, BrowserLoad>;
   /** Settings → Computers: where the org's bots' browsers run. */
   browserProvider: BrowserProviderLoad;
+  /** Settings → Computers: who rents the org's cloud computers, with its key (ADR 0020). */
+  computerProvider: ComputerProviderLoad;
+  /** Each cloud bot's computer as last seen, by bot id (the bot details' Computer tab). */
+  computers: Record<string, CloudComputerLoad>;
 }
 
 /** No usage yet (API mode, before the report arrives). Defined here: the seeds below run at import. */
@@ -224,6 +228,9 @@ function seed(): State {
     fileLists: demoFileLists(),
     browsers: {},
     browserProvider: { status: "ready", current: { provider: "local", projectId: "", localAvailable: true } },
+    // MOCK: no provider; cloud computers need an account (the Orgo key is the organization's own).
+    computerProvider: { status: "ready", current: {} },
+    computers: {},
   };
 }
 
@@ -265,6 +272,8 @@ function apiSeed(): State {
     fileLists: {},
     browsers: {},
     browserProvider: { status: "loading" },
+    computerProvider: { status: "loading" },
+    computers: {},
   };
 }
 
@@ -429,6 +438,8 @@ function enterOrg(org: Membership) {
     fileLists: {},
     browsers: {},
     browserProvider: { status: "loading" },
+    computerProvider: { status: "loading" },
+    computers: {},
   }));
   void loadOrgPeople(org);
   void loadBotsAndChats(org);
@@ -2122,6 +2133,130 @@ const browserActions = {
   },
 };
 
+/* ---------- Cloud computers (ADR 0020) ----------
+ * The organization's provider (Orgo) with its own key, and each cloud bot's computer: start, stop,
+ * delete, its screen and taking over. The key is sent once and never kept: the store holds its last 4.
+ * MOCK: the demo has no provider, and cloud computers need an account.
+ */
+
+/** What a bot set to a cloud computer is told when the organization has no provider (ADR 0020 §6). */
+const NO_COMPUTER_PROVIDER = "An owner or admin can add an Orgo key in Settings → Computers.";
+const COMPUTERS_NEED_AN_ACCOUNT = "Cloud computers need an account: they run on your organization's own Orgo key.";
+const NO_COMPUTER: CloudComputer = { status: "none", apps: [], previews: [] };
+
+/** A picture of a bot's computer screen, or why there isn't one (`status` 409: it isn't running). */
+export type ScreenResult = { ok: true; picture: Blob } | { ok: false; status: number; error: string };
+
+function putComputer(orgId: string, botId: string, seen: CloudComputer) {
+  set((st) => {
+    if (st.org.id !== orgId) return st;
+    const before = st.computers[botId];
+    // Checked every few seconds: an unchanged answer changes nothing (and re-renders nothing).
+    if (before?.status === "ready" && JSON.stringify(before.current) === JSON.stringify(seen)) return st;
+    return { ...st, computers: { ...st.computers, [botId]: { status: "ready", current: seen } } };
+  });
+}
+
+/** Start, stop or delete: the answer is the computer as it is now (after Delete, none). */
+async function changeComputer(botId: string, change: (orgId: string) => Promise<CloudComputer>): Promise<ActionResult> {
+  if (isDemoMode()) return { ok: false, error: COMPUTERS_NEED_AN_ACCOUNT };
+  const orgId = state.org.id;
+  try {
+    putComputer(orgId, botId, await change(orgId));
+    return { ok: true };
+  } catch (error) {
+    return failure(error);
+  }
+}
+
+const computerActions = {
+  /** Who rents the org's cloud computers, if anyone. The demo's is in its seed (none). */
+  async loadComputerProvider(): Promise<void> {
+    if (isDemoMode()) return;
+    const orgId = state.org.id;
+    const loaded = await computerApi.provider(orgId).catch(() => null);
+    set((st) => {
+      if (st.org.id !== orgId) return st;
+      return { ...st, computerProvider: loaded ? { status: "ready", current: toComputerProvider(loaded) } : { ...st.computerProvider, status: "error" } };
+    });
+  },
+
+  /** Owners and admins: the organization's Orgo key. The API checks it live first; a 400 says why it didn't work. */
+  async saveComputerProvider(apiKey: string): Promise<ActionResult> {
+    if (isDemoMode()) return { ok: false, error: COMPUTERS_NEED_AN_ACCOUNT };
+    const orgId = state.org.id;
+    try {
+      const saved = toComputerProvider(await computerApi.chooseProvider(orgId, { provider: "orgo", apiKey: apiKey.trim() }));
+      set((st) => (st.org.id === orgId ? { ...st, computerProvider: { status: "ready", current: saved } } : st));
+      return { ok: true };
+    } catch (error) {
+      return failure(error);
+    }
+  },
+
+  /** Owners and admins: stops the bots' computers, then forgets the key. */
+  async removeComputerProvider(): Promise<ActionResult> {
+    if (isDemoMode()) return { ok: false, error: COMPUTERS_NEED_AN_ACCOUNT };
+    const orgId = state.org.id;
+    try {
+      await computerApi.removeProvider(orgId);
+    } catch (error) {
+      return failure(error);
+    }
+    // Every computer was stopped: what's known about each is out of date.
+    set((st) => (st.org.id === orgId ? { ...st, computerProvider: { status: "ready", current: {} }, computers: {} } : st));
+    return { ok: true };
+  },
+
+  /** A cloud bot's computer: whether it has one, and whether it's running. */
+  async loadComputer(botId: string): Promise<void> {
+    if (isDemoMode()) return putComputer(state.org.id, botId, NO_COMPUTER);
+    const orgId = state.org.id;
+    if (!state.computers[botId]) set((st) => ({ ...st, computers: { ...st.computers, [botId]: { status: "loading" } } }));
+    try {
+      putComputer(orgId, botId, toCloudComputer(await computerApi.state(orgId, botId)));
+    } catch (error) {
+      set((st) => {
+        if (st.org.id !== orgId) return st;
+        return { ...st, computers: { ...st.computers, [botId]: { ...st.computers[botId], status: "error", error: failure(error).error } } };
+      });
+    }
+  },
+
+  /** Start it (made on first use, which takes a while). */
+  startComputer: (botId: string) => changeComputer(botId, async (orgId) => toCloudComputer(await computerApi.start(orgId, botId))),
+  stopComputer: (botId: string) => changeComputer(botId, async (orgId) => toCloudComputer(await computerApi.stop(orgId, botId))),
+  /** Deletes it with everything on its disk (its Files stay). The next Start makes a new one. */
+  deleteComputer: (botId: string) =>
+    changeComputer(botId, async (orgId) => {
+      await computerApi.remove(orgId, botId);
+      return NO_COMPUTER;
+    }),
+
+  /** The screen now. A 409 means it isn't running any more: its state loads again, so the tab says so. */
+  async computerScreen(botId: string, signal?: AbortSignal): Promise<ScreenResult> {
+    if (isDemoMode()) return { ok: false, status: 0, error: COMPUTERS_NEED_AN_ACCOUNT };
+    try {
+      return { ok: true, picture: await computerApi.screen(state.org.id, botId, signal) };
+    } catch (error) {
+      const status = error instanceof ApiError ? error.status : 0;
+      if (status === 409 && !signal?.aborted) void computerActions.loadComputer(botId);
+      return { ok: false, status, error: failure(error).error };
+    }
+  },
+
+  /** Take over: a click, text, a key or a scroll on the computer. `ok: false` says why the API refused. */
+  async sendComputerInput(botId: string, input: ComputerInput): Promise<ActionResult> {
+    if (isDemoMode()) return { ok: false, error: COMPUTERS_NEED_AN_ACCOUNT };
+    try {
+      await computerApi.input(state.org.id, botId, input);
+      return { ok: true };
+    } catch (error) {
+      return failure(error);
+    }
+  },
+};
+
 /* ---------- Routines ----------
  * On the API a routine runs on its schedule in its creator's DM with the bot; the API says it was
  * created there ("Created a routine" card). MOCK: saved here, and the bot confirms in its chat.
@@ -2304,6 +2439,7 @@ export const actions = {
   ...usageActions,
   ...fileActions,
   ...browserActions,
+  ...computerActions,
   ...memoryKeyActions,
 
   /**
@@ -2487,6 +2623,7 @@ export const actions = {
   /** Change a bot's profile, model, limits or instructions. */
   async editBot(botId: string, patch: Partial<NewBotInput>): Promise<ActionResult> {
     if (isDemoMode()) {
+      if (patch.computer === "cloud" && !state.computerProvider.current?.provider) return { ok: false, error: NO_COMPUTER_PROVIDER };
       actions.updateBot(botId, patch);
       return { ok: true };
     }
@@ -2831,7 +2968,7 @@ function createMockBot(input: NewBotInput) {
     ...st,
     bots: [
       ...st.bots,
-      { memoryEnabled: true, ...input, id: botId, handle, status: "idle", statusText: "Just hired", connectionIds: [], createdAt: now(), spentThisMonthUsd: 0 },
+      { memoryEnabled: true, computer: "browser", ...input, id: botId, handle, status: "idle", statusText: "Just hired", connectionIds: [], createdAt: now(), spentThisMonthUsd: 0 },
     ],
     threads: [
       {
@@ -3266,6 +3403,11 @@ export const useMemoryKey = () => useStore(useCallback((s: State) => s.memoryKey
 export const useFileStorage = () => useStore(useCallback((s: State) => s.storage, []));
 /** Where the org's bots' browsers run (Settings → Computers). */
 export const useBrowserProvider = () => useStore(useCallback((s: State) => s.browserProvider, []));
+/** Who rents the org's cloud computers (Settings → Computers). */
+export const useComputerProvider = () => useStore(useCallback((s: State) => s.computerProvider, []));
+/** A cloud bot's computer as last seen; undefined until `actions.loadComputer` has started. */
+export const useCloudComputer = (botId?: string) =>
+  useStore(useCallback((s: State) => (botId ? s.computers[botId] : undefined), [botId]));
 /** A bot's browser as last seen; undefined until `actions.loadBrowser` has started. */
 export const useBotBrowser = (botId?: string) =>
   useStore(useCallback((s: State) => (botId ? s.browsers[botId] : undefined), [botId]));

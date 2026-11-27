@@ -1,5 +1,5 @@
-import type { BrowserInput } from "../types";
-import { apiBaseUrl, apiFetch } from "./client";
+import type { BrowserInput, ComputerInput } from "../types";
+import { apiBaseUrl, apiFetch, apiFetchBlob } from "./client";
 import {
   RUN_EVENT_KINDS,
   type ApiApproval,
@@ -11,6 +11,8 @@ import {
   type ApiBrowser,
   type ApiBrowserProvider,
   type ApiBrowserProviderInput,
+  type ApiComputer,
+  type ApiComputerProvider,
   type ApiConnection,
   type ApiConnectionOwner,
   type ApiConnector,
@@ -333,6 +335,30 @@ export const browserApi = {
     apiFetch<ApiBrowser>(`/api/v1/orgs/${orgId}/bots/${botId}/browser/input`, { method: "POST", body: input }),
   /** Close it and forget every sign-in (its profile is deleted). */
   forget: (orgId: string, botId: string) => apiFetch<void>(`/api/v1/orgs/${orgId}/bots/${botId}/browser`, { method: "DELETE" }),
+};
+
+/**
+ * Cloud computers (ADR 0020): the organization's provider and key (owners and admins change it), and
+ * each cloud bot's own computer: start, stop, delete, watch its screen and take over. Any member.
+ */
+export const computerApi = {
+  provider: (orgId: string) => apiFetch<ApiComputerProvider>(`/api/v1/orgs/${orgId}/computer-provider`),
+  /** Checked live first; a key that doesn't work comes back as a 400 saying why. */
+  chooseProvider: (orgId: string, input: { provider: "orgo"; apiKey: string }) =>
+    apiFetch<ApiComputerProvider>(`/api/v1/orgs/${orgId}/computer-provider`, { method: "PUT", body: input }),
+  /** Stops the bots' computers (best effort), then forgets the key. */
+  removeProvider: (orgId: string) => apiFetch<void>(`/api/v1/orgs/${orgId}/computer-provider`, { method: "DELETE" }),
+  state: (orgId: string, botId: string) => apiFetch<ApiComputer>(`/api/v1/orgs/${orgId}/bots/${botId}/computer`),
+  /** Makes the computer on first use. */
+  start: (orgId: string, botId: string) => apiFetch<ApiComputer>(`/api/v1/orgs/${orgId}/bots/${botId}/computer/start`, { method: "POST" }),
+  stop: (orgId: string, botId: string) => apiFetch<ApiComputer>(`/api/v1/orgs/${orgId}/bots/${botId}/computer/stop`, { method: "POST" }),
+  /** Deletes it at the provider, with everything on its disk. */
+  remove: (orgId: string, botId: string) => apiFetch<void>(`/api/v1/orgs/${orgId}/bots/${botId}/computer`, { method: "DELETE" }),
+  /** The screen now, as a JPEG at the computer's own size. 409 when it isn't running. */
+  screen: (orgId: string, botId: string, signal?: AbortSignal) => apiFetchBlob(`/api/v1/orgs/${orgId}/bots/${botId}/computer/screen`, signal),
+  /** A click (screen pixels), text, a key or a scroll. */
+  input: (orgId: string, botId: string, input: ComputerInput) =>
+    apiFetch<void>(`/api/v1/orgs/${orgId}/bots/${botId}/computer/input`, { method: "POST", body: input }),
 };
 
 /** What a bot remembers. Members see the bot's shared memories and their own DM ones. */

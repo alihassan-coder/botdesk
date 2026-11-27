@@ -10,6 +10,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { actions, useCurrentUser, useOrg, type NewBotInput } from "@/data/store";
 import type { Bot } from "@/data/types";
 import { ColorPicker } from "./color-picker";
+import { ComputerChoice } from "./computer-choice";
 import { ModelPicker } from "./model-picker";
 import { SecurityLevelPicker } from "./security-level-picker";
 
@@ -39,17 +40,25 @@ function EditBotForm({ bot, onDone }: { bot: Bot; onDone: () => void }) {
   const [draft, setDraft] = useState<Editable>(() => ({
     name: bot.name, role: bot.role, description: bot.description, avatarColor: bot.avatarColor, instructions: bot.instructions,
     modelId: bot.modelId, securityLevel: bot.securityLevel, monthlyBudgetUsd: bot.monthlyBudgetUsd, memoryEnabled: bot.memoryEnabled,
+    computer: bot.computer,
   }));
+  const [error, setError] = useState("");
   const [saving, startSaving] = useTransition();
   const canChangeBudget = useCurrentUser().role !== "member";
   const ceiling = useOrg().maxSecurityLevel;
-  const update = <K extends keyof Editable>(key: K, value: Editable[K]) => setDraft((d) => ({ ...d, [key]: value }));
+  const update = <K extends keyof Editable>(key: K, value: Editable[K]) => {
+    setDraft((d) => ({ ...d, [key]: value }));
+    setError("");
+  };
   const nameMissing = !draft.name.trim();
 
   const save = () =>
     startSaving(async () => {
-      const result = await actions.editBot(bot.id, { ...draft, name: draft.name.trim(), role: draft.role.trim() });
-      if (!result.ok) return void toast.error(result.error);
+      // The computer goes only when it changed: a cloud bot whose organization lost its key can still be edited.
+      const { computer, ...rest } = draft;
+      const patch = { ...rest, name: draft.name.trim(), role: draft.role.trim(), ...(computer !== bot.computer ? { computer } : {}) };
+      const result = await actions.editBot(bot.id, patch);
+      if (!result.ok) return setError(result.error);
       toast.success(`Saved ${draft.name.trim()}`);
       onDone();
     });
@@ -94,6 +103,10 @@ function EditBotForm({ bot, onDone }: { bot: Bot; onDone: () => void }) {
           <SecurityLevelPicker value={draft.securityLevel} max={ceiling} onChange={(l) => update("securityLevel", l)} />
         </Field>
         <Field>
+          <FieldLabel>Computer</FieldLabel>
+          <ComputerChoice value={draft.computer ?? "browser"} saved={bot.computer} onChange={(c) => update("computer", c)} />
+        </Field>
+        <Field>
           <FieldLabel htmlFor="edit-bot-budget">Monthly budget (USD)</FieldLabel>
           <Input id="edit-bot-budget" type="number" min={0} step={5} className="max-w-40" value={draft.monthlyBudgetUsd}
             readOnly={!canChangeBudget} aria-describedby={canChangeBudget ? undefined : "edit-bot-budget-hint"}
@@ -108,6 +121,7 @@ function EditBotForm({ bot, onDone }: { bot: Bot; onDone: () => void }) {
           <Switch id="edit-bot-memory" checked={draft.memoryEnabled ?? true} onCheckedChange={(on) => update("memoryEnabled", on)} />
         </Field>
       </FieldGroup>
+      {error && <p role="alert" className="text-sm text-pretty text-destructive">{error}</p>}
       <DialogFooter>
         <Button type="button" variant="ghost" onClick={onDone}>Cancel</Button>
         <Button type="submit" disabled={saving || nameMissing}>{saving ? "Saving…" : "Save changes"}</Button>

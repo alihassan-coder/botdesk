@@ -50,6 +50,19 @@ export async function apiFetch<T>(path: string, { method = "GET", body }: Reques
   return data as T;
 }
 
+/** A picture or other bytes (a cloud computer's screen), with the same errors as `apiFetch`. `signal` cancels it. */
+export async function apiFetchBlob(path: string, signal?: AbortSignal): Promise<Blob> {
+  let response: Response;
+  try {
+    response = await fetch(`${apiBaseUrl()}${path}`, { credentials: "include", signal });
+  } catch (error) {
+    if (signal?.aborted) throw error;
+    throw new ApiError(0, UNREACHABLE);
+  }
+  if (!response.ok) throw new ApiError(response.status, errorMessage(await response.json().catch(() => undefined)));
+  return response.blob();
+}
+
 /** FastAPI answers `{detail: "message"}`, or `{detail: [...]}` for invalid input (422). */
 function errorMessage(data: unknown): string {
   const detail = (data as { detail?: unknown } | undefined)?.detail;

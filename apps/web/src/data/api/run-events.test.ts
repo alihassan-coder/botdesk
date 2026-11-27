@@ -118,6 +118,28 @@ describe("tools and approvals in a chat", () => {
     expect(only(done).parts?.[0]).toEqual({ type: "tool-call", toolExecutionId: "x0", tool: "demo.read_inbox", status: "succeeded" });
   });
 
+  it("a cloud computer's command keeps what it ran and what came back, even once the reply is saved", () => {
+    const args = { command: "pnpm test", cwd: "/root/app" };
+    const result = { exitCode: 1, output: "FAIL", seconds: 2, cwd: "/root/app" };
+    const runCommand = event({ kind: "tool_started", data: { toolExecutionId: "x1", tool: "computer.run", risk: "write-external", args } });
+    const ranCommand = event({ kind: "tool_finished", data: { toolExecutionId: "x1", tool: "computer.run", status: "succeeded", result, error: null } });
+    const chat = play(started, toolStarted(), runCommand, ranCommand);
+    expect(only(chat).parts?.find((p) => p.type === "tool-call" && p.toolExecutionId === "x1")).toEqual({
+      type: "tool-call", toolExecutionId: "x1", tool: "computer.run", status: "succeeded", args, result,
+    });
+    // Other tools keep only their outcome, so chats stay small.
+    expect(only(chat).parts?.find((p) => p.type === "tool-call" && p.toolExecutionId === "x0")).not.toHaveProperty("args");
+
+    // An API that saves the line without them: the ones shown live stay.
+    const saved = applyRunEvent(chat, event({
+      kind: "message_saved",
+      data: { message: { id: "m1", threadId: "t1", author: { type: "bot", id: "b1" }, status: "complete", createdAt: "2026-11-12T09:00:05", parts: [
+        { type: "tool-call", toolExecutionId: "x1", tool: "computer.run", status: "succeeded" }, { type: "text", text: "Tests fail." },
+      ] } },
+    }));
+    expect(saved.messages.find((m) => m.id === "m1")?.parts[0]).toEqual({ type: "tool-call", toolExecutionId: "x1", tool: "computer.run", status: "succeeded", args, result });
+  });
+
   it("a refused call (no tool_started) still gets its line, with why", () => {
     const chat = play(started, toolFinished("denied", "x9", "Not allowed at this level."));
     expect(only(chat).parts?.[0]).toMatchObject({ type: "tool-call", toolExecutionId: "x9", status: "denied", error: "Not allowed at this level." });

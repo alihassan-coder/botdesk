@@ -51,3 +51,15 @@ describe("BotDetails' security level", () => {
     expect(await screen.findByText("Capped at Ask before acting by the organization")).toBeInTheDocument();
   });
 });
+
+describe("BotDetails' computer", () => {
+  it("says what the bot works on, and shows a cloud bot's computer in place of the browser", async () => {
+    const bot = { ...botNamed("Chief"), computer: "cloud" as const };
+    const { user } = renderUI(<BotDetails bot={bot} />);
+    expect(screen.getByText("Files and a cloud computer")).toBeInTheDocument();
+    await user.click(screen.getByRole("tab", { name: "Computer" }));
+    expect(screen.getByRole("heading", { name: "Cloud computer" })).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Browser" })).not.toBeInTheDocument();
+    expect(await screen.findByText("No computer yet")).toBeInTheDocument();
+  });
+});

@@ -4,6 +4,7 @@ import { Progress } from "@/components/ui/progress";
 import { Switch } from "@/components/ui/switch";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { budgetUse } from "@/lib/budget";
+import { describeBotComputer } from "@/lib/computer";
 import { formatUsd } from "@/lib/format";
 import { looserThan } from "@/lib/security-ceiling";
 import { actions, useBotRoutines, useCurrentUser, useModel, useOrg } from "@/data/store";
@@ -12,6 +13,7 @@ import { BotAvatar } from "@/features/bots/bot-avatar";
 import { BotTools } from "@/features/bots/bot-tools";
 import { EditBotDialog } from "@/features/bots/edit-bot-dialog";
 import { BotBrowser } from "@/features/browser/bot-browser";
+import { BotCloudComputer } from "@/features/computer/bot-cloud-computer";
 import { BotFiles } from "@/features/files/bot-files";
 import { BotMemories } from "@/features/memory/bot-memories";
 import { RemoveBotButton } from "@/features/bots/remove-bot-button";
@@ -68,7 +70,7 @@ function Profile({ bot }: { bot: Bot }) {
         <dt className="text-muted-foreground">Security level</dt>
         <dd><BotLevel level={bot.securityLevel} /></dd>
         <dt className="text-muted-foreground">Computer</dt>
-        <dd>Files and a browser</dd>
+        <dd>{describeBotComputer(bot.computer)}</dd>
       </dl>
       <BudgetThisMonth bot={bot} />
     </div>
@@ -121,12 +123,12 @@ function Routines({ botId }: { botId: string }) {
   );
 }
 
-/** What the bot has besides apps (ADR 0017): its Files and its Browser. */
+/** What the bot has besides apps: its Files, and its Browser (ADR 0017) or its own cloud computer (ADR 0020). */
 function Computer({ bot }: { bot: Bot }) {
   return (
     <div className="flex flex-col gap-6">
       <BotFiles bot={bot} />
-      <BotBrowser bot={bot} />
+      {bot.computer === "cloud" ? <BotCloudComputer bot={bot} /> : <BotBrowser bot={bot} />}
     </div>
   );
 }

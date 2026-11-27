@@ -20,6 +20,8 @@ export interface ArgField {
   optionValues?: (string | number)[];
   integer?: boolean;
   email?: boolean;
+  /** A shell command or other code: shown in mono, never spell-checked. */
+  code?: boolean;
   minLength?: number;
   maxLength?: number;
   minimum?: number;
@@ -151,6 +153,7 @@ function fieldFor(name: string, schema: ArgSchema, required: boolean, value: unk
     ...base,
     kind: isLong ? "textarea" : "text",
     ...(schema.format === "email" ? { email: true } : {}),
+    ...(name === "command" || schema.format === "code" ? { code: true } : {}),
     minLength: schema.minLength,
     maxLength: schema.maxLength,
   };

@@ -80,6 +80,8 @@ export interface ApiBot {
   securityLevel: ApiSecurityLevel;
   monthlyBudgetUsd: number;
   memoryEnabled: boolean;
+  /** ADR 0020. Left out by an older API: "browser". */
+  computer?: "browser" | "cloud";
   status: "idle" | "working" | "waiting-approval" | "sleeping" | "error";
   createdAt: string;
 }
@@ -87,7 +89,7 @@ export interface ApiBot {
 /** What you send to hire or edit a bot; the API fills in id, handle, status and createdAt. */
 export type ApiBotInput = Pick<
   ApiBot,
-  "name" | "role" | "description" | "instructions" | "avatarColor" | "modelId" | "securityLevel" | "monthlyBudgetUsd" | "memoryEnabled"
+  "name" | "role" | "description" | "instructions" | "avatarColor" | "modelId" | "securityLevel" | "monthlyBudgetUsd" | "memoryEnabled" | "computer"
 >;
 
 /* ---------- Usage and budgets ---------- */
@@ -393,6 +395,33 @@ export interface ApiBrowser {
   title: string | null;
   width: number;
   height: number;
+}
+
+/* ---------- Cloud computers (ADR 0020) ---------- */
+
+/** GET/PUT /orgs/{id}/computer-provider. provider null: none yet. */
+export interface ApiComputerProvider {
+  provider: "orgo" | null;
+  keyHint: string | null;
+  checkedAt: string | null;
+  status: "ok" | "key_refused" | null;
+}
+
+/** GET /orgs/{id}/bots/{botId}/computer, and what start and stop answer. */
+export interface ApiComputer {
+  status: "none" | "creating" | "starting" | "running" | "stopping" | "stopped" | "error";
+  name: string | null;
+  remoteId: string | null;
+  cpu: number | null;
+  ram: number | null;
+  region: string | null;
+  startedAt: string | null;
+  lastUsedAt: string | null;
+  idleStopsAt: string | null;
+  error: string | null;
+  orgoUrl: string | null;
+  apps: { name: string; port: number | null; status: string }[];
+  previews: { url: string; port: number; access: string }[];
 }
 
 /* ---------- Memory ---------- */

@@ -1,7 +1,7 @@
-import type { AccountConnection, Approval, ArgsSchema, Bot, BotBrowser, BotFile, BrowserProvider, FilePart, FileStorage, HandoffPart, Invitation, McpServer, Membership, MemoryItem, MemoryKey, MemoryStatus, Message, MessagePart, Model, ModelProvider, Org, Routine, Template, Thread, UsageSummary, User } from "../types";
+import type { AccountConnection, Approval, ArgsSchema, Bot, BotBrowser, BotFile, BrowserProvider, CloudComputer, ComputerProvider, FilePart, FileStorage, HandoffPart, Invitation, McpServer, Membership, MemoryItem, MemoryKey, MemoryStatus, Message, MessagePart, Model, ModelProvider, Org, Routine, Template, Thread, UsageSummary, User } from "../types";
 import { describeCron } from "@/lib/schedule";
 import type { TaskChange } from "@/lib/tasks";
-import type { ApiApproval, ApiTask, ApiBot, ApiBrowser, ApiBrowserProvider, ApiConnection, ApiBotInput, ApiFile, ApiInvitation, ApiMcpServer, ApiMemory, ApiMemoryKey, ApiMemoryStatus, ApiMessage, ApiModel, ApiModelProvider, ApiOrg, ApiRole, ApiRoutine, ApiStorage, ApiTemplate, ApiThread, ApiUsage, ApiUser } from "./types";
+import type { ApiApproval, ApiTask, ApiBot, ApiBrowser, ApiBrowserProvider, ApiComputer, ApiComputerProvider, ApiConnection, ApiBotInput, ApiFile, ApiInvitation, ApiMcpServer, ApiMemory, ApiMemoryKey, ApiMemoryStatus, ApiMessage, ApiModel, ApiModelProvider, ApiOrg, ApiRole, ApiRoutine, ApiStorage, ApiTemplate, ApiThread, ApiUsage, ApiUser } from "./types";
 
 /**
  * Turns API answers into the web app's own types, so screens never see API shapes.
@@ -44,14 +44,15 @@ export function toTemplate({ id, name, role, category, description, instructions
   return { id, name, role, category, description, instructions, avatarColor, securityLevel, plugins };
 }
 
-export function toBot({ createdAt, ...bot }: ApiBot): Bot {
-  return { ...bot, createdAt: asUtc(createdAt), computerMode: "none", connectionIds: [], spentThisMonthUsd: 0 };
+/** An older API sends no `computer`: its bots have Files and a browser. */
+export function toBot({ createdAt, computer = "browser", ...bot }: ApiBot): Bot {
+  return { ...bot, computer, createdAt: asUtc(createdAt), computerMode: "none", connectionIds: [], spentThisMonthUsd: 0 };
 }
 
 /** The fields of a bot the API stores, ready to send. Anything else (computer, status…) stays behind. */
 export function toApiBot(bot: Partial<Bot>): Partial<ApiBotInput> {
   const fields: Partial<ApiBotInput> = {};
-  for (const key of ["name", "role", "description", "instructions", "avatarColor", "modelId", "securityLevel", "memoryEnabled"] as const) {
+  for (const key of ["name", "role", "description", "instructions", "avatarColor", "modelId", "securityLevel", "memoryEnabled", "computer"] as const) {
     if (bot[key] !== undefined) Object.assign(fields, { [key]: bot[key] });
   }
   if (bot.monthlyBudgetUsd !== undefined) fields.monthlyBudgetUsd = Math.round(bot.monthlyBudgetUsd);
@@ -104,7 +105,7 @@ export function toTaskChange(task: ApiTask): TaskChange {
 /** The decider comes with a name, so the card can say who even if they've left the org. */
 export function toApproval(a: ApiApproval): Approval {
   return {
-    id: a.id, botId: a.botId, threadId: a.threadId, runId: a.runId,
+    id: a.id, botId: a.botId, threadId: a.threadId, runId: a.runId, tool: a.tool,
     riskClass: a.riskClass, title: a.title, summary: a.summary, reason: a.reason, tainted: a.tainted,
     preview: a.preview, args: a.args, finalArgs: a.finalArgs, argsSchema: a.argsSchema as ArgsSchema | null,
     status: a.status, requestedAt: asUtc(a.requestedAt), expiresAt: asUtc(a.expiresAt),
@@ -177,6 +178,25 @@ export function toBotBrowser({ available, open, url, title, width, height }: Api
     available, open, width, height, screenUrl: available && open ? screenUrl : "",
     ...(url ? { url } : {}), ...(title ? { title } : {}),
   };
+}
+
+/* ---------- Cloud computers (ADR 0020) ---------- */
+
+export function toComputerProvider({ provider, keyHint, checkedAt, status }: ApiComputerProvider): ComputerProvider {
+  if (!provider) return {};
+  return { provider, ...(keyHint ? { keyHint } : {}), ...(checkedAt ? { checkedAt: asUtc(checkedAt) } : {}), ...(status ? { status } : {}) };
+}
+
+/** Nulls ("not known") become missing fields; the Orgo computer's own id stays on the API. */
+export function toCloudComputer(c: ApiComputer): CloudComputer {
+  const known = <T,>(value: T | null | undefined) => value ?? undefined;
+  const time = (iso: string | null | undefined) => (iso ? asUtc(iso) : undefined);
+  const computer: CloudComputer = {
+    status: c.status, apps: c.apps ?? [], previews: c.previews ?? [],
+    name: known(c.name), cpu: known(c.cpu), ram: known(c.ram), region: known(c.region), error: known(c.error), orgoUrl: known(c.orgoUrl),
+    startedAt: time(c.startedAt), lastUsedAt: time(c.lastUsedAt), idleStopsAt: time(c.idleStopsAt),
+  };
+  return Object.fromEntries(Object.entries(computer).filter(([, value]) => value !== undefined)) as unknown as CloudComputer;
 }
 
 /* ---------- Memory ---------- */

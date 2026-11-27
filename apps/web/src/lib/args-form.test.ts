@@ -23,6 +23,20 @@ describe("formFields", () => {
     ]);
   });
 
+  it("gives a cloud computer's command a mono textarea, however short the command", () => {
+    // computer.run's schema, as the API gives it (ADR 0020).
+    const schema: ArgsSchema = {
+      properties: {
+        command: { type: "string", title: "Command", minLength: 1, maxLength: 8000 },
+        cwd: { anyOf: [{ type: "string" }, { type: "null" }], title: "Folder" },
+      },
+      required: ["command"],
+    };
+    const [command, cwd] = formFields(schema, { command: "pnpm test" });
+    expect(command).toMatchObject({ name: "command", kind: "textarea", code: true, maxLength: 8000 });
+    expect(cwd.code).toBeUndefined();
+  });
+
   it("reads numbers, booleans, enums and optional (anyOf null) arguments", () => {
     const schema: ArgsSchema = {
       properties: {

@@ -3,6 +3,7 @@ import { act, fireEvent, screen } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 import { actions, getStoreSnapshot } from "@/data/store";
 import { renderUI } from "@/test/render";
+import { signInOnApi, withFakeApi } from "@/test/fake-api";
 import { ApprovalCard } from "./approval-card";
 
 /** The card, plus a button that makes it render again (like a clock tick). */
@@ -133,5 +134,48 @@ describe("ApprovalCard", () => {
     expect(decisionLine).not.toHaveFocus();
     expect(screen.queryByRole("button", { name: "Approve edited version" })).not.toBeInTheDocument();
     expect(screen.getByText("Sara Khan already denied this, so your changes weren't used.")).toBeInTheDocument();
+  });
+});
+
+describe("ApprovalCard for a cloud computer's command", () => {
+  const api = withFakeApi();
+  const command = "cd /root/app && git push origin fix/login-redirect\npnpm deploy --prod";
+
+  it("shows the command in full, in mono, and edits it in a textarea", async () => {
+    api.routes["GET /api/v1/orgs/o1/approvals?status=all"] = {
+      status: 200,
+      body: [{
+        id: "a_run", runId: "r1", threadId: "t1", botId: "b1", toolExecutionId: "x1", tool: "computer.run",
+        title: "Run a command", summary: "Run a command on Scout's computer", riskClass: "write-external",
+        reason: "level=Ask before acting · risk=write-external · tainted=no → ask", tainted: false,
+        args: { command, cwd: null, timeout: 120 }, finalArgs: null,
+        argsSchema: {
+          type: "object", required: ["command"],
+          properties: {
+            command: { type: "string", title: "Command", minLength: 1, maxLength: 8000 },
+            cwd: { anyOf: [{ type: "string" }, { type: "null" }], title: "Folder" },
+            timeout: { type: "integer", title: "Timeout", minimum: 1, maximum: 300 },
+          },
+        },
+        preview: [{ label: "Command", value: command }, { label: "Timeout", value: "120 s" }], status: "pending",
+        requestedAt: "2026-11-27T09:00:00Z", expiresAt: "2099-11-30T09:00:00Z", decidedAt: null, decidedBy: null,
+      }],
+    };
+    await signInOnApi();
+    await actions.loadApprovals();
+    const { user } = renderUI(<ApprovalCard approvalId="a_run" />);
+
+    const shown = screen.getByRole("figure", { name: "Command" }).querySelector("pre")!;
+    expect(shown).toHaveClass("font-mono");
+    expect(shown.textContent).toBe(`$ ${command}`);
+    // The command isn't repeated in the rows below it; the rest is.
+    expect(screen.queryByText("Command", { selector: "dt" })).not.toBeInTheDocument();
+    expect(screen.getByText("120 s")).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Edit" }));
+    const field = screen.getByRole("textbox", { name: "Command" });
+    expect(field.tagName).toBe("TEXTAREA");
+    expect(field).toHaveValue(command);
+    expect(field).toHaveClass("font-mono");
   });
 });

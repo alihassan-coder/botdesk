@@ -7,7 +7,7 @@ import { actions, getStoreSnapshot } from "@/data/store";
  * then `signInOnApi()` in a test (or a beforeEach) to enter Zara's org "o1" with bot "b1".
  */
 
-/** `wait`: the answer comes once it settles (a slow request). */
+/** `wait`: the answer comes once it settles (a slow request). A `Uint8Array` body is sent as bytes (a JPEG). */
 type Route = { status: number; body?: unknown; wait?: Promise<unknown> };
 
 export const apiOrg = { id: "o1", name: "Zara's team", slug: "zara-team", role: "owner", defaultSecurityLevel: "ask-before-acting", maxSecurityLevel: "autonomous" };
@@ -64,7 +64,10 @@ export function withFakeApi(): FakeApi {
         api.sent.push({ key, body: sentBody(init?.body) });
         const route = api.routes[key] ?? { status: 404, body: { detail: "Not found" } };
         await route.wait;
-        return route.body === undefined ? new Response(null, { status: route.status }) : Response.json(route.body, { status: route.status });
+        if (route.body === undefined) return new Response(null, { status: route.status });
+        // Bytes (a computer's screen) go back as they are; anything else as JSON.
+        if (route.body instanceof Uint8Array) return new Response(new Blob([new Uint8Array(route.body)]), { status: route.status, headers: { "Content-Type": "image/jpeg" } });
+        return Response.json(route.body, { status: route.status });
       }),
     );
   });

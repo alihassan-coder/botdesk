@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { catalogueEntryFor, MCP_CATALOGUE, normalizeMcpUrl, signInLine } from "./mcp-catalogue";
+import { catalogueEntryFor, MCP_CATALOGUE, normalizeMcpUrl, signInLine, withKeyPrefix } from "./mcp-catalogue";
 
 describe("MCP_CATALOGUE", () => {
   it("lists only https servers, each once, with a description and docs", () => {
@@ -16,7 +16,7 @@ describe("MCP_CATALOGUE", () => {
 
   it("sends GitHub's token in Authorization, as a bearer token", () => {
     const github = MCP_CATALOGUE.find((e) => e.id === "github");
-    expect(github?.signIn).toMatchObject({ kind: "key", header: "Authorization", valuePlaceholder: expect.stringMatching(/^Bearer /) });
+    expect(github?.signIn).toMatchObject({ kind: "key", header: "Authorization", valuePrefix: "Bearer " });
   });
 });
 
@@ -51,5 +51,14 @@ describe("signInLine", () => {
     expect(signInLine(entry("github"))).toBe("Needs a personal access token");
     expect(signInLine(entry("gmail"))).toBe("Needs an app you create in Google Cloud");
     expect(signInLine(entry("slack"))).toBe("Needs an app you create in Slack");
+  });
+});
+
+describe("withKeyPrefix", () => {
+  it("puts the prefix in front of a bare key, once", () => {
+    expect(withKeyPrefix("ghp_123", "Bearer ")).toBe("Bearer ghp_123");
+    expect(withKeyPrefix("Bearer ghp_123", "Bearer ")).toBe("Bearer ghp_123");
+    expect(withKeyPrefix("bearer ghp_123", "Bearer ")).toBe("bearer ghp_123");
+    expect(withKeyPrefix("sk-123", undefined)).toBe("sk-123");
   });
 });

@@ -8,7 +8,8 @@ export type McpCatalogueSignIn =
   /** One-click sign-in: BotDesk registers itself with the server. */
   | { kind: "oauth" }
   /** A token sent in a header on every request. `where` says how to get one. */
-  | { kind: "key"; header: string; valuePlaceholder: string; token: string; where: string }
+  /** `valuePrefix` (like "Bearer ") goes in front of the pasted key when it isn't there already. */
+  | { kind: "key"; header: string; valuePrefix?: string; valuePlaceholder: string; token: string; where: string }
   /**
    * Sign-in through an OAuth app the admin creates first in the vendor's console (`console`),
    * given BotDesk's redirect URI; its client ID and secret are pasted into the dialog.
@@ -46,8 +47,8 @@ export const MCP_CATALOGUE: readonly McpCatalogueEntry[] = [
   {
     id: "github", name: "GitHub", publisher: "GitHub", url: "https://api.githubcopilot.com/mcp/", description: "Search code, and read and update issues and pull requests.",
     signIn: {
-      kind: "key", header: "Authorization", valuePlaceholder: "Bearer ghp_…", token: "personal access token",
-      where: "Create one in GitHub under Settings, Developer settings, Personal access tokens, and paste it after “Bearer ”.",
+      kind: "key", header: "Authorization", valuePrefix: "Bearer ", valuePlaceholder: "ghp_…", token: "personal access token",
+      where: "Create one in GitHub under Settings, Developer settings, Personal access tokens, and paste it here (BotDesk adds “Bearer ” in front).",
     },
     docsUrl: "https://github.com/github/github-mcp-server",
   },
@@ -102,4 +103,10 @@ export function signInLine({ publisher, signIn }: McpCatalogueEntry): string {
     case "oauth-client":
       return `Needs an app you create in ${signIn.console}`;
   }
+}
+
+/** A pasted key with the header's prefix ("Bearer ") in front, unless it already starts with it. */
+export function withKeyPrefix(value: string, prefix: string | undefined): string {
+  if (!prefix || value.toLowerCase().startsWith(prefix.toLowerCase())) return value;
+  return prefix + value;
 }

@@ -8,7 +8,7 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Field, FieldDescription, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
 import { actions, useMcpServers } from "@/data/store";
-import type { McpCatalogueEntry } from "@/lib/mcp-catalogue";
+import { withKeyPrefix, type McpCatalogueEntry } from "@/lib/mcp-catalogue";
 import { waitingLabel } from "@/lib/mcp-review";
 import { ApiKeyFields, OAuthClientFields } from "./mcp-auth-fields";
 
@@ -76,7 +76,8 @@ function AddForm({ preset, onAdded, onClose }: { preset: McpCatalogueEntry | nul
   async function submit() {
     setBusy(true);
     setError("");
-    const withKey = !signIn && header.trim() && key.trim() ? { apiKeyHeader: header.trim(), apiKeyValue: key.trim() } : {};
+    const prefix = preset?.signIn.kind === "key" ? preset.signIn.valuePrefix : undefined;
+    const withKey = !signIn && header.trim() && key.trim() ? { apiKeyHeader: header.trim(), apiKeyValue: withKeyPrefix(key.trim(), prefix) } : {};
     const withClient = signIn
       ? { signIn: true, ...(clientId.trim() ? { oauthClientId: clientId.trim() } : {}), ...(clientSecret.trim() ? { oauthClientSecret: clientSecret.trim() } : {}) }
       : {};
@@ -113,7 +114,8 @@ function AddForm({ preset, onAdded, onClose }: { preset: McpCatalogueEntry | nul
       </Field>
 
       <Field orientation="horizontal">
-        <Checkbox id="mcp-sign-in" checked={signIn} onCheckedChange={(v) => setSignIn(v === true)} />
+        {/* An official server signs in the one way it supports: its preset decides. */}
+        <Checkbox id="mcp-sign-in" checked={signIn} disabled={preset !== null} onCheckedChange={(v) => setSignIn(v === true)} />
         <FieldLabel htmlFor="mcp-sign-in" className="font-normal">Uses sign-in (OAuth)</FieldLabel>
       </Field>
 

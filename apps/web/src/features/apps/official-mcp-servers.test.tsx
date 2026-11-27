@@ -76,12 +76,14 @@ describe("Official MCP servers on the API", () => {
 
     await user.click(within(await official()).getByRole("button", { name: "Connect GitHub MCP server" }));
     const dialog = screen.getByRole("dialog", { name: "Connect GitHub" });
-    expect(within(dialog).getByRole("checkbox", { name: "Uses sign-in (OAuth)" })).not.toBeChecked();
+    const signIn = within(dialog).getByRole("checkbox", { name: "Uses sign-in (OAuth)" });
+    expect(signIn).not.toBeChecked();
+    expect(signIn).toBeDisabled(); // GitHub's server takes a token: its preset decides
     expect(within(dialog).getByLabelText("Header name")).toHaveValue("Authorization");
-    expect(within(dialog).getByLabelText("Header value")).toHaveAttribute("placeholder", "Bearer ghp_…");
+    expect(within(dialog).getByLabelText("Header value")).toHaveAttribute("placeholder", "ghp_…");
     expect(within(dialog).getByRole("link", { name: "GitHub's guide" })).toHaveAttribute("href", "https://github.com/github/github-mcp-server");
     expect(within(dialog).getByRole("button", { name: "Add server" })).toBeDisabled(); // the token is required
-    await user.type(within(dialog).getByLabelText("Header value"), "Bearer ghp_made-up");
+    await user.type(within(dialog).getByLabelText("Header value"), "ghp_made-up"); // pasted bare: "Bearer " is added
     await user.click(within(dialog).getByRole("button", { name: "Add server" }));
 
     expect(await within(dialog).findByText("GitHub added")).toBeInTheDocument();
@@ -91,6 +93,9 @@ describe("Official MCP servers on the API", () => {
   });
 
   it("Connect on Gmail needs the app made in Google Cloud, and gives the redirect URI to paste there", async () => {
+    // The API's own address, which can differ from the one this app calls it at (a proxy).
+    const callback = "https://api.botdesk.example/api/v1/oauth/callback";
+    api.routes["GET /api/v1/auth/options"] = { status: 200, body: { signUpMode: "open", oauthCallbackUrl: callback } };
     api.routes["POST /api/v1/orgs/o1/mcp-servers"] = { status: 201, body: { ...added("Gmail", "https://gmailmcp.googleapis.com/mcp/v1"), authorizeUrl: "https://accounts.example/o" } };
     await signInOnApi();
     const { user } = renderUI(<AppsScreen />);
@@ -98,12 +103,13 @@ describe("Official MCP servers on the API", () => {
     await user.click(within(await official()).getByRole("button", { name: "Connect Gmail MCP server" }));
     const dialog = screen.getByRole("dialog", { name: "Connect Gmail" });
     expect(within(dialog).getByRole("checkbox", { name: "Uses sign-in (OAuth)" })).toBeChecked();
+    expect(within(dialog).getByRole("checkbox", { name: "Uses sign-in (OAuth)" })).toBeDisabled();
     expect(within(dialog).getByText("OAuth client")).toBeInTheDocument();
     expect(within(dialog).getByText(/create an OAuth client of type Web application/)).toBeInTheDocument();
     expect(within(dialog).getByRole("link", { name: "Google's guide" })).toHaveAttribute("href", expect.stringContaining("developers.google.com"));
-    expect(within(dialog).getByLabelText("Redirect URI")).toHaveValue("http://api.test/api/v1/oauth/callback");
+    await vi.waitFor(() => expect(within(dialog).getByLabelText("Redirect URI")).toHaveValue(callback));
     await user.click(within(dialog).getByRole("button", { name: "Copy redirect URI" }));
-    expect(await navigator.clipboard.readText()).toBe("http://api.test/api/v1/oauth/callback");
+    expect(await navigator.clipboard.readText()).toBe(callback);
     expect(within(dialog).getByRole("button", { name: "Copied redirect URI" })).toBeInTheDocument();
 
     const submit = within(dialog).getByRole("button", { name: "Add and sign in" });

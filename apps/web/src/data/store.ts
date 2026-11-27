@@ -2806,7 +2806,7 @@ export const actions = {
     cancelMockTimers();
     closeChatStreams();
     restoring = null;
-    signUpMode = { mode: null, loading: null };
+    signUpMode = { mode: null, callbackUrl: null, loading: null };
     set(() => seed());
   },
 };
@@ -3145,7 +3145,11 @@ export const useIsGuest = () => useStore(useCallback((s: State) => s.guest, []))
  * apart from `state` since it belongs to the server, not to who is signed in. If the API can't
  * be reached it reads as open, so the form shows and sign-up itself says what's wrong.
  */
-let signUpMode: { mode: SignUpMode | null; loading: Promise<void> | null } = { mode: null, loading: null };
+let signUpMode: { mode: SignUpMode | null; callbackUrl: string | null; loading: Promise<void> | null } = {
+  mode: null,
+  callbackUrl: null,
+  loading: null,
+};
 const signUpModeListeners = new Set<() => void>();
 
 function subscribeSignUpMode(listener: () => void) {
@@ -3153,7 +3157,10 @@ function subscribeSignUpMode(listener: () => void) {
   if (!isDemoMode() && !signUpMode.loading) {
     const current = signUpMode;
     current.loading = authApi.options().then(
-      ({ signUpMode: mode }) => void (current.mode = mode),
+      ({ signUpMode: mode, oauthCallbackUrl }) => {
+        current.mode = mode;
+        current.callbackUrl = oauthCallbackUrl ?? null;
+      },
       () => void (current.mode = "open"),
     ).then(() => signUpModeListeners.forEach((notify) => notify()));
   }
@@ -3315,8 +3322,20 @@ export const useConnections = () => useStore(useCallback((s: State) => s.connect
 export const useServerConnectors = () => useStore(useCallback((s: State) => s.serverConnectors, []));
 /** Connect apps: the organization's MCP servers, as last loaded with `actions.loadMcpServers`. */
 export const useMcpServers = () => useStore(useCallback((s: State) => s.mcpServers, []));
-/** Where providers send people back after signing in: the redirect URI an admin gives an OAuth app they create. */
-export const oauthCallbackUrl = () => `${apiBaseUrl()}/api/v1/oauth/callback`;
+/**
+ * Where providers send people back after signing in: the redirect URI an admin gives an OAuth app
+ * they create. The API's own (`{API_PUBLIC_URL}/api/v1/oauth/callback`, from GET /auth/options, which
+ * may differ from the address this app calls it at); until it answers, or if it can't be reached, a
+ * guess from that address.
+ */
+export function useOAuthCallbackUrl(): string {
+  return useSyncExternalStore(subscribeSignUpMode, () => signUpMode.callbackUrl ?? guessedCallbackUrl(), guessedCallbackUrl);
+}
+
+function guessedCallbackUrl(): string {
+  const base = apiBaseUrl() || (typeof window === "undefined" ? "" : window.location.origin);
+  return `${base}/api/v1/oauth/callback`;
+}
 /** Accounts connected to connectors that you may see (yours, the bots', the organization's). */
 export const useAccountConnections = () => useStore(useCallback((s: State) => s.accounts, []));
 /** A bot's Tools tab, as last loaded with `actions.loadBotTools`; undefined until then. */

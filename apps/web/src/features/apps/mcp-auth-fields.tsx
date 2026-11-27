@@ -4,7 +4,7 @@ import { toast } from "sonner";
 import { Field, FieldDescription, FieldLabel, FieldLegend, FieldSet } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
 import { InputGroup, InputGroupAddon, InputGroupButton, InputGroupInput } from "@/components/ui/input-group";
-import { oauthCallbackUrl } from "@/data/store";
+import { useOAuthCallbackUrl } from "@/data/store";
 import type { McpCatalogueEntry } from "@/lib/mcp-catalogue";
 
 type Setter = (value: string) => void;
@@ -47,7 +47,7 @@ export function OAuthClientFields({ preset, clientId, clientSecret, setClientId,
 
 /** What the vendor's console must be given, so its sign-in sends people back to BotDesk. */
 function RedirectUri() {
-  const uri = oauthCallbackUrl();
+  const uri = useOAuthCallbackUrl();
   const [copied, setCopied] = useState(false);
   const copy = async () => {
     try {

@@ -52,7 +52,8 @@ import {
 
 export const authApi = {
   /** Public: whether sign-up is open, invite-only or closed on this server. */
-  options: () => apiFetch<{ signUpMode: "open" | "invite-only" | "closed" }>("/api/v1/auth/options"),
+  /** `oauthCallbackUrl` is missing from APIs before 2026-11-27. */
+  options: () => apiFetch<{ signUpMode: "open" | "invite-only" | "closed"; oauthCallbackUrl?: string }>("/api/v1/auth/options"),
   /** `inviteToken` (from an invite link): join that organization instead of getting your own. */
   signUp: (input: { name: string; email: string; password: string; inviteToken?: string }) =>
     apiFetch<ApiMe>("/api/v1/auth/sign-up", { method: "POST", body: input }),

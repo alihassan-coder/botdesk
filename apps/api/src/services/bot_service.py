@@ -8,14 +8,14 @@ from botdesk_plugin_sdk import PluginManifest
 from sqlalchemy import delete, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.core.errors import NotFound
+from src.core.errors import BadRequest, NotFound
 from src.core.handles import handle_prefix, make_handle
 from src.models import Bot, Organization, Routine, Run, Thread, ThreadParticipant
 from src.models.bot import SecurityLevel
 from src.models.run import FINISHED_STATUSES
 from src.runtime.policy import looser_than, strictest_level
 from src.schemas.bot import BotIn, BotUpdate
-from src.services import binding_service
+from src.services import binding_service, computer_service
 from src.services.organization_service import require_under_ceiling
 
 # What a routine whose bot was removed says (it stays, switched off).
@@ -67,10 +67,17 @@ async def update_bot(db: AsyncSession, org: Organization, bot: Bot, changes: Bot
     """Renaming a bot gives it a matching @handle (unique in the organization). Its level may not
     be raised above the organization's ceiling. Lowering it is always fine, and so is sending back
     the level it already has (the editor sends every field), even if the ceiling was lowered
-    under it since."""
+    under it since. A bot goes on a cloud computer only once the organization has its provider
+    (ADR 0020 §2); the caller stops its computer when it goes back to its browser."""
     current = cast("SecurityLevel", bot.security_level)
     if changes.security_level and looser_than(changes.security_level, current):
         require_under_ceiling(org, changes.security_level)
+    if (
+        changes.computer == "cloud"
+        and bot.computer != "cloud"
+        and await computer_service.find_provider(db, org.id) is None
+    ):
+        raise BadRequest(computer_service.NEEDS_PROVIDER)
     fields = changes.model_dump(exclude_unset=True, exclude_none=True)
     if "name" in fields:
         fields["name"] = fields["name"].strip()

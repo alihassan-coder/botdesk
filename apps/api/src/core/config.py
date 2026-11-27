@@ -86,6 +86,14 @@ class Settings(BaseSettings):
     # Pages on private addresses (the server's own network): refused by default.
     allow_private_browser_urls: bool = False
 
+    # Bots' cloud computers (ADR 0020): Orgo, with each organization's own key (Settings →
+    # Computers). A running computer stops after COMPUTER_IDLE_MINUTES without a tool call, a
+    # take-over or someone watching; its time is recorded as usage at ORGO_PRICE_PER_HOUR (USD).
+    computer_idle_minutes: int = 20
+    orgo_price_per_hour: float = 0.055
+    # Development and tests only (ignored unless ENVIRONMENT is development or test): a fake Orgo.
+    orgo_base_url: str = ""
+
     # Run limits (agents-and-plugins.md §4.2) and how many runs one bot may have going at once.
     run_max_steps: int = 25
     run_max_seconds: int = 900
@@ -183,6 +191,12 @@ class Settings(BaseSettings):
         """A plain `postgresql://` address for psycopg itself (checkpoints, memory)."""
         url = self.database_url_direct or self.database_url
         return url.replace("postgresql+psycopg://", "postgresql://", 1)
+
+    @property
+    def orgo_api_url(self) -> str:
+        """Orgo's API. ORGO_BASE_URL (a fake Orgo) counts only in development and tests."""
+        fake = self.orgo_base_url.strip().rstrip("/")
+        return fake if fake and self.environment in ("development", "test") else "https://www.orgo.ai/api"
 
     @property
     def plugin_ids(self) -> list[str]:

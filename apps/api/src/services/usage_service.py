@@ -45,15 +45,17 @@ def record(
     output_tokens: int,
     cost_usd: float | None,
     estimated: bool = False,
+    kind: str = "model",
 ) -> UsageRecord:
     """Add one model call's usage. The caller commits (one short insert, outside any long transaction).
     `estimated` marks tokens guessed from characters, for calls the provider never reported. A call
-    made for the whole organization (a chat's summary) has no bot or run."""
+    made for the whole organization (a chat's summary) has no bot or run. `kind` "computer" is a
+    bot's cloud computer's running time (ADR 0020 §3): no tokens, no run."""
     row = UsageRecord(
         org_id=org_id,
         bot_id=bot_id,
         run_id=run_id,
-        kind="model",
+        kind=kind,
         provider=provider,
         model_id=model_id,
         input_tokens=input_tokens,

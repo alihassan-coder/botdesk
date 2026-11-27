@@ -7,6 +7,7 @@ from src.api.v1.routes import (
     auth,
     bots,
     browser,
+    computer,
     connections,
     connectors,
     files,
@@ -33,6 +34,8 @@ api_router.include_router(invitations.router)
 api_router.include_router(bots.router)
 api_router.include_router(browser.router)
 api_router.include_router(browser.provider_router)
+api_router.include_router(computer.router)
+api_router.include_router(computer.provider_router)
 api_router.include_router(threads.router)
 api_router.include_router(runs.router)
 api_router.include_router(approvals.router)

@@ -71,6 +71,7 @@ from src.services import (
     tool_execution_service,
 )
 from src.services.browser_tools import BrowserTools
+from src.services.computer_service import Computers
 from src.services.credential_vault import CredentialVault
 from src.services.file_tools import FileTools
 from src.services.mcp_server_service import McpRuntime
@@ -139,6 +140,9 @@ class RunManager:
         # Bots' browsers (Local or a cloud provider's) start on first use, on a thread of their own (ADR 0017).
         self.browsers: Browsers | None = Browsers(local_browser_settings(settings))
         browser_access = BrowserTools(self.browsers, sessionmaker, settings, vault)
+        # Bots' cloud computers at the organization's provider (ADR 0020). main.py points its
+        # `transport` at the app's outbound network (tests: a fake Orgo).
+        self.computers = Computers(sessionmaker, settings, vault)
         self.registry = registry or build_registry(
             settings.plugin_ids, files_access=files_access, browser_access=browser_access
         )

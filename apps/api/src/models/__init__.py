@@ -3,6 +3,7 @@
 
 from src.models.approval import Approval
 from src.models.bot import Bot
+from src.models.bot_computer import BotComputer
 from src.models.bot_tool import BotTool
 from src.models.browser_profile import BrowserProfile
 from src.models.computer_provider import ComputerProvider
@@ -26,6 +27,7 @@ __all__ = [
     "Approval",
     "AuditEntry",
     "Bot",
+    "BotComputer",
     "BotTool",
     "BrowserProfile",
     "ComputerProvider",

@@ -61,9 +61,12 @@ async def create_bot(
 
 
 async def update_bot(
-    db: AsyncSession, access: Access, bot_id: uuid.UUID, body: BotUpdate, settings: Settings
+    db: AsyncSession, access: Access, bot_id: uuid.UUID, body: BotUpdate, settings: Settings, runs: RunManager
 ) -> BotOut:
+    """Switching a bot from its cloud computer back to its browser stops the computer (after the
+    commit, best effort); deleting it is a separate action (its disk holds the bot's work)."""
     bot = await bot_service.get_bot(db, access.org.id, bot_id)
+    was_cloud = bot.computer == "cloud"
     budget = body.monthly_budget_usd
     if budget is not None and budget != bot.monthly_budget_usd and not _is_admin(access):
         raise Forbidden(BUDGET_ADMINS_ONLY)
@@ -73,6 +76,8 @@ async def update_bot(
         )
     await bot_service.update_bot(db, access.org, bot, body)
     await db.commit()
+    if was_cloud and bot.computer != "cloud":
+        await runs.computers.stop_soon(access.org.id, bot.id)
     return BotOut.model_validate(bot)
 
 
@@ -89,7 +94,8 @@ async def delete_bot(
     handed to it fails and its parent carries on; one handed by it is cancelled), each parent in a
     short transaction of its own. Then the runs that go with it (its own, and all in its DMs) and
     the children of those tasks are stopped, and only then is it deleted. Its files' bytes are
-    removed from the organization's storage last, best effort (their rows go with the bot)."""
+    removed from the organization's storage last, best effort (their rows go with the bot), and
+    its cloud computer is deleted at Orgo (best effort)."""
     access.require_admin()
     await bot_service.get_bot(db, access.org.id, bot_id)  # 404 for another organization's bot
     aftermath = task_service.Aftermath()
@@ -106,9 +112,12 @@ async def delete_bot(
     for run_id in dict.fromkeys([*aftermath.stop, *going]):
         await runs.stop(run_id)  # announces each run's chat (a task's child works in its parent's)
     files = await file_service.list_files(db, access.org.id, bot_id)
+    # Its cloud computer's running time is recorded with it; the computer goes after the commit.
+    computer_gone = await runs.computers.leaving(db, access.org.id, bot_id)
     await bot_service.delete_bot(db, await bot_service.get_bot(db, access.org.id, bot_id))
     await db.commit()
     await file_service.remove_bytes(db, files, access.org.id, settings=settings, vault=vault)
+    await computer_gone()
 
 
 # Tools (bindings, slice 5.2). Any member may switch a bot's plugins on and off, like editing it;

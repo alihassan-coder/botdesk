@@ -48,8 +48,9 @@ async def update_bot(
     runs: Runs,
     background: BackgroundTasks,
 ) -> BotOut:
-    """Only the fields sent change. Changing `monthlyBudgetUsd` takes an owner or admin."""
-    bot = await bot_controller.update_bot(db, access, bot_id, body, settings)
+    """Only the fields sent change. Changing `monthlyBudgetUsd` takes an owner or admin.
+    `computer`: "browser" or "cloud" (its own cloud computer; needs the organization's Orgo key)."""
+    bot = await bot_controller.update_bot(db, access, bot_id, body, settings, runs)
     if body.model_id:
         _warm_price(background, runs, access, bot)
     return bot

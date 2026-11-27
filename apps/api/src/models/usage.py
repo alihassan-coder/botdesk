@@ -25,7 +25,7 @@ class UsageRecord(IdMixin, Base):
     org_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("organizations.id", ondelete="CASCADE"))
     bot_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("bots.id", ondelete="SET NULL"))
     run_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("runs.id", ondelete="SET NULL"))
-    kind: Mapped[str] = mapped_column(String(20), default="model")  # model; computer later
+    kind: Mapped[str] = mapped_column(String(20), default="model")  # model | computer (a cloud computer's running time)
     provider: Mapped[str] = mapped_column(String(80))  # "anthropic", "openrouter", "custom-<id>"…
     model_id: Mapped[str] = mapped_column(String(200))  # "provider:model"
     input_tokens: Mapped[int] = mapped_column(default=0)

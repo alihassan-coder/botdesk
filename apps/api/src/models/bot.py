@@ -1,13 +1,15 @@
 import uuid
 from typing import Literal
 
-from sqlalchemy import ForeignKey, String, Text, UniqueConstraint, true
+from sqlalchemy import ForeignKey, String, Text, UniqueConstraint, text, true
 from sqlalchemy.orm import Mapped, mapped_column
 
 from src.core.database import Base, CreatedAtMixin, IdMixin
 
 SecurityLevel = Literal["read-only", "ask-before-acting", "autonomous"]
 AvatarColor = Literal["indigo", "violet", "sky", "emerald", "amber", "rose", "orange", "slate"]
+# browser: Files and a browser (ADR 0017). cloud: Files and its own cloud computer (ADR 0020).
+ComputerMode = Literal["browser", "cloud"]
 
 
 class Bot(IdMixin, CreatedAtMixin, Base):
@@ -30,4 +32,5 @@ class Bot(IdMixin, CreatedAtMixin, Base):
     monthly_budget_usd: Mapped[int] = mapped_column(default=50)
     # Off: the bot neither recalls nor saves memories (what it already knows stays until forgotten).
     memory_enabled: Mapped[bool] = mapped_column(default=True, server_default=true())
+    computer: Mapped[str] = mapped_column(String(20), default="browser", server_default=text("'browser'"))
     created_by: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))

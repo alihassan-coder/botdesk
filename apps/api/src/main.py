@@ -79,6 +79,8 @@ def create_app(settings: Settings | None = None, *, outbound: httpx.AsyncBaseTra
                 app.state.models,
             ) as jobs:
                 app.state.runs = jobs.runs
+                # Bots' cloud computers call Orgo through the same network as other services.
+                jobs.runs.computers.transport = outbound
                 # Signing in with OAuth apps (ADR 0010 §5): the same plugins and vault as the runs.
                 app.state.oauth = OAuth(settings, app.state.vault, jobs.runs.registry, transport=outbound)
                 # MCP servers' sign-ins come back to the same callback (slice 7.3); read `runs.mcp`

@@ -4,7 +4,7 @@ from typing import Literal
 
 from pydantic import Field, field_validator
 
-from src.models.bot import AvatarColor, SecurityLevel
+from src.models.bot import AvatarColor, ComputerMode, SecurityLevel
 from src.schemas.common import ApiModel
 
 # "provider:model" or empty. Model ids may hold "/" (OpenRouter), ":" (Ollama tags) and "@".
@@ -44,6 +44,8 @@ class BotUpdate(ApiModel):
     security_level: SecurityLevel | None = None
     monthly_budget_usd: int | None = Field(default=None, ge=0, le=100_000)
     memory_enabled: bool | None = None
+    # browser: Files and a browser. cloud: Files and its own cloud computer (ADR 0020).
+    computer: ComputerMode | None = None
 
 
 class BotOut(ApiModel):
@@ -58,6 +60,7 @@ class BotOut(ApiModel):
     security_level: SecurityLevel
     monthly_budget_usd: int
     memory_enabled: bool
+    computer: ComputerMode = "browser"
     # Live status comes with bot runs; until then every bot is idle.
     status: Literal["idle", "working", "waiting-approval", "sleeping", "error"] = "idle"
     created_at: datetime

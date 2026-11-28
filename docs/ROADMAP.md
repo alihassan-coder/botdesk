@@ -144,4 +144,5 @@ When you finish something, tick it here in the same pull request.
 - [ ] Bots see images ([ADR 0018](adr/0018-bots-see-images.md), proposed)
 - [ ] A browser in the Docker image (or Docker users pick a cloud browser)
 - [ ] The full bot computer (a whole desktop) and routine recording
+- [ ] LangSmith: trace bots' runs (model calls, tools, approvals) in LangSmith
 - [ ] Desktop app, then mobile
